@@ -204,7 +204,9 @@ namespace StageManager.Native
 				"SearchApp",
 				"SearchHost", // Windows 11 search
 				"search", // Windows 11 RTM search
-				"ScreenClippingHost"
+				"ScreenClippingHost",
+				"explorer", // Protect the Windows shell, taskbar and File Explorer
+				"yuanbao" // Tencent Yuanbao selection-translation popups
 			};
 
 			if (ignoreProcesses.Contains(ProcessName))

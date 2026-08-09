@@ -3,9 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 using StageManager.Native.PInvoke;
 using StageManager.Native.Window;
 
@@ -20,10 +18,10 @@ namespace StageManager.Native
 		private bool _active;
 		private IDictionary<IntPtr, WindowsWindow> _windows;
 		private WinEventDelegate _hookDelegate;
+		private readonly List<IntPtr> _winEventHooks = new List<IntPtr>();
 
 		private WindowsWindow _mouseMoveWindow;
 		private readonly object _mouseMoveLock = new object();
-		private Win32.HookProc _mouseHook;
 
 		private Dictionary<WindowsWindow, bool> _floating;
 		private IntPtr _currentProcessWindowHandle;
@@ -80,14 +78,12 @@ namespace StageManager.Native
 			_currentProcessId = currentProcess.Id;
 			_currentProcessWindowHandle = currentProcess.MainWindowHandle;
 
-			Win32.SetWinEventHook(Win32.EVENT_CONSTANTS.EVENT_OBJECT_DESTROY, Win32.EVENT_CONSTANTS.EVENT_OBJECT_SHOW, IntPtr.Zero, _hookDelegate, 0, 0, 0);
-			Win32.SetWinEventHook(Win32.EVENT_CONSTANTS.EVENT_OBJECT_CLOAKED, Win32.EVENT_CONSTANTS.EVENT_OBJECT_UNCLOAKED, IntPtr.Zero, _hookDelegate, 0, 0, 0);
-			Win32.SetWinEventHook(Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZESTART, Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZEEND, IntPtr.Zero, _hookDelegate, 0, 0, 0);
-			Win32.SetWinEventHook(Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MOVESIZESTART, Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MOVESIZEEND, IntPtr.Zero, _hookDelegate, 0, 0, 0);
-			Win32.SetWinEventHook(Win32.EVENT_CONSTANTS.EVENT_SYSTEM_FOREGROUND, Win32.EVENT_CONSTANTS.EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, _hookDelegate, 0, 0, 0);
-			Win32.SetWinEventHook(Win32.EVENT_CONSTANTS.EVENT_OBJECT_LOCATIONCHANGE, Win32.EVENT_CONSTANTS.EVENT_OBJECT_LOCATIONCHANGE, IntPtr.Zero, _hookDelegate, 0, 0, 0);
-
-			_mouseHook = MouseHook;
+			RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_OBJECT_DESTROY, Win32.EVENT_CONSTANTS.EVENT_OBJECT_SHOW);
+			RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_OBJECT_CLOAKED, Win32.EVENT_CONSTANTS.EVENT_OBJECT_UNCLOAKED);
+			RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZESTART, Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZEEND);
+			RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MOVESIZESTART, Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MOVESIZEEND);
+			RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_SYSTEM_FOREGROUND, Win32.EVENT_CONSTANTS.EVENT_SYSTEM_FOREGROUND);
+			RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_OBJECT_LOCATIONCHANGE, Win32.EVENT_CONSTANTS.EVENT_OBJECT_LOCATIONCHANGE);
 
 			Win32.EnumWindows((handle, param) =>
 			{
@@ -98,21 +94,32 @@ namespace StageManager.Native
 				return true;
 			}, IntPtr.Zero);
 
-			var thread = new Thread(() =>
-			{
-				Win32.SetWindowsHookEx(Win32.WH_MOUSE_LL, _mouseHook, currentProcess.MainModule.BaseAddress, 0);
-				Application.Run();
-			});
-
-			thread.Name = "WindowsManager";
-			thread.Start();
-
 			return Task.CompletedTask;
+		}
+
+		private void RegisterWinEventHook(Win32.EVENT_CONSTANTS eventMin, Win32.EVENT_CONSTANTS eventMax)
+		{
+			var hook = Win32.SetWinEventHook(
+				eventMin,
+				eventMax,
+				IntPtr.Zero,
+				_hookDelegate,
+				0,
+				0,
+				(uint)Win32.EVENT_CONSTANTS.WINEVENT_SKIPOWNPROCESS);
+
+			if (hook != IntPtr.Zero)
+				_winEventHooks.Add(hook);
 		}
 
 		public void Stop()
 		{
 			_active = false;
+
+			foreach (var hook in _winEventHooks)
+				Win32.UnhookWinEvent(hook);
+
+			_winEventHooks.Clear();
 		}
 
 		public IWindowsDeferPosHandle DeferWindowsPos(int count)
@@ -143,14 +150,6 @@ namespace StageManager.Native
 				}
 				window.Focus();
 			}
-		}
-
-		private IntPtr MouseHook(int nCode, UIntPtr wParam, IntPtr lParam)
-		{
-			if (nCode == 0 && (uint)wParam == Win32.WM_LBUTTONUP)
-				HandleWindowMoveEnd();
-
-			return Win32.CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam);
 		}
 
 		private void WindowHook(IntPtr hWinEventHook, Win32.EVENT_CONSTANTS eventType, IntPtr hwnd, Win32.OBJID idObject, int idChild, uint dwEventThread, uint dwmsEventTime)

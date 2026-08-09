@@ -1,4 +1,23 @@
-# Stage Manager for Windows
+# Stage_Manager_Lai_v1
+
+> **Personal modified fork:** This repository is maintained by **Frank Lai** and is based on
+> [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
+> [Andreas Wäscher](https://github.com/awaescher). It is not presented as an original project by
+> the fork maintainer. The original copyright notice and MIT License are retained.
+
+## Lai v1 changes
+
+- anchors the sidebar to the physical left edge of the leftmost Windows display;
+- keeps windows from different applications visible simultaneously;
+- protects Windows Explorer, the taskbar, desktop icons, and Tencent Yuanbao translation popups;
+- removes a redundant low-level mouse hook and releases WinEvent hooks cleanly;
+- fixes a startup mouse-event race that could terminate the application;
+- uses compact, clipped sidebar preview cards so adjacent apps such as WeChat and Codex do not overlap.
+
+The published Windows build is identified as `Stage_Manager_Lai_v1`. See [NOTICE.md](NOTICE.md)
+for authorship and derivative-work attribution.
+
+## About the upstream project
 
 This is an experimental approach to bring the macOS [Stage Manager](https://support.apple.com/en-us/HT213315) to Microsoft Windows.
 

@@ -36,12 +36,17 @@ namespace StageManager
 		private Point _mouse = new Point(0, 0);
 		private SceneModel _removedCurrentScene;
 		private SceneModel _mouseDownScene;
+		private readonly System.Windows.Forms.Screen _targetScreen;
 
 		public bool EnableWindowDropToScene = false;
 		public bool EnableWindowPullToScene = true;
 
 		public MainWindow()
 		{
+			_targetScreen = System.Windows.Forms.Screen.AllScreens
+				.OrderBy(screen => screen.Bounds.Left)
+				.ThenBy(screen => screen.Bounds.Top)
+				.First();
 			InitializeComponent();
 
 			DataContext = this;
@@ -79,6 +84,7 @@ namespace StageManager
 			base.OnContentRendered(e);
 
 			_thisHandle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+			ApplyWindowMode();
 
 			var windowsManager = new WindowsManager();
 			SceneManager = new SceneManager(windowsManager);
@@ -132,10 +138,7 @@ namespace StageManager
 		protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
 		{
 			base.OnRenderSizeChanged(sizeInfo);
-			var area = this.GetMonitorWorkSize();
-			this.Left = 0;
-			this.Top = 0;
-			this.Height = area.Height;
+			ApplyWindowMode();
 		}
 
 		private void SceneManager_SceneChanged(object sender, SceneChangedEventArgs e)
@@ -282,20 +285,25 @@ namespace StageManager
 
 		private void ApplyWindowMode()
 		{
-			var newLeft = Mode == StageManager.WindowMode.OffScreen ? (-1 * Width) : 0.0;
-			if (Left == newLeft)
+			if (_thisHandle == IntPtr.Zero)
 				return;
 
-			var isIncoming = newLeft > Left;
-			var easingMode = isIncoming ? EasingMode.EaseOut : EasingMode.EaseIn;
+			var area = _targetScreen.WorkingArea;
+			var nativeWidth = (int)Math.Ceiling(Width);
+			var nativeLeft = Mode == StageManager.WindowMode.OffScreen
+				? area.Left - nativeWidth
+				: area.Left;
 
-			var animation = new DoubleAnimationUsingKeyFrames();
-			animation.Duration = new Duration(TimeSpan.FromSeconds(0.5));
-			var easingFunction = new PowerEase { EasingMode = easingMode };
-			animation.KeyFrames.Add(new EasingDoubleKeyFrame(Left, KeyTime.FromPercent(0)));
-			animation.KeyFrames.Add(new EasingDoubleKeyFrame(newLeft, KeyTime.FromPercent(1.0), easingFunction));
-
-			BeginAnimation(LeftProperty, animation);
+			Win32.SetWindowPos(
+				_thisHandle,
+				IntPtr.Zero,
+				nativeLeft,
+				area.Top,
+				nativeWidth,
+				area.Height,
+				Win32.SetWindowPosFlags.IgnoreZOrder |
+				Win32.SetWindowPosFlags.DoNotActivate |
+				Win32.SetWindowPosFlags.ShowWindow);
 		}
 
 		private void StartHook()
@@ -329,7 +337,8 @@ namespace StageManager
 			_mouse.X = e.Data.X;
 			_mouse.Y = e.Data.Y;
 
-			if (Mode == WindowMode.OffScreen && e.Data.X <= 44)
+			var targetLeft = _targetScreen.WorkingArea.Left;
+			if (Mode == WindowMode.OffScreen && e.Data.X >= targetLeft && e.Data.X <= targetLeft + 44)
 			{
 				Dispatcher.Invoke(() => Mode = WindowMode.Flyover);
 			}
@@ -343,11 +352,21 @@ namespace StageManager
 
 		private void UpdateModeByWindows(IEnumerable<IWindow> windows)
 		{
-			bool doesOverlap(IWindowLocation loc) => loc.State == Native.Window.WindowState.Maximized || (loc.State == Native.Window.WindowState.Normal && (loc.X * 2) < _lastWidth);
+			var targetArea = _targetScreen.WorkingArea;
+			var targetLeft = targetArea.Left;
+			bool isOnTargetScreen(IWindowLocation loc) =>
+				loc.X < targetArea.Right &&
+				loc.X + loc.Width > targetArea.Left &&
+				loc.Y < targetArea.Bottom &&
+				loc.Y + loc.Height > targetArea.Top;
+			bool doesOverlap(IWindowLocation loc) =>
+				isOnTargetScreen(loc) &&
+				(loc.State == Native.Window.WindowState.Maximized ||
+				 (loc.State == Native.Window.WindowState.Normal && ((loc.X - targetLeft) * 2) < _lastWidth));
 
 			var anyOverlappingWindows = windows.Any(w => doesOverlap(w.Location));
 
-			var containsMouse = _mouse.X <= _lastWidth;
+			var containsMouse = _mouse.X >= targetLeft && _mouse.X <= targetLeft + _lastWidth;
 			var setMode = Mode == WindowMode.OnScreen && !containsMouse
 							|| Mode == WindowMode.OffScreen
 							|| (Mode == WindowMode.Flyover && !containsMouse);

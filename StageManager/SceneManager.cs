@@ -30,7 +30,6 @@ namespace StageManager
 		{
 			WindowsManager = windowsManager ?? throw new ArgumentNullException(nameof(windowsManager));
 			_desktop = new Desktop();
-			_desktop.HideIcons();
 		}
 
 		public async Task Start()
@@ -184,8 +183,6 @@ namespace StageManager
 			{
 				_suspend = true;
 
-				var otherWindows = GetSceneableWindows().Except(scene?.Windows ?? Array.Empty<IWindow>()).ToArray();
-
 				var prior = _current;
 				_current = scene;
 
@@ -194,19 +191,17 @@ namespace StageManager
 
 				if (scene is object)
 				{
-					foreach (var w in scene.Windows)
+					var targetWindows = scene.Windows.ToArray();
+					foreach (var w in targetWindows)
 						WindowStrategy.Show(w);
-				}
 
-				foreach (var o in otherWindows)
-					WindowStrategy.Hide(o);
+					if (!targetWindows.Any(w => w.IsFocused))
+						targetWindows.LastOrDefault()?.Focus();
+				}
 
 				CurrentSceneSelectionChanged?.Invoke(this, new CurrentSceneSelectionChangedEventArgs(prior, _current));
 
-				if (scene is null)
-					_desktop.ShowIcons();
-				else
-					_desktop.HideIcons();
+				_desktop.ShowIcons();
 			}
 			finally
 			{
@@ -294,7 +289,7 @@ namespace StageManager
 			return _scenes;
 		}
 
-		public IEnumerable<IWindow> GetCurrentWindows() => _current?.Windows ?? GetSceneableWindows();
+		public IEnumerable<IWindow> GetCurrentWindows() => GetSceneableWindows();
 
 		private string GetWindowGroupKey(IWindow window) => window.ProcessName;
 	}

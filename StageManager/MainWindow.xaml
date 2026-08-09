@@ -12,7 +12,7 @@
     ShowInTaskbar="False"
     Topmost="False"
     WindowStyle="None"
-    Title="MainWindow"
+    Title="Stage_Manager_Lai_v1"
     Height="450"
     Width="280"
     ShowActivated="False"
@@ -51,9 +51,19 @@
             VerticalAlignment="Center"
             Padding="12, 0, 0, 0"
             ItemsSource="{Binding Scenes}">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <StackPanel Orientation="Vertical" />
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                    <StackPanel Orientation="Vertical"
+                    <StackPanel
+                        Orientation="Vertical"
+                        Width="196"
+                        Height="122"
+                        Margin="0,0,0,8"
+                        ClipToBounds="True"
                         Visibility="{Binding Visibility}"
                         Style="{StaticResource SceneOpacity}">
                         <i:Interaction.Triggers>
@@ -66,6 +76,10 @@
                         </i:Interaction.Triggers>
                         <!-- Windows -->
                         <ItemsControl
+                            Width="188"
+                            Height="92"
+                            HorizontalAlignment="Left"
+                            ClipToBounds="True"
                             ItemsSource="{Binding Windows}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
@@ -77,9 +91,11 @@
                                 <DataTemplate>
                                     <local:DwmThumbnail
                                         PreviewHandle="{Binding Handle}"
-                                        MinHeight="100"
-                                        MinWidth="150"
-                                        Margin="0, 0, 0, 0" />
+                                        Width="188"
+                                        Height="92"
+                                        HorizontalAlignment="Left"
+                                        VerticalAlignment="Top"
+                                        Margin="0,0,0,0" />
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
@@ -87,7 +103,8 @@
                         <ItemsControl
                             VerticalAlignment="Center"
                             HorizontalAlignment="Center"
-                            Margin="0,4,0,24"
+                            Height="22"
+                            Margin="0,3,0,0"
                             ItemsSource="{Binding Windows}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
@@ -103,8 +120,8 @@
                                                 BlurRadius="20" />
                                         </Border.Effect>
                                         <Image
-                                            Margin="0, 0, 0, 0"
-                                            Height="30"
+                                            Margin="0,0,0,0"
+                                            Height="20"
                                             Source="{Binding Icon}" />
                                     </Border>
                                 </DataTemplate>
@@ -117,7 +134,7 @@
         <tb:TaskbarIcon
             x:Name="trayIcon"
             Visibility="Visible"
-            ToolTipText="Stage Manager"
+            ToolTipText="Stage_Manager_Lai_v1"
             IconSource="StageManager.ico"
             MenuActivation="LeftOrRightClick">
             <tb:TaskbarIcon.ContextMenu>
