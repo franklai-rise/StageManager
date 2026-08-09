@@ -62,7 +62,16 @@ internal static class TestRunner
 		{
 			var layout = CardLayoutCalculator.Calculate(900, count, 1);
 			Assert(layout.Scale >= 0.55 && layout.Scale <= 1, $"Scale is outside bounds for {count} stages.");
-			Assert(layout.CardWidth > 0 && layout.CardHeight > 0 && layout.Gap >= 0, $"Invalid geometry for {count} stages.");
+			Assert(layout.CardWidth > 0 && layout.CardHeight > 0 && layout.Gap > 0, $"Invalid geometry for {count} stages.");
+			var stride = layout.CardHeight + layout.Gap;
+			for (var index = 1; index < count; index++)
+			{
+				var previousBottom = (index - 1) * stride + layout.CardHeight;
+				var nextTop = index * stride;
+				Assert(previousBottom < nextTop, $"Card slots overlap for {count} stages at index {index}.");
+			}
+			if (!layout.RequiresScrolling)
+				Assert(count * stride <= 900.5, $"Non-scrolling layout overflows for {count} stages.");
 		}
 		Assert(!CardLayoutCalculator.Calculate(900, 2, 1).RequiresScrolling, "Two stages should fit without scrolling.");
 		Assert(CardLayoutCalculator.Calculate(900, 20, 1).RequiresScrolling, "Twenty stages should scroll after reaching minimum size.");

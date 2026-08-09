@@ -16,6 +16,7 @@ public partial class DwmThumbnail : UserControl
 	private Point? _dpiScaleFactor;
 	private RECT? _lastDestination;
 	private bool _updateQueued;
+	private bool _layoutSuspended;
 
 	public DwmThumbnail()
 	{
@@ -39,6 +40,23 @@ public partial class DwmThumbnail : UserControl
 		set => SetValue(PreviewHandleProperty, value);
 	}
 
+	public void SuspendForLayout()
+	{
+		_layoutSuspended = true;
+		SetNativeVisibility(false);
+	}
+
+	public void ResumeAfterLayout()
+	{
+		_layoutSuspended = false;
+		_lastDestination = null;
+		if (IsLoaded && IsVisible)
+		{
+			RegisterThumbnail();
+			QueueUpdate();
+		}
+	}
+
 	protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
 	{
 		_dpiScaleFactor = null;
@@ -52,15 +70,18 @@ public partial class DwmThumbnail : UserControl
 		var control = (DwmThumbnail)dependencyObject;
 		control.UnregisterThumbnail();
 		control._lastDestination = null;
-		if (control.IsLoaded && control.IsVisible)
+		if (control.IsLoaded && control.IsVisible && !control._layoutSuspended)
 			control.RegisterThumbnail();
 	}
 
 	private void OnLoaded(object sender, RoutedEventArgs e)
 	{
 		_window = Window.GetWindow(this);
-		RegisterThumbnail();
-		QueueUpdate();
+		if (!_layoutSuspended)
+		{
+			RegisterThumbnail();
+			QueueUpdate();
+		}
 	}
 
 	private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -73,7 +94,7 @@ public partial class DwmThumbnail : UserControl
 
 	private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
 	{
-		if ((bool)e.NewValue)
+		if ((bool)e.NewValue && !_layoutSuspended)
 		{
 			RegisterThumbnail();
 			QueueUpdate();
@@ -113,7 +134,7 @@ public partial class DwmThumbnail : UserControl
 
 	private void QueueUpdate()
 	{
-		if (_updateQueued || !IsLoaded || !IsVisible)
+		if (_updateQueued || _layoutSuspended || !IsLoaded || !IsVisible)
 			return;
 		_updateQueued = true;
 		Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() =>
@@ -125,6 +146,9 @@ public partial class DwmThumbnail : UserControl
 
 	private void UpdateThumbnailProperties()
 	{
+		if (_layoutSuspended)
+			return;
+
 		if (_dwmThumbnail == IntPtr.Zero)
 		{
 			RegisterThumbnail();
@@ -167,6 +191,18 @@ public partial class DwmThumbnail : UserControl
 		{
 			// The visual was detached between the layout event and the render callback.
 		}
+	}
+
+	private void SetNativeVisibility(bool visible)
+	{
+		if (_dwmThumbnail == IntPtr.Zero)
+			return;
+		var properties = new DWM_THUMBNAIL_PROPERTIES
+		{
+			fVisible = visible,
+			dwFlags = (int)DWM_TNP.DWM_TNP_VISIBLE
+		};
+		NativeMethods.DwmUpdateThumbnailProperties(_dwmThumbnail, ref properties);
 	}
 
 	private Point GetDpiScaleFactor()

@@ -20,6 +20,7 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Threading;
 
 namespace StageManager;
 
@@ -41,6 +42,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	private TaskPoolGlobalHook? _hook;
 	private HotkeyManager? _hotkeys;
 	private System.Threading.Timer? _overlapCheckTimer;
+	private DispatcherOperation? _previewResumeOperation;
 	private WindowMode _mode = WindowMode.OnScreen;
 	private Point _mouse;
 	private Point _mouseDownPoint;
@@ -51,6 +53,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	private bool _sidebarForcedVisible;
 	private bool _exclusiveFullScreen;
 	private bool _closing;
+	private bool _stageRefreshQueued;
 	private bool _isSafeMode = AppServices.SafeMode;
 	private double _sceneCardWidth = BaseCardWidth;
 	private double _sceneCardHeight = BaseCardHeight;
@@ -145,6 +148,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 		_settings.SettingsChanged -= Settings_SettingsChanged;
 		_overlapCheckTimer?.Dispose();
 		_overlapCheckTimer = null;
+		_previewResumeOperation?.Abort();
+		_previewResumeOperation = null;
 		StopHook();
 		_hotkeys?.Dispose();
 		_hotkeys = null;
@@ -177,41 +182,91 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 		AppLogger.Info("Window management is active.");
 	}
 
-	private void SceneManager_StageChanged(object? sender, StageChangedEventArgs e) => Dispatcher.BeginInvoke(RefreshStageModels);
-	private void SceneManager_CurrentStageSelectionChanged(object? sender, CurrentStageSelectionChangedEventArgs e) => Dispatcher.BeginInvoke(RefreshStageModels);
-	private void SceneManager_StagesReset(object? sender, EventArgs e) => Dispatcher.BeginInvoke(RefreshStageModels);
+	private void SceneManager_StageChanged(object? sender, StageChangedEventArgs e) => QueueStageModelsRefresh();
+	private void SceneManager_CurrentStageSelectionChanged(object? sender, CurrentStageSelectionChangedEventArgs e) => QueueStageModelsRefresh();
+	private void SceneManager_StagesReset(object? sender, EventArgs e) => QueueStageModelsRefresh();
+
+	private void QueueStageModelsRefresh()
+	{
+		if (_stageRefreshQueued || _closing)
+			return;
+		_stageRefreshQueued = true;
+		Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+		{
+			_stageRefreshQueued = false;
+			RefreshStageModels();
+		}));
+	}
 
 	private void RefreshStageModels()
 	{
 		if (SceneManager is null)
 			return;
 
-		var currentId = SceneManager.GetCurrentStage()?.Id;
-		var desired = SceneManager.GetStages().Where(stage => stage.Id != currentId).ToArray();
-		for (var index = Scenes.Count - 1; index >= 0; index--)
+		SuspendDwmPreviews();
+		try
 		{
-			if (!desired.Any(stage => stage.Id == Scenes[index].Id))
-				Scenes.RemoveAt(index);
-		}
+			var currentId = SceneManager.GetCurrentStage()?.Id;
+			var desired = SceneManager.GetStages().Where(stage => stage.Id != currentId).ToArray();
+			for (var index = Scenes.Count - 1; index >= 0; index--)
+			{
+				if (!desired.Any(stage => stage.Id == Scenes[index].Id))
+					Scenes.RemoveAt(index);
+			}
 
-		for (var index = 0; index < desired.Length; index++)
-		{
-			var model = Scenes.FirstOrDefault(candidate => candidate.Id == desired[index].Id);
-			if (model is null)
+			for (var index = 0; index < desired.Length; index++)
 			{
-				model = SceneModel.FromStage(desired[index]);
-				Scenes.Insert(Math.Min(index, Scenes.Count), model);
+				var model = Scenes.FirstOrDefault(candidate => candidate.Id == desired[index].Id);
+				if (model is null)
+				{
+					model = SceneModel.FromStage(desired[index]);
+					Scenes.Insert(Math.Min(index, Scenes.Count), model);
+				}
+				else
+				{
+					model.UpdateFromStage(desired[index]);
+					var oldIndex = Scenes.IndexOf(model);
+					if (oldIndex != index)
+						Scenes.Move(oldIndex, index);
+				}
+				model.IsVisible = true;
 			}
-			else
-			{
-				model.UpdateFromStage(desired[index]);
-				var oldIndex = Scenes.IndexOf(model);
-				if (oldIndex != index)
-					Scenes.Move(oldIndex, index);
-			}
-			model.IsVisible = true;
+			UpdateSceneCardLayout();
 		}
-		UpdateSceneCardLayout();
+		finally
+		{
+			ResumeDwmPreviewsAfterLayout();
+		}
+	}
+
+	private void SuspendDwmPreviews()
+	{
+		foreach (var thumbnail in FindVisualChildren<DwmThumbnail>(scenesControl))
+			thumbnail.SuspendForLayout();
+	}
+
+	private void ResumeDwmPreviewsAfterLayout()
+	{
+		_previewResumeOperation?.Abort();
+		_previewResumeOperation = Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
+		{
+			_previewResumeOperation = null;
+			foreach (var thumbnail in FindVisualChildren<DwmThumbnail>(scenesControl))
+				thumbnail.ResumeAfterLayout();
+		}));
+	}
+
+	private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root) where T : DependencyObject
+	{
+		var count = VisualTreeHelper.GetChildrenCount(root);
+		for (var index = 0; index < count; index++)
+		{
+			var child = VisualTreeHelper.GetChild(root, index);
+			if (child is T match)
+				yield return match;
+			foreach (var descendant in FindVisualChildren<T>(child))
+				yield return descendant;
+		}
 	}
 
 	private void UpdateSceneCardLayout()

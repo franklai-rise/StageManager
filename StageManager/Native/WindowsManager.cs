@@ -18,6 +18,7 @@ public delegate void WindowUpdateDelegate(IWindow window, WindowUpdateType type)
 
 public sealed class WindowsManager : IWindowsManager, IDisposable
 {
+	private static readonly int[] RegistrationRetryDelaysMilliseconds = [140, 360, 900, 1800];
 	private readonly ConcurrentDictionary<IntPtr, WindowsWindow> _windows = new();
 	private readonly ConcurrentDictionary<IntPtr, CancellationTokenSource> _pendingRegistrations = new();
 	private readonly ConcurrentDictionary<IntPtr, long> _lastForegroundEvents = new();
@@ -245,22 +246,34 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 
 	private void ScheduleRegistration(IntPtr handle)
 	{
-		CancelRegistration(handle);
+		if (!_active || handle == IntPtr.Zero || _windows.ContainsKey(handle) || _pendingRegistrations.ContainsKey(handle))
+			return;
+
 		var source = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-		_pendingRegistrations[handle] = source;
+		if (!_pendingRegistrations.TryAdd(handle, source))
+		{
+			source.Dispose();
+			return;
+		}
+
 		_ = Task.Run(async () =>
 		{
 			try
 			{
-				await Task.Delay(140, source.Token).ConfigureAwait(false);
-				RegisterWindow(handle, emitEvent: true);
+				foreach (var delay in RegistrationRetryDelaysMilliseconds)
+				{
+					await Task.Delay(delay, source.Token).ConfigureAwait(false);
+					if (RegisterWindow(handle, emitEvent: true) || !Win32.IsWindow(handle))
+						return;
+				}
 			}
 			catch (OperationCanceledException)
 			{
 			}
 			finally
 			{
-				_pendingRegistrations.TryRemove(handle, out _);
+				((ICollection<KeyValuePair<IntPtr, CancellationTokenSource>>)_pendingRegistrations)
+					.Remove(new KeyValuePair<IntPtr, CancellationTokenSource>(handle, source));
 				source.Dispose();
 			}
 		});
@@ -275,25 +288,30 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 	private bool EventWindowIsValid(int idChild, Win32.OBJID idObject, IntPtr hwnd) =>
 		idChild == Win32.CHILDID_SELF && idObject == Win32.OBJID.OBJID_WINDOW && hwnd != IntPtr.Zero;
 
-	private void RegisterWindow(IntPtr handle, bool emitEvent)
+	private bool RegisterWindow(IntPtr handle, bool emitEvent)
 	{
-		if (!_active || handle == IntPtr.Zero || _windows.ContainsKey(handle) || !Win32.IsWindow(handle))
-			return;
+		if (!_active || handle == IntPtr.Zero || !Win32.IsWindow(handle))
+			return true;
+		if (_windows.ContainsKey(handle))
+			return true;
 
 		var window = new WindowsWindow(handle, _virtualDesktops);
-		if (window.ProcessId < 0 || window.ProcessId == _currentProcessId)
-			return;
+		if (window.ProcessId == _currentProcessId)
+			return true;
+		if (window.ProcessId < 0)
+			return false;
 		if (!_classifier.IsCandidate(window, out _))
-			return;
+			return false;
 
 		window.WindowFocused += HandleWindowFocused;
 		window.WindowUpdated += HandleWindowUpdated;
 		window.WindowClosed += HandleWindowClosed;
 		if (!_windows.TryAdd(handle, window))
-			return;
+			return true;
 
 		if (emitEvent)
 			HandleWindowAdd(window, true);
+		return true;
 	}
 
 	private void UnregisterWindow(IntPtr handle)
@@ -321,7 +339,10 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 		else if (type == WindowUpdateType.Show)
 			ScheduleRegistration(handle);
 		else if (type == WindowUpdateType.Foreground)
+		{
+			ScheduleRegistration(handle);
 			UntrackedFocus?.Invoke(this, handle);
+		}
 	}
 
 	private bool ShouldEmitForeground(IntPtr handle)
