@@ -9,25 +9,34 @@ using StageManager.Native.Window;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 
 namespace StageManager
 {
 	/// <summary>
 	/// Interaction logic for MainWindow.xaml
 	/// </summary>
-	public partial class MainWindow : Window
+	public partial class MainWindow : Window, INotifyPropertyChanged
 	{
 		private const int TIMERINTERVAL_MILLISECONDS = 500;
-		private const int MAX_SCENES = 6;
 		private const string APP_NAME = "StageManager";
+		private const double MAX_SCENE_CARD_WIDTH = 196;
+		private const double MAX_SCENE_CARD_HEIGHT = 122;
+		private const double MAX_SCENE_PREVIEW_WIDTH = 188;
+		private const double MAX_SCENE_PREVIEW_HEIGHT = 92;
+		private const double MAX_SCENE_ICON_HOST_HEIGHT = 22;
+		private const double MAX_SCENE_ICON_SIZE = 20;
+		private const double MAX_SCENE_GAP = 8;
+		private const double MIN_SCENE_SCALE = 0.55;
+		private const double SCENE_LIST_VERTICAL_PADDING = 16;
 		private IntPtr _thisHandle;
 		private TaskPoolGlobalHook _hook;
 		private WindowMode _mode;
@@ -37,9 +46,19 @@ namespace StageManager
 		private SceneModel _removedCurrentScene;
 		private SceneModel _mouseDownScene;
 		private readonly System.Windows.Forms.Screen _targetScreen;
+		private double _sceneCardWidth = MAX_SCENE_CARD_WIDTH;
+		private double _sceneCardHeight = MAX_SCENE_CARD_HEIGHT;
+		private Thickness _sceneCardMargin = new Thickness(0, 0, 0, MAX_SCENE_GAP);
+		private double _scenePreviewWidth = MAX_SCENE_PREVIEW_WIDTH;
+		private double _scenePreviewHeight = MAX_SCENE_PREVIEW_HEIGHT;
+		private double _sceneIconHostHeight = MAX_SCENE_ICON_HOST_HEIGHT;
+		private double _sceneIconSize = MAX_SCENE_ICON_SIZE;
+		private Thickness _sceneIconMargin = new Thickness(0, 3, 0, 0);
+		private double _sceneListMaxHeight = 450;
 
 		public bool EnableWindowDropToScene = false;
 		public bool EnableWindowPullToScene = true;
+		public event PropertyChangedEventHandler? PropertyChanged;
 
 		public MainWindow()
 		{
@@ -104,12 +123,14 @@ namespace StageManager
 		private void AddInitialScenes()
 		{
 			var initialScenes = SceneManager.GetScenes().ToArray();
-			for (int i = 0; i < initialScenes.Length; i++)
+			foreach (var scene in initialScenes)
 			{
-				var model = SceneModel.FromScene(initialScenes[i]);
-				model.IsVisible = i <= MAX_SCENES; // i is zero based, so it should be i+1 but one scene gets selected (and removed from the sidebar) that makes i+0 again
+				var model = SceneModel.FromScene(scene);
+				model.IsVisible = true;
 				Scenes.Add(model);
 			}
+
+			UpdateSceneCardLayout();
 		}
 
 		private void SceneManager_CurrentSceneSelectionChanged(object? sender, CurrentSceneSelectionChangedEventArgs args)
@@ -132,13 +153,14 @@ namespace StageManager
 
 			_removedCurrentScene = currentModel;
 
-			SyncVisibilityByUpdatedTimeStamp();
+			ShowAllScenesAndUpdateLayout();
 		}
 
 		protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
 		{
 			base.OnRenderSizeChanged(sizeInfo);
 			ApplyWindowMode();
+			UpdateSceneCardLayout();
 		}
 
 		private void SceneManager_SceneChanged(object sender, SceneChangedEventArgs e)
@@ -149,7 +171,7 @@ namespace StageManager
 				{
 					case ChangeType.Created:
 						Scenes.Add(SceneModel.FromScene(e.Scene));
-						SyncVisibilityByUpdatedTimeStamp();
+						ShowAllScenesAndUpdateLayout();
 						break;
 					case ChangeType.Updated:
 						if (AllScenes.FirstOrDefault(s => s.Id == e.Scene.Id) is SceneModel toUpdate)
@@ -163,7 +185,7 @@ namespace StageManager
 							else
 								Scenes.Remove(toRemove);
 						}
-						SyncVisibilityByUpdatedTimeStamp();
+						ShowAllScenesAndUpdateLayout();
 						break;
 				}
 			});
@@ -250,14 +272,57 @@ namespace StageManager
 
 			return model;
 		}
-		private void SyncVisibilityByUpdatedTimeStamp()
+		private void ShowAllScenesAndUpdateLayout()
 		{
-			var scenes = Scenes.OrderByDescending(s => s.Updated).ToArray();
-			for (int i = 0; i < scenes.Length; i++)
-				scenes[i].IsVisible = i < MAX_SCENES;
+			foreach (var scene in Scenes)
+				scene.IsVisible = true;
+
+			UpdateSceneCardLayout();
+		}
+
+		private void UpdateSceneCardLayout()
+		{
+			var visibleSceneCount = Scenes.Count(scene => scene.IsVisible);
+			var availableHeight = Math.Max(1, (ActualHeight > 0 ? ActualHeight : Height) - SCENE_LIST_VERTICAL_PADDING);
+			var maxSceneStride = MAX_SCENE_CARD_HEIGHT + MAX_SCENE_GAP;
+			var scale = visibleSceneCount > 0
+				? Math.Min(1, availableHeight / (visibleSceneCount * maxSceneStride))
+				: 1;
+
+			scale = Math.Max(MIN_SCENE_SCALE, scale);
+
+			SceneCardWidth = Math.Round(MAX_SCENE_CARD_WIDTH * scale, 1);
+			SceneCardHeight = Math.Round(MAX_SCENE_CARD_HEIGHT * scale, 1);
+			SceneCardMargin = new Thickness(0, 0, 0, Math.Round(MAX_SCENE_GAP * scale, 1));
+			ScenePreviewWidth = Math.Round(MAX_SCENE_PREVIEW_WIDTH * scale, 1);
+			ScenePreviewHeight = Math.Round(MAX_SCENE_PREVIEW_HEIGHT * scale, 1);
+			SceneIconHostHeight = Math.Round(MAX_SCENE_ICON_HOST_HEIGHT * scale, 1);
+			SceneIconSize = Math.Round(MAX_SCENE_ICON_SIZE * scale, 1);
+			SceneIconMargin = new Thickness(0, Math.Round(3 * scale, 1), 0, 0);
+			SceneListMaxHeight = availableHeight;
+		}
+
+		private bool SetLayoutValue<T>(ref T field, T value, [CallerMemberName] string propertyName = "")
+		{
+			if (EqualityComparer<T>.Default.Equals(field, value))
+				return false;
+
+			field = value;
+			PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+			return true;
 		}
 
 		public ObservableCollection<SceneModel> Scenes { get; } = new ObservableCollection<SceneModel>();
+
+		public double SceneCardWidth { get => _sceneCardWidth; private set => SetLayoutValue(ref _sceneCardWidth, value); }
+		public double SceneCardHeight { get => _sceneCardHeight; private set => SetLayoutValue(ref _sceneCardHeight, value); }
+		public Thickness SceneCardMargin { get => _sceneCardMargin; private set => SetLayoutValue(ref _sceneCardMargin, value); }
+		public double ScenePreviewWidth { get => _scenePreviewWidth; private set => SetLayoutValue(ref _scenePreviewWidth, value); }
+		public double ScenePreviewHeight { get => _scenePreviewHeight; private set => SetLayoutValue(ref _scenePreviewHeight, value); }
+		public double SceneIconHostHeight { get => _sceneIconHostHeight; private set => SetLayoutValue(ref _sceneIconHostHeight, value); }
+		public double SceneIconSize { get => _sceneIconSize; private set => SetLayoutValue(ref _sceneIconSize, value); }
+		public Thickness SceneIconMargin { get => _sceneIconMargin; private set => SetLayoutValue(ref _sceneIconMargin, value); }
+		public double SceneListMaxHeight { get => _sceneListMaxHeight; private set => SetLayoutValue(ref _sceneListMaxHeight, value); }
 
 		public IEnumerable<SceneModel> AllScenes => Scenes.Union(new[] { _removedCurrentScene });
 

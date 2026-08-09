@@ -7,14 +7,14 @@
 		<UseWPF>true</UseWPF>
 		<UseWindowsForms>true</UseWindowsForms>
 		<ApplicationIcon>StageManager.ico</ApplicationIcon>
-		<Version>1.0.0</Version>
-		<AssemblyVersion>1.0.0.0</AssemblyVersion>
-		<FileVersion>1.0.0.0</FileVersion>
-		<InformationalVersion>Stage_Manager_Lai_v1</InformationalVersion>
-		<Product>Stage_Manager_Lai_v1</Product>
+		<Version>1.1.0</Version>
+		<AssemblyVersion>1.1.0.0</AssemblyVersion>
+		<FileVersion>1.1.0.0</FileVersion>
+		<InformationalVersion>Stage_Manager_Lai_v1.1</InformationalVersion>
+		<Product>Stage_Manager_Lai_v1.1</Product>
 		<Authors>Andreas Wäscher; Frank Lai (modified fork)</Authors>
 		<Description>Personal modified build of Stage Manager for Windows, based on the original project by Andreas Wäscher.</Description>
-		<Copyright>Original copyright (c) 2022 Andreas Wäscher; Lai v1 modifications (c) 2026 Frank Lai</Copyright>
+		<Copyright>Original copyright (c) 2022 Andreas Wäscher; Lai v1 series modifications (c) 2026 Frank Lai</Copyright>
 		<RepositoryUrl>https://github.com/franklai-rise/StageManager</RepositoryUrl>
 	</PropertyGroup>
 

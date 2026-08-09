@@ -1,4 +1,4 @@
-# Stage_Manager_Lai_v1
+# Stage_Manager_Lai_v1.1
 
 > **Personal modified fork:** This repository is maintained by **Frank Lai** and is based on
 > [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -13,8 +13,10 @@
 - removes a redundant low-level mouse hook and releases WinEvent hooks cleanly;
 - fixes a startup mouse-event race that could terminate the application;
 - uses compact, clipped sidebar preview cards so adjacent apps such as WeChat and Codex do not overlap.
+- removes the six-card display limit and automatically scales cards, previews, icons, and spacing to
+  fit the available sidebar height; very large scene lists remain accessible by mouse-wheel scrolling.
 
-The published Windows build is identified as `Stage_Manager_Lai_v1`. See [NOTICE.md](NOTICE.md)
+The published Windows build is identified as `Stage_Manager_Lai_v1.1`. See [NOTICE.md](NOTICE.md)
 for authorship and derivative-work attribution.
 
 ## About the upstream project

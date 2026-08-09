@@ -12,7 +12,7 @@
     ShowInTaskbar="False"
     Topmost="False"
     WindowStyle="None"
-    Title="Stage_Manager_Lai_v1"
+    Title="Stage_Manager_Lai_v1.1"
     Height="450"
     Width="280"
     ShowActivated="False"
@@ -45,96 +45,100 @@
     </Window.Resources>
     <StackPanel
         VerticalAlignment="Center">
-        <ItemsControl
-            Name="scenesControl"
-            HorizontalAlignment="Left"
+        <ScrollViewer
             VerticalAlignment="Center"
-            Padding="12, 0, 0, 0"
-            ItemsSource="{Binding Scenes}">
-            <ItemsControl.ItemsPanel>
-                <ItemsPanelTemplate>
-                    <StackPanel Orientation="Vertical" />
-                </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate>
-                <DataTemplate>
-                    <StackPanel
-                        Orientation="Vertical"
-                        Width="196"
-                        Height="122"
-                        Margin="0,0,0,8"
-                        ClipToBounds="True"
-                        Visibility="{Binding Visibility}"
-                        Style="{StaticResource SceneOpacity}">
-                        <i:Interaction.Triggers>
-                            <i:EventTrigger
-                                EventName="MouseLeftButtonUp">
-                                <i:InvokeCommandAction
-                                    Command="{Binding SwitchSceneCommand, Mode=OneTime, Source={x:Reference thisWindow}}"
-                                    CommandParameter="{Binding .}" />
-                            </i:EventTrigger>
-                        </i:Interaction.Triggers>
-                        <!-- Windows -->
-                        <ItemsControl
-                            Width="188"
-                            Height="92"
-                            HorizontalAlignment="Left"
+            MaxHeight="{Binding SceneListMaxHeight}"
+            HorizontalScrollBarVisibility="Disabled"
+            VerticalScrollBarVisibility="Hidden"
+            PanningMode="VerticalOnly">
+            <ItemsControl
+                Name="scenesControl"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Center"
+                Padding="12,0,0,0"
+                ItemsSource="{Binding Scenes}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Vertical" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel
+                            Orientation="Vertical"
+                            Width="{Binding SceneCardWidth, Source={x:Reference thisWindow}}"
+                            Height="{Binding SceneCardHeight, Source={x:Reference thisWindow}}"
+                            Margin="{Binding SceneCardMargin, Source={x:Reference thisWindow}}"
                             ClipToBounds="True"
-                            ItemsSource="{Binding Windows}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <Grid
-                                        Margin="0,0,0,0"></Grid>
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <local:DwmThumbnail
-                                        PreviewHandle="{Binding Handle}"
-                                        Width="188"
-                                        Height="92"
-                                        HorizontalAlignment="Left"
-                                        VerticalAlignment="Top"
-                                        Margin="0,0,0,0" />
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                        <!-- Icons -->
-                        <ItemsControl
-                            VerticalAlignment="Center"
-                            HorizontalAlignment="Center"
-                            Height="22"
-                            Margin="0,3,0,0"
-                            ItemsSource="{Binding Windows}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <StackPanel
-                                        Orientation="Horizontal" />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border>
-                                        <Border.Effect>
-                                            <DropShadowEffect
-                                                BlurRadius="20" />
-                                        </Border.Effect>
-                                        <Image
-                                            Margin="0,0,0,0"
-                                            Height="20"
-                                            Source="{Binding Icon}" />
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-                </DataTemplate>
-            </ItemsControl.ItemTemplate>
-        </ItemsControl>
+                            Visibility="{Binding Visibility}"
+                            Style="{StaticResource SceneOpacity}">
+                            <i:Interaction.Triggers>
+                                <i:EventTrigger
+                                    EventName="MouseLeftButtonUp">
+                                    <i:InvokeCommandAction
+                                        Command="{Binding SwitchSceneCommand, Mode=OneTime, Source={x:Reference thisWindow}}"
+                                        CommandParameter="{Binding .}" />
+                                </i:EventTrigger>
+                            </i:Interaction.Triggers>
+                            <!-- Windows -->
+                            <ItemsControl
+                                Width="{Binding ScenePreviewWidth, Source={x:Reference thisWindow}}"
+                                Height="{Binding ScenePreviewHeight, Source={x:Reference thisWindow}}"
+                                HorizontalAlignment="Left"
+                                ClipToBounds="True"
+                                ItemsSource="{Binding Windows}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <Grid Margin="0,0,0,0" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <local:DwmThumbnail
+                                            PreviewHandle="{Binding Handle}"
+                                            Width="{Binding ScenePreviewWidth, Source={x:Reference thisWindow}}"
+                                            Height="{Binding ScenePreviewHeight, Source={x:Reference thisWindow}}"
+                                            HorizontalAlignment="Left"
+                                            VerticalAlignment="Top"
+                                            Margin="0,0,0,0" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <!-- Icons -->
+                            <ItemsControl
+                                VerticalAlignment="Center"
+                                HorizontalAlignment="Center"
+                                Height="{Binding SceneIconHostHeight, Source={x:Reference thisWindow}}"
+                                Margin="{Binding SceneIconMargin, Source={x:Reference thisWindow}}"
+                                ItemsSource="{Binding Windows}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border>
+                                            <Border.Effect>
+                                                <DropShadowEffect BlurRadius="20" />
+                                            </Border.Effect>
+                                            <Image
+                                                Margin="0,0,0,0"
+                                                Height="{Binding SceneIconSize, Source={x:Reference thisWindow}}"
+                                                Source="{Binding Icon}" />
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
         <tb:TaskbarIcon
             x:Name="trayIcon"
             Visibility="Visible"
-            ToolTipText="Stage_Manager_Lai_v1"
+            ToolTipText="Stage_Manager_Lai_v1.1"
             IconSource="StageManager.ico"
             MenuActivation="LeftOrRightClick">
             <tb:TaskbarIcon.ContextMenu>
