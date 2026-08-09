@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.0
+# Stage_Manager_Lai v2.0.1
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -6,6 +6,8 @@ Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 license and is not presented as an original project by the fork maintainer.
 
 `Stage_Manager_Lai_v1.1` remains tagged as the stable pre-v2 baseline.
+
+v2.0.1 makes the sidebar canvas fully transparent while retaining the individual live-preview cards.
 
 ## What v2 adds
 

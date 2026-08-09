@@ -119,7 +119,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	{
 		base.OnSourceInitialized(e);
 		_thisHandle = new WindowInteropHelper(this).Handle;
-		BackdropService.Apply(_thisHandle);
 		_hotkeys = new HotkeyManager(_thisHandle);
 		RegisterHotkeys();
 		ApplyWindowMode();

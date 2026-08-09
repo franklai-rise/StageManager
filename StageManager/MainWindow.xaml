@@ -6,16 +6,16 @@
         xmlns:local="clr-namespace:StageManager"
         xmlns:tb="http://www.hardcodet.net/taskbar"
         mc:Ignorable="d"
-        AllowsTransparency="False"
+        AllowsTransparency="True"
         ShowInTaskbar="False"
         Topmost="False"
         WindowStyle="None"
         ResizeMode="NoResize"
-        Title="Stage_Manager_Lai_v2.0"
+        Title="Stage_Manager_Lai_v2.0.1"
         Height="450"
         Width="224"
         ShowActivated="False"
-        Background="#08000000"
+        Background="Transparent"
         Name="thisWindow">
     <Window.Resources>
         <Style x:Key="StageCardStyle" TargetType="Border">
@@ -40,7 +40,7 @@
     </Window.Resources>
 
     <Grid>
-        <Border Margin="8,8,12,8" Padding="4" CornerRadius="16" Background="#7416191E">
+        <Border Margin="8,8,12,8" Padding="4" CornerRadius="16" Background="Transparent">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -165,7 +165,7 @@
 
         <tb:TaskbarIcon x:Name="trayIcon"
                         Visibility="Visible"
-                        ToolTipText="Stage_Manager_Lai v2.0"
+                        ToolTipText="Stage_Manager_Lai v2.0.1"
                         IconSource="StageManager.ico"
                         MenuActivation="LeftOrRightClick">
             <tb:TaskbarIcon.ContextMenu>
