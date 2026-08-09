@@ -1,396 +1,380 @@
-﻿using System;
+using StageManager.Infrastructure;
+using StageManager.Native.PInvoke;
+using StageManager.Native.Window;
+using StageManager.Services;
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
-using StageManager.Native.PInvoke;
-using StageManager.Native.Window;
 
-namespace StageManager.Native
+namespace StageManager.Native;
+
+public delegate void WindowDelegate(IWindow window);
+public delegate void WindowCreateDelegate(IWindow window, bool firstCreate);
+public delegate void WindowUpdateDelegate(IWindow window, WindowUpdateType type);
+
+public sealed class WindowsManager : IWindowsManager, IDisposable
 {
-	public delegate void WindowDelegate(IWindow window);
-	public delegate void WindowCreateDelegate(IWindow window, bool firstCreate);
-	public delegate void WindowUpdateDelegate(IWindow window, WindowUpdateType type);
+	private readonly ConcurrentDictionary<IntPtr, WindowsWindow> _windows = new();
+	private readonly ConcurrentDictionary<IntPtr, CancellationTokenSource> _pendingRegistrations = new();
+	private readonly ConcurrentDictionary<IntPtr, long> _lastForegroundEvents = new();
+	private readonly ConcurrentDictionary<WindowsWindow, bool> _floating = new();
+	private readonly List<IntPtr> _winEventHooks = new();
+	private readonly object _hooksLock = new();
+	private readonly object _mouseMoveLock = new();
+	private readonly IWindowClassifier _classifier;
+	private readonly VirtualDesktopService _virtualDesktops;
+	private readonly WinEventDelegate _hookDelegate;
+	private CancellationTokenSource _lifetime = new();
+	private WindowsWindow? _mouseMoveWindow;
+	private volatile bool _active;
+	private int _currentProcessId;
 
-	public class WindowsManager : IWindowsManager
+	public WindowsManager(IWindowClassifier classifier, VirtualDesktopService virtualDesktops)
 	{
-		private bool _active;
-		private IDictionary<IntPtr, WindowsWindow> _windows;
-		private WinEventDelegate _hookDelegate;
-		private readonly List<IntPtr> _winEventHooks = new List<IntPtr>();
+		_classifier = classifier ?? throw new ArgumentNullException(nameof(classifier));
+		_virtualDesktops = virtualDesktops ?? throw new ArgumentNullException(nameof(virtualDesktops));
+		_hookDelegate = WindowHook;
+	}
 
-		private WindowsWindow _mouseMoveWindow;
-		private readonly object _mouseMoveLock = new object();
+	public event WindowCreateDelegate? WindowCreated;
+	public event WindowDelegate? WindowDestroyed;
+	public event WindowUpdateDelegate? WindowUpdated;
+	public event EventHandler<IntPtr>? UntrackedFocus;
+	public event WindowFocusDelegate? WindowFocused;
+	public event EventHandler? WindowMoved;
+	public event EventHandler? DesktopChanged;
+	public event WindowDelegate? ExternalWindowUpdate;
+	public event WindowDelegate? ExternalWindowClosed;
 
-		private Dictionary<WindowsWindow, bool> _floating;
-		private IntPtr _currentProcessWindowHandle;
-		private int _currentProcessId;
+	public IEnumerable<IWindow> Windows => _windows.Values.ToArray();
 
-		/// <summary>
-		/// Notifies when a new window handle was created by the manager
-		/// </summary>
-		public event WindowCreateDelegate WindowCreated;
-		/// <summary>
-		/// Notifies when a handled window was removed by the manager
-		/// </summary>
-		public event WindowDelegate WindowDestroyed;
-		/// <summary>
-		/// Notifies when a handled window was updated by the manager
-		/// This is used internally by the workspace manager to apply the update to the window
-		/// </summary>
-		public event WindowUpdateDelegate WindowUpdated;
-
-		public event EventHandler<IntPtr> UntrackedFocus;
-
-		/// <summary>
-		/// Notifies when a window focuses itself
-		/// </summary>
-		public event WindowFocusDelegate WindowFocused;
-
-		public event EventHandler WindowMoved;
-
-		/// <summary>
-		/// Notifies when a window updated itself
-		/// This is used to externally notify when an update was applied to a window
-		/// </summary>
-		public event WindowDelegate ExternalWindowUpdate;
-		/// <summary>
-		/// Notifies when a window closes itself
-		/// This is used to externally notify when a window was closed
-		/// </summary>
-		public event WindowDelegate ExternalWindowClosed;
-
-		public IEnumerable<IWindow> Windows => _windows.Values;
-
-		public WindowsManager()
-		{
-			_windows = new Dictionary<IntPtr, WindowsWindow>();
-			_floating = new Dictionary<WindowsWindow, bool>();
-			_hookDelegate = new WinEventDelegate(WindowHook);
-		}
-
-		public Task Start()
-		{
-			_active = true;
-
-			var currentProcess = Process.GetCurrentProcess();
-			_currentProcessId = currentProcess.Id;
-			_currentProcessWindowHandle = currentProcess.MainWindowHandle;
-
-			RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_OBJECT_DESTROY, Win32.EVENT_CONSTANTS.EVENT_OBJECT_SHOW);
-			RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_OBJECT_CLOAKED, Win32.EVENT_CONSTANTS.EVENT_OBJECT_UNCLOAKED);
-			RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZESTART, Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZEEND);
-			RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MOVESIZESTART, Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MOVESIZEEND);
-			RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_SYSTEM_FOREGROUND, Win32.EVENT_CONSTANTS.EVENT_SYSTEM_FOREGROUND);
-			RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_OBJECT_LOCATIONCHANGE, Win32.EVENT_CONSTANTS.EVENT_OBJECT_LOCATIONCHANGE);
-
-			Win32.EnumWindows((handle, param) =>
-			{
-				if (Win32Helper.IsAppWindow(handle))
-				{
-					RegisterWindow(handle, false);
-				}
-				return true;
-			}, IntPtr.Zero);
-
+	public Task Start()
+	{
+		if (_active)
 			return Task.CompletedTask;
-		}
 
-		private void RegisterWinEventHook(Win32.EVENT_CONSTANTS eventMin, Win32.EVENT_CONSTANTS eventMax)
+		_active = true;
+		_lifetime = new CancellationTokenSource();
+		_currentProcessId = Environment.ProcessId;
+
+		RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_OBJECT_DESTROY, Win32.EVENT_CONSTANTS.EVENT_OBJECT_HIDE);
+		RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_OBJECT_CLOAKED, Win32.EVENT_CONSTANTS.EVENT_OBJECT_UNCLOAKED);
+		RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZESTART, Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZEEND);
+		RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MOVESIZESTART, Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MOVESIZEEND);
+		RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_SYSTEM_FOREGROUND, Win32.EVENT_CONSTANTS.EVENT_SYSTEM_FOREGROUND);
+		RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_OBJECT_LOCATIONCHANGE, Win32.EVENT_CONSTANTS.EVENT_OBJECT_LOCATIONCHANGE);
+		RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_SYSTEM_DESKTOPSWITCH, Win32.EVENT_CONSTANTS.EVENT_SYSTEM_DESKTOPSWITCH);
+
+		EnumerateWindows(emitEvent: false);
+		AppLogger.Info($"Window tracking started with {_windows.Count} candidates.");
+		return Task.CompletedTask;
+	}
+
+	public void Stop()
+	{
+		if (!_active)
+			return;
+
+		_active = false;
+		_lifetime.Cancel();
+		foreach (var pending in _pendingRegistrations.Values)
+			pending.Cancel();
+		_pendingRegistrations.Clear();
+
+		lock (_hooksLock)
 		{
-			var hook = Win32.SetWinEventHook(
-				eventMin,
-				eventMax,
-				IntPtr.Zero,
-				_hookDelegate,
-				0,
-				0,
-				(uint)Win32.EVENT_CONSTANTS.WINEVENT_SKIPOWNPROCESS);
-
-			if (hook != IntPtr.Zero)
-				_winEventHooks.Add(hook);
-		}
-
-		public void Stop()
-		{
-			_active = false;
-
 			foreach (var hook in _winEventHooks)
 				Win32.UnhookWinEvent(hook);
-
 			_winEventHooks.Clear();
 		}
 
-		public IWindowsDeferPosHandle DeferWindowsPos(int count)
+		AppLogger.Info("Window tracking stopped and all WinEvent hooks were released.");
+	}
+
+	public void Dispose()
+	{
+		Stop();
+		_lifetime.Dispose();
+	}
+
+	public void ReevaluateWindows()
+	{
+		if (!_active)
+			return;
+
+		EnumerateWindows(emitEvent: true);
+		foreach (var pair in _windows.ToArray())
 		{
-			var info = Win32.BeginDeferWindowPos(count);
-			return new WindowsDeferPosHandle(info);
+			if (!_classifier.IsCandidate(pair.Value, out _))
+				UnregisterWindow(pair.Key);
 		}
+	}
 
-		public void ToggleFocusedWindowTiling()
+	public bool TryGetWindow(IntPtr handle, out IWindow? window)
+	{
+		if (_windows.TryGetValue(handle, out var concrete))
 		{
-			if (!_active)
-				return;
+			window = concrete;
+			return true;
+		}
+		window = null;
+		return false;
+	}
 
-			var window = _windows.Values.FirstOrDefault(w => w.IsFocused);
+	public IWindowsDeferPosHandle DeferWindowsPos(int count) => new WindowsDeferPosHandle(Win32.BeginDeferWindowPos(count));
 
-			if (window != null)
+	public void ToggleFocusedWindowTiling()
+	{
+		if (!_active)
+			return;
+
+		var window = _windows.Values.FirstOrDefault(candidate => candidate.IsFocused);
+		if (window is null)
+			return;
+
+		if (_floating.TryRemove(window, out _))
+			HandleWindowAdd(window, false);
+		else
+		{
+			_floating[window] = true;
+			HandleWindowRemove(window);
+			window.BringToTop();
+		}
+		window.Focus();
+	}
+
+	private void EnumerateWindows(bool emitEvent)
+	{
+		Win32.EnumWindows((handle, _) =>
+		{
+			RegisterWindow(handle, emitEvent);
+			return true;
+		}, IntPtr.Zero);
+	}
+
+	private void RegisterWinEventHook(Win32.EVENT_CONSTANTS eventMin, Win32.EVENT_CONSTANTS eventMax)
+	{
+		var hook = Win32.SetWinEventHook(eventMin, eventMax, IntPtr.Zero, _hookDelegate, 0, 0,
+			(uint)(Win32.EVENT_CONSTANTS.WINEVENT_SKIPOWNPROCESS | Win32.EVENT_CONSTANTS.WINEVENT_OUTOFCONTEXT));
+		if (hook != IntPtr.Zero)
+		{
+			lock (_hooksLock)
+				_winEventHooks.Add(hook);
+		}
+		else
+			AppLogger.Warn($"SetWinEventHook failed for {eventMin}..{eventMax}.");
+	}
+
+	private void WindowHook(IntPtr hookHandle, Win32.EVENT_CONSTANTS eventType, IntPtr hwnd, Win32.OBJID idObject, int idChild, uint eventThread, uint eventTime)
+	{
+		if (!_active)
+			return;
+
+		try
+		{
+			if (eventType == Win32.EVENT_CONSTANTS.EVENT_SYSTEM_DESKTOPSWITCH)
 			{
-				if (_floating.ContainsKey(window))
-				{
-					_floating.Remove(window);
-					HandleWindowAdd(window, false);
-				}
-				else
-				{
-					_floating[window] = true;
-					HandleWindowRemove(window);
-					window.BringToTop();
-				}
-				window.Focus();
+				_ = HandleDesktopSwitchAsync();
+				return;
 			}
-		}
 
-		private void WindowHook(IntPtr hWinEventHook, Win32.EVENT_CONSTANTS eventType, IntPtr hwnd, Win32.OBJID idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
-		{
-			if (!_active)
+			if (!EventWindowIsValid(idChild, idObject, hwnd))
 				return;
 
-			if (EventWindowIsValid(idChild, idObject, hwnd))
+			switch (eventType)
 			{
-				switch (eventType)
-				{
-					case Win32.EVENT_CONSTANTS.EVENT_OBJECT_SHOW:
-						RegisterWindow(hwnd);
-						break;
-					case Win32.EVENT_CONSTANTS.EVENT_OBJECT_DESTROY:
-						UnregisterWindow(hwnd);
-						break;
-					case Win32.EVENT_CONSTANTS.EVENT_OBJECT_CLOAKED:
-						UpdateWindow(hwnd, WindowUpdateType.Hide);
-						break;
-					case Win32.EVENT_CONSTANTS.EVENT_OBJECT_UNCLOAKED:
-						UpdateWindow(hwnd, WindowUpdateType.Show);
-						break;
-					case Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZESTART:
-						UpdateWindow(hwnd, WindowUpdateType.MinimizeStart);
-						break;
-					case Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZEEND:
-						UpdateWindow(hwnd, WindowUpdateType.MinimizeEnd);
-						break;
-					case Win32.EVENT_CONSTANTS.EVENT_SYSTEM_FOREGROUND:
+				case Win32.EVENT_CONSTANTS.EVENT_OBJECT_SHOW:
+					ScheduleRegistration(hwnd);
+					break;
+				case Win32.EVENT_CONSTANTS.EVENT_OBJECT_DESTROY:
+					CancelRegistration(hwnd);
+					UnregisterWindow(hwnd);
+					break;
+				case Win32.EVENT_CONSTANTS.EVENT_OBJECT_HIDE:
+				case Win32.EVENT_CONSTANTS.EVENT_OBJECT_CLOAKED:
+					UpdateWindow(hwnd, WindowUpdateType.Hide);
+					break;
+				case Win32.EVENT_CONSTANTS.EVENT_OBJECT_UNCLOAKED:
+					UpdateWindow(hwnd, WindowUpdateType.Show);
+					break;
+				case Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZESTART:
+					UpdateWindow(hwnd, WindowUpdateType.MinimizeStart);
+					break;
+				case Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZEEND:
+					UpdateWindow(hwnd, WindowUpdateType.MinimizeEnd);
+					break;
+				case Win32.EVENT_CONSTANTS.EVENT_SYSTEM_FOREGROUND:
+					if (ShouldEmitForeground(hwnd))
 						UpdateWindow(hwnd, WindowUpdateType.Foreground);
-						break;
-					case Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MOVESIZESTART:
-						StartWindowMove(hwnd);
-						break;
-					case Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MOVESIZEEND:
-						EndWindowMove(hwnd);
-						break;
-					case Win32.EVENT_CONSTANTS.EVENT_OBJECT_LOCATIONCHANGE:
-						WindowMove(hwnd);
-						break;
-				}
+					break;
+				case Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MOVESIZESTART:
+					StartWindowMove(hwnd);
+					break;
+				case Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MOVESIZEEND:
+					EndWindowMove(hwnd);
+					break;
+				case Win32.EVENT_CONSTANTS.EVENT_OBJECT_LOCATIONCHANGE:
+					WindowMove(hwnd);
+					break;
 			}
 		}
-
-		private bool EventWindowIsValid(int idChild, Win32.OBJID idObject, IntPtr hwnd)
+		catch (Exception ex)
 		{
-			return idChild == Win32.CHILDID_SELF && idObject == Win32.OBJID.OBJID_WINDOW && hwnd != IntPtr.Zero;
+			AppLogger.Error($"Window event {eventType} failed for {hwnd}.", ex);
 		}
+	}
 
-		private void RegisterWindow(IntPtr handle, bool emitEvent = true)
+	private async Task HandleDesktopSwitchAsync()
+	{
+		try
 		{
-			if (!_active)
-				return;
-
-			if (handle == _currentProcessWindowHandle)
-				return;
-
-			if (!_windows.ContainsKey(handle))
-			{
-				var window = new WindowsWindow(handle);
-
-				if (window.ProcessId < 0 || window.ProcessId == _currentProcessId)
-					return;
-
-				if (window.IsCandidate())
-				{
-					window.WindowFocused += (sender) => HandleWindowFocused(sender);
-					window.WindowUpdated += (sender) => HandleWindowUpdated(sender);
-					window.WindowClosed += (sender) => HandleWindowClosed(sender);
-
-					_windows[handle] = window;
-
-					if (emitEvent)
-					{
-						HandleWindowAdd(window, true);
-					}
-				}
-			}
+			await Task.Delay(180, _lifetime.Token).ConfigureAwait(false);
+			foreach (var window in _windows.Values)
+				window.RefreshIdentity(_virtualDesktops);
+			ReevaluateWindows();
+			DesktopChanged?.Invoke(this, EventArgs.Empty);
 		}
-
-		private void UnregisterWindow(IntPtr handle)
+		catch (OperationCanceledException)
 		{
-			if (!_active)
-				return;
-
-			if (_windows.ContainsKey(handle))
-			{
-				var window = _windows[handle];
-				_windows.Remove(handle);
-				HandleWindowRemove(window);
-			}
 		}
+	}
 
-		private void UpdateWindow(IntPtr handle, WindowUpdateType type)
+	private void ScheduleRegistration(IntPtr handle)
+	{
+		CancelRegistration(handle);
+		var source = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+		_pendingRegistrations[handle] = source;
+		_ = Task.Run(async () =>
 		{
-			if (!_active)
-				return;
+			try
+			{
+				await Task.Delay(140, source.Token).ConfigureAwait(false);
+				RegisterWindow(handle, emitEvent: true);
+			}
+			catch (OperationCanceledException)
+			{
+			}
+			finally
+			{
+				_pendingRegistrations.TryRemove(handle, out _);
+				source.Dispose();
+			}
+		});
+	}
 
-			if (type == WindowUpdateType.Show && _windows.ContainsKey(handle))
-			{
-				var window = _windows[handle];
-				WindowUpdated?.Invoke(window, type);
-			}
-			else if (type == WindowUpdateType.Show)
-			{
-				RegisterWindow(handle);
-			}
-			else if (type == WindowUpdateType.Hide && _windows.ContainsKey(handle))
-			{
-				var window = _windows[handle];
-				if (!window.DidManualHide)
-				{
-					UnregisterWindow(handle);
-				}
-				else
-				{
-					WindowUpdated?.Invoke(window, type);
-				}
-			}
-			else if (_windows.ContainsKey(handle))
-			{
-				var window = _windows[handle];
-				WindowUpdated?.Invoke(window, type);
-			}
+	private void CancelRegistration(IntPtr handle)
+	{
+		if (_pendingRegistrations.TryRemove(handle, out var source))
+			source.Cancel();
+	}
+
+	private bool EventWindowIsValid(int idChild, Win32.OBJID idObject, IntPtr hwnd) =>
+		idChild == Win32.CHILDID_SELF && idObject == Win32.OBJID.OBJID_WINDOW && hwnd != IntPtr.Zero;
+
+	private void RegisterWindow(IntPtr handle, bool emitEvent)
+	{
+		if (!_active || handle == IntPtr.Zero || _windows.ContainsKey(handle) || !Win32.IsWindow(handle))
+			return;
+
+		var window = new WindowsWindow(handle, _virtualDesktops);
+		if (window.ProcessId < 0 || window.ProcessId == _currentProcessId)
+			return;
+		if (!_classifier.IsCandidate(window, out _))
+			return;
+
+		window.WindowFocused += HandleWindowFocused;
+		window.WindowUpdated += HandleWindowUpdated;
+		window.WindowClosed += HandleWindowClosed;
+		if (!_windows.TryAdd(handle, window))
+			return;
+
+		if (emitEvent)
+			HandleWindowAdd(window, true);
+	}
+
+	private void UnregisterWindow(IntPtr handle)
+	{
+		if (!_windows.TryRemove(handle, out var window))
+			return;
+		window.WindowFocused -= HandleWindowFocused;
+		window.WindowUpdated -= HandleWindowUpdated;
+		window.WindowClosed -= HandleWindowClosed;
+		HandleWindowRemove(window);
+	}
+
+	private void UpdateWindow(IntPtr handle, WindowUpdateType type)
+	{
+		if (!_active)
+			return;
+
+		if (_windows.TryGetValue(handle, out var window))
+		{
+			if (type == WindowUpdateType.Hide && !Win32.IsWindow(handle))
+				UnregisterWindow(handle);
 			else
-			{
-				UntrackedFocus?.Invoke(this, handle);
-			}
+				WindowUpdated?.Invoke(window, type);
 		}
+		else if (type == WindowUpdateType.Show)
+			ScheduleRegistration(handle);
+		else if (type == WindowUpdateType.Foreground)
+			UntrackedFocus?.Invoke(this, handle);
+	}
 
-		private void StartWindowMove(IntPtr handle)
+	private bool ShouldEmitForeground(IntPtr handle)
+	{
+		var now = Stopwatch.GetTimestamp();
+		var minimumTicks = Stopwatch.Frequency / 12;
+		if (_lastForegroundEvents.TryGetValue(handle, out var previous) && now - previous < minimumTicks)
+			return false;
+		_lastForegroundEvents[handle] = now;
+		return true;
+	}
+
+	private void StartWindowMove(IntPtr handle)
+	{
+		if (!_windows.TryGetValue(handle, out var window))
+			return;
+		window.StoreLastLocation();
+		lock (_mouseMoveLock)
 		{
-			if (!_active)
-				return;
-
-			if (_windows.ContainsKey(handle))
-			{
-				var window = _windows[handle];
-				window.StoreLastLocation();
-
-				HandleWindowMoveStart(window);
-				WindowUpdated?.Invoke(window, WindowUpdateType.MoveStart);
-			}
-		}
-
-		private void EndWindowMove(IntPtr handle)
-		{
-			if (!_active)
-				return;
-
-			if (_windows.ContainsKey(handle))
-			{
-				var window = _windows[handle];
-
-				HandleWindowMoveEnd();
-				WindowUpdated?.Invoke(window, WindowUpdateType.MoveEnd);
-			}
-		}
-
-		private void WindowMove(IntPtr handle)
-		{
-			if (!_active)
-				return;
-
-			if (_mouseMoveWindow != null && _windows.ContainsKey(handle))
-			{
-				var window = _windows[handle];
-				if (_mouseMoveWindow == window)
-					WindowUpdated?.Invoke(window, WindowUpdateType.Move);
-			}
-		}
-
-		private void HandleWindowFocused(IWindow window)
-		{
-			if (!_active)
-				return;
-
-			WindowFocused?.Invoke(window);
-		}
-
-		private void HandleWindowUpdated(IWindow window)
-		{
-			if (!_active)
-				return;
-
-			ExternalWindowUpdate?.Invoke(window);
-		}
-
-		private void HandleWindowClosed(IWindow window)
-		{
-			if (!_active)
-				return;
-
-			ExternalWindowClosed?.Invoke(window);
-		}
-
-		private void HandleWindowMoveStart(WindowsWindow window)
-		{
-			if (!_active)
-				return;
-
-			if (_mouseMoveWindow != null)
+			if (_mouseMoveWindow is not null)
 				_mouseMoveWindow.IsMouseMoving = false;
-
 			_mouseMoveWindow = window;
 			window.IsMouseMoving = true;
 		}
+		WindowUpdated?.Invoke(window, WindowUpdateType.MoveStart);
+	}
 
-		private void HandleWindowMoveEnd()
+	private void EndWindowMove(IntPtr handle)
+	{
+		if (!_windows.TryGetValue(handle, out var window))
+			return;
+		lock (_mouseMoveLock)
 		{
-			if (!_active)
-				return;
-
-			lock (_mouseMoveLock)
-			{
-				if (_mouseMoveWindow != null)
-				{
-					var window = _mouseMoveWindow;
-					_mouseMoveWindow = null;
-
-					window.IsMouseMoving = false;
-					WindowMoved?.Invoke(window, EventArgs.Empty);
-				}
-			}
+			if (_mouseMoveWindow is not null)
+				_mouseMoveWindow.IsMouseMoving = false;
+			_mouseMoveWindow = null;
 		}
+		WindowUpdated?.Invoke(window, WindowUpdateType.MoveEnd);
+		WindowMoved?.Invoke(window, EventArgs.Empty);
+	}
 
-		private void HandleWindowAdd(IWindow window, bool firstCreate)
+	private void WindowMove(IntPtr handle)
+	{
+		lock (_mouseMoveLock)
 		{
-			if (!_active)
-				return;
-
-			WindowCreated?.Invoke(window, firstCreate);
-		}
-
-		private void HandleWindowRemove(IWindow window)
-		{
-			if (!_active)
-				return;
-
-			WindowDestroyed?.Invoke(window);
+			if (_mouseMoveWindow is not null && _mouseMoveWindow.Handle == handle)
+				WindowUpdated?.Invoke(_mouseMoveWindow, WindowUpdateType.Move);
 		}
 	}
+
+	private void HandleWindowFocused(IWindow window) => WindowFocused?.Invoke(window);
+	private void HandleWindowUpdated(IWindow window) => ExternalWindowUpdate?.Invoke(window);
+	private void HandleWindowClosed(IWindow window) => ExternalWindowClosed?.Invoke(window);
+	private void HandleWindowAdd(IWindow window, bool firstCreate) => WindowCreated?.Invoke(window, firstCreate);
+	private void HandleWindowRemove(IWindow window) => WindowDestroyed?.Invoke(window);
 }

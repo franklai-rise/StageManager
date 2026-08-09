@@ -10,40 +10,13 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using ControlzEx.Standard;
-using System;
 using System.Windows;
-using System.Windows.Interop;
 using System.Windows.Media;
 
 namespace StageManager.Native
 {
 	public static class VisualHelper
 	{
-		/// <summary>
-		/// Get the working area size of the monitor from where the visual stays.
-		/// </summary>
-		/// <param name="visual">The visual element to get the monitor information.</param>
-		/// <returns>The working area size of the monitor.</returns>
-		public static Size GetMonitorWorkSize(this Visual visual)
-		{
-			if (visual != null)
-			{
-				var hwndSource = PresentationSource.FromVisual(visual) as HwndSource;
-				if (hwndSource != null && !hwndSource.IsDisposed && hwndSource.RootVisual != null && hwndSource.Handle != IntPtr.Zero)
-				{
-					IntPtr intPtr = NativeMethods.MonitorFromWindow(hwndSource.Handle, MonitorOptions.MONITOR_DEFAULTTONEAREST);
-					if (intPtr != IntPtr.Zero)
-					{
-						var monitorInfoW = NativeMethods.GetMonitorInfoW(intPtr);
-						return new Size(monitorInfoW.rcWork.Width, monitorInfoW.rcWork.Height);
-					}
-				}
-			}
-
-			return default;
-		}
-
 		/// <summary>
 		/// This method is an alternative to WPF's <see cref="VisualTreeHelper.GetParent"/> method, which also supports content elements. Keep in mind that for content element, this method falls back to the logical tree of the element!
 		/// </summary>

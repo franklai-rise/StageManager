@@ -6,11 +6,13 @@ namespace StageManager
 {
 	public static class AutoStart
 	{
+		public const string DefaultAppName = "StageManager";
 		private const string REG_KEY = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
 
 		public static void SetStartup(string appName, bool startup)
 		{
-			var key = Registry.CurrentUser.OpenSubKey(REG_KEY, writable: true);
+			using var key = Registry.CurrentUser.OpenSubKey(REG_KEY, writable: true)
+				?? Registry.CurrentUser.CreateSubKey(REG_KEY, writable: true);
 
 			if (startup)
 				key.SetValue(appName, GetAppPath());
@@ -18,7 +20,11 @@ namespace StageManager
 				key.DeleteValue(appName, throwOnMissingValue: false);
 		}
 
-		public static bool IsStartup(string appName) => IsStartup(Registry.CurrentUser.OpenSubKey(REG_KEY), appName);
+		public static bool IsStartup(string appName)
+		{
+			using var key = Registry.CurrentUser.OpenSubKey(REG_KEY);
+			return key is not null && IsStartup(key, appName);
+		}
 
 		public static bool IsStartup(RegistryKey key, string appName) => GetValueAsString(key, appName).Equals(GetAppPath(), StringComparison.OrdinalIgnoreCase);
 

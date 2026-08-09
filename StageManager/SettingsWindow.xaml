@@ -1,0 +1,125 @@
+<Window x:Class="StageManager.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Stage_Manager_Lai Settings"
+        Width="620"
+        Height="720"
+        MinWidth="560"
+        MinHeight="620"
+        WindowStartupLocation="CenterScreen"
+        Background="#FF17191D"
+        Foreground="#FFF5F5F5">
+    <Window.Resources>
+        <Style TargetType="GroupBox">
+            <Setter Property="Margin" Value="0,0,0,14" />
+            <Setter Property="Padding" Value="14" />
+            <Setter Property="Foreground" Value="#FFF5F5F5" />
+            <Setter Property="BorderBrush" Value="#554F5560" />
+        </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Margin" Value="0,5" />
+            <Setter Property="Foreground" Value="#FFF5F5F5" />
+        </Style>
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#FFF5F5F5" />
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Margin" Value="6,3" />
+            <Setter Property="Padding" Value="7,4" />
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Margin" Value="6,3" />
+            <Setter Property="Padding" Value="5,3" />
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Margin="0,0,0,16">
+            <TextBlock Text="Stage_Manager_Lai" FontSize="24" FontWeight="SemiBold" />
+            <TextBlock Text="Stage behavior and sidebar preferences" Foreground="#FFACB3BF" />
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <GroupBox Header="Stage behavior">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="Switching mode" VerticalAlignment="Center" />
+                        <ComboBox x:Name="stageModeCombo" Grid.Column="1" SelectedItem="{Binding Draft.StageMode}" />
+                        <TextBlock Grid.Row="1" Text="App windows" VerticalAlignment="Center" />
+                        <ComboBox x:Name="windowsModeCombo" Grid.Row="1" Grid.Column="1" SelectedItem="{Binding Draft.AppWindowsMode}" />
+                    </Grid>
+                </GroupBox>
+
+                <GroupBox Header="Sidebar">
+                    <StackPanel>
+                        <CheckBox Content="Auto-hide when a window overlaps the sidebar" IsChecked="{Binding Draft.AutoHideSidebar}" />
+                        <CheckBox Content="Use animations" IsChecked="{Binding Draft.AnimationsEnabled}" />
+                        <CheckBox Content="Start with Windows" IsChecked="{Binding Draft.StartWithWindows}" />
+                        <TextBlock Text="Card size" Margin="0,8,0,0" />
+                        <Slider Minimum="0.75" Maximum="1.25" TickFrequency="0.05" IsSnapToTickEnabled="True"
+                                Value="{Binding Draft.CardScale}" />
+                        <TextBlock Text="Sidebar opacity" Margin="0,8,0,0" />
+                        <Slider Minimum="0.65" Maximum="1" TickFrequency="0.05" IsSnapToTickEnabled="True"
+                                Value="{Binding Draft.SidebarOpacity}" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="Keyboard shortcuts">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <CheckBox Grid.ColumnSpan="2" Content="Enable global shortcuts" IsChecked="{Binding Draft.HotkeysEnabled}" />
+                        <TextBlock Grid.Row="1" Text="Show / hide sidebar" VerticalAlignment="Center" />
+                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Draft.ToggleSidebarHotkey}" />
+                        <TextBlock Grid.Row="2" Text="Previous stage" VerticalAlignment="Center" />
+                        <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Draft.PreviousStageHotkey}" />
+                        <TextBlock Grid.Row="3" Text="Next stage" VerticalAlignment="Center" />
+                        <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Draft.NextStageHotkey}" />
+                        <TextBlock Grid.Row="4" Text="Add / remove active window" VerticalAlignment="Center" />
+                        <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding Draft.ToggleWindowInStageHotkey}" />
+                    </Grid>
+                </GroupBox>
+
+                <GroupBox Header="Ignored applications">
+                    <StackPanel>
+                        <TextBlock Text="One process name per line. Explorer and Windows shell surfaces remain protected regardless of this list."
+                                   TextWrapping="Wrap" Foreground="#FFACB3BF" Margin="0,0,0,6" />
+                        <TextBox Text="{Binding IgnoredProcessesText, UpdateSourceTrigger=PropertyChanged}"
+                                 AcceptsReturn="True" Height="100" VerticalScrollBarVisibility="Auto" />
+                    </StackPanel>
+                </GroupBox>
+
+                <TextBlock Text="Desktop icons are always left untouched. Virtual desktops are detected automatically."
+                           Foreground="#FFACB3BF" TextWrapping="Wrap" Margin="2,0,2,12" />
+            </StackPanel>
+        </ScrollViewer>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Cancel" Width="90" Margin="0,0,10,0" Padding="8,5" Click="Cancel_Click" />
+            <Button Content="Save" Width="90" Padding="8,5" IsDefault="True" Click="Save_Click" />
+        </StackPanel>
+    </Grid>
+</Window>

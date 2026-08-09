@@ -6,6 +6,7 @@ namespace StageManager.Native.PInvoke
 {
     public delegate void WinEventDelegate(IntPtr hWinEventHook, Win32.EVENT_CONSTANTS eventType, IntPtr hwnd, Win32.OBJID idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
     public delegate bool EnumDelegate(IntPtr hWnd, int lParam);
+	public delegate bool EnumChildDelegate(IntPtr hWnd, IntPtr lParam);
 
     public static partial class Win32
     {
@@ -65,6 +66,32 @@ namespace StageManager.Native.PInvoke
         [DllImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+		[DllImport("user32.dll", SetLastError = true)]
+		[return: MarshalAs(UnmanagedType.Bool)]
+		public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+		[DllImport("user32.dll")]
+		[return: MarshalAs(UnmanagedType.Bool)]
+		public static extern bool IsWindow(IntPtr hWnd);
+
+		[DllImport("user32.dll")]
+		[return: MarshalAs(UnmanagedType.Bool)]
+		public static extern bool EnumChildWindows(IntPtr hWndParent, EnumChildDelegate lpEnumFunc, IntPtr lParam);
+
+		[DllImport("kernel32.dll", SetLastError = true)]
+		public static extern IntPtr OpenProcess(uint processAccess, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint processId);
+
+		[DllImport("kernel32.dll", SetLastError = true)]
+		[return: MarshalAs(UnmanagedType.Bool)]
+		public static extern bool CloseHandle(IntPtr handle);
+
+		[DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+		public static extern int GetApplicationUserModelId(IntPtr process, ref uint applicationUserModelIdLength, System.Text.StringBuilder? applicationUserModelId);
+
+		public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+		public const int ERROR_INSUFFICIENT_BUFFER = 122;
+		public const int ERROR_SUCCESS = 0;
 
         public static readonly int MF_BYCOMMAND = 0x00000000;
 

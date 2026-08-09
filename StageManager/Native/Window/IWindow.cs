@@ -30,6 +30,8 @@ namespace StageManager.Native.Window
         int ProcessId { get; }
         string ProcessFileName { get; }
         string ProcessName { get; }
+		string ProcessExecutable { get; }
+		string? AppUserModelId { get; }
 
         bool CanLayout { get; }
 
@@ -39,7 +41,6 @@ namespace StageManager.Native.Window
         bool IsMouseMoving { get; }
 
         void Focus();
-        void Hide();
         void ShowNormal();
         void ShowMaximized();
         void ShowMinimized();

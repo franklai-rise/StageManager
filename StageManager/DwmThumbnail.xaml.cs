@@ -1,121 +1,185 @@
-﻿using StageManager.Native.Interop;
+using StageManager.Infrastructure;
+using StageManager.Native.Interop;
+using StageManager.Native.PInvoke;
 using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Threading;
 
-namespace StageManager
+namespace StageManager;
+
+public partial class DwmThumbnail : UserControl
 {
-	/// <summary>
-	/// Interaction logic for DwmThumbnail.xaml
-	/// </summary>
-	public partial class DwmThumbnail : UserControl
+	private IntPtr _dwmThumbnail;
+	private Window? _window;
+	private Point? _dpiScaleFactor;
+	private RECT? _lastDestination;
+	private bool _updateQueued;
+
+	public DwmThumbnail()
 	{
-		public DwmThumbnail()
+		InitializeComponent();
+		Loaded += OnLoaded;
+		Unloaded += OnUnloaded;
+		IsVisibleChanged += OnIsVisibleChanged;
+		SizeChanged += (_, _) => QueueUpdate();
+		LayoutUpdated += (_, _) => QueueUpdate();
+	}
+
+	public static readonly DependencyProperty PreviewHandleProperty = DependencyProperty.Register(
+		nameof(PreviewHandle),
+		typeof(IntPtr),
+		typeof(DwmThumbnail),
+		new PropertyMetadata(IntPtr.Zero, OnPreviewHandleChanged));
+
+	public IntPtr PreviewHandle
+	{
+		get => (IntPtr)GetValue(PreviewHandleProperty);
+		set => SetValue(PreviewHandleProperty, value);
+	}
+
+	protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+	{
+		_dpiScaleFactor = null;
+		_lastDestination = null;
+		base.OnDpiChanged(oldDpi, newDpi);
+		QueueUpdate();
+	}
+
+	private static void OnPreviewHandleChanged(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs args)
+	{
+		var control = (DwmThumbnail)dependencyObject;
+		control.UnregisterThumbnail();
+		control._lastDestination = null;
+		if (control.IsLoaded && control.IsVisible)
+			control.RegisterThumbnail();
+	}
+
+	private void OnLoaded(object sender, RoutedEventArgs e)
+	{
+		_window = Window.GetWindow(this);
+		RegisterThumbnail();
+		QueueUpdate();
+	}
+
+	private void OnUnloaded(object sender, RoutedEventArgs e)
+	{
+		UnregisterThumbnail();
+		_window = null;
+		_dpiScaleFactor = null;
+		_lastDestination = null;
+	}
+
+	private void OnIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+	{
+		if ((bool)e.NewValue)
 		{
-			InitializeComponent();
-			LayoutUpdated += DwmThumbnail_LayoutUpdated;
+			RegisterThumbnail();
+			QueueUpdate();
 		}
+		else
+			UnregisterThumbnail();
+	}
 
-		private IntPtr _dwmThumbnail;
-		private Window _window;
-		private Point? _dpiScaleFactor;
+	private void RegisterThumbnail()
+	{
+		if (_dwmThumbnail != IntPtr.Zero || PreviewHandle == IntPtr.Zero || !Win32.IsWindow(PreviewHandle))
+			return;
 
-		public static readonly DependencyProperty PreviewHandleProperty = DependencyProperty.Register(nameof(PreviewHandle),
-			   typeof(IntPtr),
-			   typeof(DwmThumbnail),
-			   new PropertyMetadata(IntPtr.Zero));
+		_window ??= Window.GetWindow(this);
+		if (_window is null)
+			return;
 
-		public IntPtr PreviewHandle
+		var destinationHandle = new System.Windows.Interop.WindowInteropHelper(_window).Handle;
+		if (destinationHandle == IntPtr.Zero)
+			return;
+
+		var result = NativeMethods.DwmRegisterThumbnail(destinationHandle, PreviewHandle, out _dwmThumbnail);
+		if (result != 0)
 		{
-			get { return (IntPtr)GetValue(PreviewHandleProperty); }
-			set { SetValue(PreviewHandleProperty, value); }
+			_dwmThumbnail = IntPtr.Zero;
+			AppLogger.Warn($"DwmRegisterThumbnail failed with HRESULT 0x{result:X8} for {PreviewHandle}.");
 		}
+	}
 
-		private Point GetDpiScaleFactor()
+	private void UnregisterThumbnail()
+	{
+		if (_dwmThumbnail == IntPtr.Zero)
+			return;
+		NativeMethods.DwmUnregisterThumbnail(_dwmThumbnail);
+		_dwmThumbnail = IntPtr.Zero;
+	}
+
+	private void QueueUpdate()
+	{
+		if (_updateQueued || !IsLoaded || !IsVisible)
+			return;
+		_updateQueued = true;
+		Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() =>
 		{
-			if (_dpiScaleFactor is null)
-			{
-				var source = PresentationSource.FromVisual(this);
-				_dpiScaleFactor = source?.CompositionTarget != null ? new Point(source.CompositionTarget.TransformToDevice.M11, source.CompositionTarget.TransformToDevice.M22) : new Point(1.0d, 1.0d);
-			}
-
-			return _dpiScaleFactor.Value;
-		}
-
-		protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
-		{
-			_dpiScaleFactor = null;
-			base.OnDpiChanged(oldDpi, newDpi);
-		}
-
-		protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
-		{
-			base.OnPropertyChanged(e);
-
-			if (nameof(PreviewHandle).Equals(e.Property.Name))
-			{
-				if ((IntPtr)e.OldValue == IntPtr.Zero && (IntPtr)e.NewValue != IntPtr.Zero)
-					StartCapture();
-
-				UpdateThumbnailProperties();
-			}
-
-			if (nameof(IsVisible).Equals(e.Property.Name) && !(bool)e.NewValue && _dwmThumbnail != IntPtr.Zero)
-			{
-				NativeMethods.DwmUnregisterThumbnail(_dwmThumbnail);
-				_dwmThumbnail = IntPtr.Zero;
-			}
-		}
-
-		private void DwmThumbnail_LayoutUpdated(object? sender, EventArgs e)
-		{
+			_updateQueued = false;
 			UpdateThumbnailProperties();
-		}
+		}));
+	}
 
-		public static Rect BoundsRelativeTo(FrameworkElement element, Visual relativeTo)
+	private void UpdateThumbnailProperties()
+	{
+		if (_dwmThumbnail == IntPtr.Zero)
 		{
-			return element.TransformToVisual(relativeTo)
-						  .TransformBounds(System.Windows.Controls.Primitives.LayoutInformation.GetLayoutSlot(element));
-		}
-
-		private void StartCapture()
-		{
-			var windowHandle = new System.Windows.Interop.WindowInteropHelper(FindWindow()).Handle;
-
-			var hr = NativeMethods.DwmRegisterThumbnail(windowHandle, PreviewHandle, out _dwmThumbnail);
-			if (hr != 0)
+			RegisterThumbnail();
+			if (_dwmThumbnail == IntPtr.Zero)
 				return;
 		}
 
-		private Window FindWindow() => _window ??= Window.GetWindow(this);
-
-		private void UpdateThumbnailProperties()
+		try
 		{
-			if (_dwmThumbnail == IntPtr.Zero)
+			_window ??= Window.GetWindow(this);
+			if (_window is null || ActualWidth <= 0 || ActualHeight <= 0)
 				return;
 
 			var dpi = GetDpiScaleFactor();
-
-			var previewBounds = BoundsRelativeTo(this, FindWindow());
-
-			var thumbnailRect = new RECT
+			var origin = TransformToVisual(_window).Transform(new Point(0, 0));
+			var destination = new RECT
 			{
-				top = (int)(previewBounds.Top * dpi.Y),
-				left = (int)(previewBounds.Left * dpi.X),
-				bottom = (int)((previewBounds.Bottom - Margin.Top - Margin.Bottom) * dpi.Y) + 1,
-				right = (int)((previewBounds.Right - Margin.Left - Margin.Right) * dpi.X) + 1
+				left = (int)Math.Round(origin.X * dpi.X),
+				top = (int)Math.Round(origin.Y * dpi.Y),
+				right = (int)Math.Round((origin.X + ActualWidth) * dpi.X),
+				bottom = (int)Math.Round((origin.Y + ActualHeight) * dpi.Y)
 			};
 
-			var props = new DWM_THUMBNAIL_PROPERTIES
+			if (_lastDestination is RECT previous && RectEquals(previous, destination))
+				return;
+
+			var properties = new DWM_THUMBNAIL_PROPERTIES
 			{
 				fVisible = true,
 				dwFlags = (int)(DWM_TNP.DWM_TNP_VISIBLE | DWM_TNP.DWM_TNP_OPACITY | DWM_TNP.DWM_TNP_RECTDESTINATION | DWM_TNP.DWM_TNP_SOURCECLIENTAREAONLY),
 				opacity = 255,
-				rcDestination = thumbnailRect,
+				rcDestination = destination,
 				fSourceClientAreaOnly = true
 			};
-			NativeMethods.DwmUpdateThumbnailProperties(_dwmThumbnail, ref props);
+
+			if (NativeMethods.DwmUpdateThumbnailProperties(_dwmThumbnail, ref properties) == 0)
+				_lastDestination = destination;
+		}
+		catch (InvalidOperationException)
+		{
+			// The visual was detached between the layout event and the render callback.
 		}
 	}
+
+	private Point GetDpiScaleFactor()
+	{
+		if (_dpiScaleFactor is not null)
+			return _dpiScaleFactor.Value;
+		var source = PresentationSource.FromVisual(this);
+		_dpiScaleFactor = source?.CompositionTarget is not null
+			? new Point(source.CompositionTarget.TransformToDevice.M11, source.CompositionTarget.TransformToDevice.M22)
+			: new Point(1, 1);
+		return _dpiScaleFactor.Value;
+	}
+
+	private static bool RectEquals(RECT left, RECT right) =>
+		left.left == right.left && left.top == right.top && left.right == right.right && left.bottom == right.bottom;
 }

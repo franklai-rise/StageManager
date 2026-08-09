@@ -1,296 +1,563 @@
-﻿using AsyncAwaitBestPractices;
+using StageManager.Infrastructure;
 using StageManager.Native;
 using StageManager.Native.PInvoke;
 using StageManager.Native.Window;
-using StageManager.Strategies;
+using StageManager.Services;
+using StageManager.Settings;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Threading;
 
-namespace StageManager
+namespace StageManager;
+
+public sealed class SceneManager : IDisposable
 {
-	public class SceneManager
+	private readonly SettingsService _settings;
+	private readonly VirtualDesktopService _virtualDesktops;
+	private readonly DisplayTopologyService _displays;
+	private readonly Dispatcher _dispatcher;
+	private readonly SemaphoreSlim _gate = new(1, 1);
+	private readonly CancellationTokenSource _lifetime = new();
+	private readonly Dictionary<Guid, List<Stage>> _stagesByDesktop = new();
+	private readonly Dictionary<Guid, Stage?> _currentByDesktop = new();
+	private readonly Dictionary<IntPtr, DateTime> _ignoreForegroundUntil = new();
+	private Guid _currentDesktopId;
+	private bool _started;
+	private bool _stopping;
+
+	public SceneManager(
+		WindowsManager windowsManager,
+		SettingsService settings,
+		VirtualDesktopService virtualDesktops,
+		DisplayTopologyService displays,
+		Dispatcher dispatcher)
 	{
-		private readonly Desktop _desktop;
-		private List<Scene> _scenes;
-		private Scene _current;
-		private bool _suspend = false;
-		private Guid? _reentrancyLockSceneId;
+		WindowsManager = windowsManager ?? throw new ArgumentNullException(nameof(windowsManager));
+		_settings = settings ?? throw new ArgumentNullException(nameof(settings));
+		_virtualDesktops = virtualDesktops ?? throw new ArgumentNullException(nameof(virtualDesktops));
+		_displays = displays ?? throw new ArgumentNullException(nameof(displays));
+		_dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+	}
 
-		public event EventHandler<SceneChangedEventArgs> SceneChanged;
-		public event EventHandler<CurrentSceneSelectionChangedEventArgs> CurrentSceneSelectionChanged;
+	public event EventHandler<StageChangedEventArgs>? StageChanged;
+	public event EventHandler<CurrentStageSelectionChangedEventArgs>? CurrentStageSelectionChanged;
+	public event EventHandler? StagesReset;
 
-		private IWindowStrategy WindowStrategy { get; } = new NormalizeAndMinimizeWindowStrategy(); // new WindowNormalizeStrategy/OpacityWindowStrategy/ShowAndHideWindowStrategy
+	public WindowsManager WindowsManager { get; }
+	public StageMode Mode => _settings.Current.StageMode;
+	public AppWindowsMode WindowsMode => _settings.Current.AppWindowsMode;
 
-		public WindowsManager WindowsManager { get; }
+	public async Task Start()
+	{
+		if (_started)
+			return;
+		if (!_dispatcher.CheckAccess())
+			throw new NotSupportedException("SceneManager.Start must run on the WPF dispatcher thread.");
 
-		public SceneManager(WindowsManager windowsManager)
+		WindowsManager.WindowCreated += OnWindowCreated;
+		WindowsManager.WindowUpdated += OnWindowUpdated;
+		WindowsManager.WindowDestroyed += OnWindowDestroyed;
+		WindowsManager.DesktopChanged += OnDesktopChanged;
+		_settings.SettingsChanged += OnSettingsChanged;
+		await WindowsManager.Start().ConfigureAwait(true);
+		BuildInitialStages();
+		_started = true;
+	}
+
+	public void Stop()
+	{
+		if (_stopping)
+			return;
+		_stopping = true;
+		_lifetime.Cancel();
+		_settings.SettingsChanged -= OnSettingsChanged;
+		WindowsManager.WindowCreated -= OnWindowCreated;
+		WindowsManager.WindowUpdated -= OnWindowUpdated;
+		WindowsManager.WindowDestroyed -= OnWindowDestroyed;
+		WindowsManager.DesktopChanged -= OnDesktopChanged;
+		WindowsManager.Stop();
+		RestoreAllManagerMinimizedWindows();
+	}
+
+	public void Dispose()
+	{
+		Stop();
+		WindowsManager.Dispose();
+		_lifetime.Dispose();
+		_gate.Dispose();
+	}
+
+	public IReadOnlyList<Stage> GetStages() => CurrentStages
+		.OrderByDescending(stage => stage.LastActivatedUtc)
+		.ToArray();
+
+	public Stage? GetCurrentStage() => CurrentStage;
+
+	public IEnumerable<IWindow> GetCurrentWindows() => WindowsManager.Windows
+		.Where(IsOnCurrentDesktop)
+		.ToArray();
+
+	public Stage? FindStageForWindow(IWindow window) => FindStageForWindow(window.Handle);
+
+	public Stage? FindStageForWindow(IntPtr handle) => AllStages.FirstOrDefault(stage => stage.ContainsWindow(handle));
+
+	public Task SwitchTo(Stage? stage) => RunSerializedAsync(() => SelectStageInternalAsync(stage, activateWindows: true, explicitSelection: true), "switch stage");
+
+	public Task SwitchRelative(int direction) => RunSerializedAsync(async () =>
+	{
+		var stages = GetStages();
+		if (stages.Count == 0)
+			return;
+		var currentIndex = CurrentStage is null ? -1 : stages.ToList().FindIndex(stage => stage.Id == CurrentStage.Id);
+		var nextIndex = currentIndex < 0 ? 0 : (currentIndex + direction + stages.Count) % stages.Count;
+		await SelectStageInternalAsync(stages[nextIndex], activateWindows: true, explicitSelection: true);
+	}, "switch relative stage");
+
+	public Task MoveWindow(IntPtr handle, Stage targetStage) => RunSerializedAsync(async () =>
+	{
+		if (!WindowsManager.TryGetWindow(handle, out var window) || window is null)
+			return;
+		await MoveWindowInternalAsync(FindStageForWindow(handle), window, targetStage);
+	}, "move window to stage");
+
+	public Task MergeStageIntoCurrent(Stage sourceStage) => RunSerializedAsync(async () =>
+	{
+		var target = CurrentStage;
+		if (target is null || sourceStage.Id == target.Id)
+			return;
+		foreach (var window in sourceStage.Windows.ToArray())
+			await MoveWindowInternalAsync(sourceStage, window, target, emitForEach: false);
+		RemoveStageIfEmpty(sourceStage);
+		StageChanged?.Invoke(this, new StageChangedEventArgs(target, null, ChangeType.Updated));
+	}, "merge stage");
+
+	public Task ExtractLastWindow(Stage sourceStage) => RunSerializedAsync(async () =>
+	{
+		if (sourceStage.Windows.Count <= 1)
+			return;
+		var window = sourceStage.Windows.Last();
+		var extracted = new Stage(Stage.GetAppKey(window), window);
+		sourceStage.Remove(window);
+		CurrentStages.Add(extracted);
+		StageChanged?.Invoke(this, new StageChangedEventArgs(sourceStage, window, ChangeType.Updated));
+		StageChanged?.Invoke(this, new StageChangedEventArgs(extracted, window, ChangeType.Created));
+		await SelectStageInternalAsync(extracted, activateWindows: true, explicitSelection: true);
+	}, "extract window from stage");
+
+	public Task ToggleForegroundWindowInCurrentStage() => RunSerializedAsync(async () =>
+	{
+		var handle = Win32.GetForegroundWindow();
+		if (!WindowsManager.TryGetWindow(handle, out var window) || window is null)
+			return;
+		var source = FindStageForWindow(handle);
+		var current = CurrentStage;
+		if (current is null)
 		{
-			WindowsManager = windowsManager ?? throw new ArgumentNullException(nameof(windowsManager));
-			_desktop = new Desktop();
+			if (source is not null)
+				await SelectStageInternalAsync(source, activateWindows: true, explicitSelection: true);
+			return;
 		}
 
-		public async Task Start()
+		if (source?.Id == current.Id && current.Windows.Count > 1)
 		{
-			if (Thread.CurrentThread.ManagedThreadId != 1)
-				throw new NotSupportedException("Start has to be called on the main thread, otherwise events won't be fired.");
-
-			WindowsManager.WindowCreated += WindowsManager_WindowCreated;
-			WindowsManager.WindowUpdated += WindowsManager_WindowUpdated;
-			WindowsManager.WindowDestroyed += WindowsManager_WindowDestroyed;
-			WindowsManager.UntrackedFocus += WindowsManager_UntrackedFocus;
-
-			await WindowsManager.Start();
+			var extracted = new Stage(Stage.GetAppKey(window), window);
+			current.Remove(window);
+			CurrentStages.Add(extracted);
+			StageChanged?.Invoke(this, new StageChangedEventArgs(current, window, ChangeType.Updated));
+			StageChanged?.Invoke(this, new StageChangedEventArgs(extracted, window, ChangeType.Created));
 		}
+		else
+			await MoveWindowInternalAsync(source, window, current);
+	}, "toggle foreground window in stage");
 
-		internal void Stop()
+	public Task MoveStageToNextDisplay(Stage stage) => RunSerializedAsync(() =>
+	{
+		stage.CaptureLayouts(_displays);
+		_displays.MoveToNextDisplay(stage.Windows);
+		stage.CaptureLayouts(_displays);
+		StageChanged?.Invoke(this, new StageChangedEventArgs(stage, null, ChangeType.Updated));
+		return Task.CompletedTask;
+	}, "move stage to next display");
+
+	public Task ArrangeStage(Stage stage, StageLayout layout) => RunSerializedAsync(() =>
+	{
+		stage.CaptureLayouts(_displays);
+		_displays.Arrange(stage.Windows, layout);
+		stage.CaptureLayouts(_displays);
+		StageChanged?.Invoke(this, new StageChangedEventArgs(stage, null, ChangeType.Updated));
+		return Task.CompletedTask;
+	}, "arrange stage");
+
+	public Task CloseLastWindow(Stage stage) => RunSerializedAsync(() =>
+	{
+		stage.Windows.LastOrDefault()?.Close();
+		return Task.CompletedTask;
+	}, "close stage window");
+
+	private List<Stage> CurrentStages
+	{
+		get
 		{
-			WindowsManager.Stop();
-
-			foreach (var scene in _scenes)
+			if (!_stagesByDesktop.TryGetValue(_currentDesktopId, out var stages))
 			{
-				foreach (var w in scene.Windows)
-					WindowStrategy.Show(w);
+				stages = new List<Stage>();
+				_stagesByDesktop[_currentDesktopId] = stages;
 			}
+			return stages;
+		}
+	}
 
-			_desktop.ShowIcons();
+	private Stage? CurrentStage
+	{
+		get => _currentByDesktop.TryGetValue(_currentDesktopId, out var stage) ? stage : null;
+		set => _currentByDesktop[_currentDesktopId] = value;
+	}
+
+	private IEnumerable<Stage> AllStages => _stagesByDesktop.Values.SelectMany(stages => stages);
+
+	private void BuildInitialStages()
+	{
+		var windows = WindowsManager.Windows.ToArray();
+		foreach (var desktopGroup in windows.GroupBy(GetDesktopId))
+		{
+			_stagesByDesktop[desktopGroup.Key] = desktopGroup
+				.GroupBy(Stage.GetAppKey, StringComparer.OrdinalIgnoreCase)
+				.Select(group => new Stage(group.Key, group.ToArray()))
+				.ToList();
 		}
 
-		private void WindowsManager_WindowUpdated(IWindow window, WindowUpdateType type)
+		_currentDesktopId = _virtualDesktops.GetCurrentDesktopId(windows, Win32.GetForegroundWindow());
+		_ = CurrentStages;
+		var foreground = Win32.GetForegroundWindow();
+		CurrentStage = CurrentStages.FirstOrDefault(stage => stage.ContainsWindow(foreground));
+		if (CurrentStage is not null)
 		{
-			if (_suspend)
-				return;
+			CurrentStage.IsSelected = true;
+			CurrentStage.Touch();
+		}
+	}
 
-			if (type == WindowUpdateType.Foreground)
-				SwitchToSceneByWindow(window).SafeFireAndForget();
+	private void OnWindowCreated(IWindow window, bool firstCreate) => Queue(async () =>
+	{
+		var desktopId = GetDesktopId(window);
+		var stages = GetOrCreateStages(desktopId);
+		var appKey = Stage.GetAppKey(window);
+		var stage = stages
+			.Where(candidate => candidate.ContainsApp(appKey))
+			.OrderByDescending(candidate => candidate.LastActivatedUtc)
+			.FirstOrDefault();
+		if (stage is null)
+		{
+			stage = new Stage(appKey, window);
+			stages.Add(stage);
+			if (desktopId == _currentDesktopId)
+				StageChanged?.Invoke(this, new StageChangedEventArgs(stage, window, ChangeType.Created));
+		}
+		else
+		{
+			stage.Add(window);
+			if (desktopId == _currentDesktopId)
+				StageChanged?.Invoke(this, new StageChangedEventArgs(stage, window, ChangeType.Updated));
 		}
 
-		private void WindowsManager_UntrackedFocus(object? sender, IntPtr e)
+		if (firstCreate && desktopId == _currentDesktopId)
+			await SelectStageInternalAsync(stage, activateWindows: false, explicitSelection: false);
+	}, "window created");
+
+	private void OnWindowUpdated(IWindow window, WindowUpdateType type)
+	{
+		if (type == WindowUpdateType.Foreground)
 		{
-			if (_suspend)
-				return;
-
-			if (!_desktop.HasDesktopView)
-				_desktop.TrySetDesktopView(e);
-
-			if (_desktop.HasDesktopView && _desktop.DesktopViewHandle == e)
-				SwitchTo(null).SafeFireAndForget();
-		}
-
-		private void WindowsManager_WindowDestroyed(IWindow window)
-		{
-			var scene = FindSceneForWindow(window);
-
-			if (scene is not null)
+			Queue(async () =>
 			{
-				scene.Remove(window);
-
-				if (scene.Windows.Any())
+				if (_ignoreForegroundUntil.TryGetValue(window.Handle, out var until) && until > DateTime.UtcNow)
+					return;
+				var stage = FindStageForWindow(window);
+				if (stage is not null && GetDesktopId(window) == _currentDesktopId)
+					await SelectStageInternalAsync(stage, activateWindows: false, explicitSelection: false);
+			}, "foreground changed");
+		}
+		else if (type == WindowUpdateType.MoveEnd)
+		{
+			Queue(() =>
+			{
+				var stage = FindStageForWindow(window);
+				if (stage is not null)
 				{
-					SceneChanged?.Invoke(this, new SceneChangedEventArgs(scene, window, ChangeType.Updated));
+					stage.CaptureLayouts(_displays);
+					StageChanged?.Invoke(this, new StageChangedEventArgs(stage, window, ChangeType.Updated));
 				}
-				else
-				{
-					_scenes.Remove(scene);
-					SceneChanged?.Invoke(this, new SceneChangedEventArgs(scene, window, ChangeType.Removed));
-				}
-			}
-		}
-
-		public Scene FindSceneForWindow(IWindow window) => FindSceneForWindow(window.Handle);
-
-		public Scene FindSceneForWindow(IntPtr handle) => _scenes?.FirstOrDefault(s => s.Windows.Any(w => w.Handle == handle));
-
-		private Scene FindSceneForProcess(string processName) => _scenes.FirstOrDefault(s => string.Equals(s.Key, processName, StringComparison.OrdinalIgnoreCase));
-
-		private async void WindowsManager_WindowCreated(IWindow window, bool firstCreate)
-		{
-			SwitchToSceneByNewWindow(window).SafeFireAndForget();
-		}
-
-		private async Task SwitchToSceneByWindow(IWindow window)
-		{
-			var scene = FindSceneForWindow(window);
-			if (scene is null)
-			{
-				scene = new Scene(GetWindowGroupKey(window), window);
-				_scenes.Add(scene);
-				SceneChanged?.Invoke(this, new SceneChangedEventArgs(scene, window, ChangeType.Created));
-			}
-
-			await SwitchTo(scene);
-		}
-
-		private async Task SwitchToSceneByNewWindow(IWindow window)
-		{
-			var existentScene = FindSceneForProcess(GetWindowGroupKey(window));
-			var scene = existentScene ?? new Scene(window.ProcessName, window);
-
-			if (existentScene is null)
-			{
-				_scenes.Add(scene);
-				SceneChanged?.Invoke(this, new SceneChangedEventArgs(scene, window, ChangeType.Created));
-			}
-			else
-			{
-				scene.Add(window);
-				SceneChanged?.Invoke(this, new SceneChangedEventArgs(scene, window, ChangeType.Updated));
-			}
-
-			await SwitchTo(scene).ConfigureAwait(true);
-		}
-
-		/// <summary>
-		/// Determines if a scene is switched back to shortly after it has been hidden.
-		/// This can happen if an app activates one of it's windows after being hidde,
-		/// like Microsoft Teams does if there's a small floating window for a current call.
-		/// </summary>
-		/// <param name="scene"></param>
-		/// <returns></returns>
-		private bool IsReentrancy(Scene? scene)
-		{
-			if (scene is null)
-				return false;
-
-			if (Guid.Equals(scene.Id, _reentrancyLockSceneId))
-				return true;
-
-			if (_current is object)
-			{
-				_reentrancyLockSceneId = _current.Id;
-
-				Task.Run(async () =>
-				{
-					await Task.Delay(1000).ConfigureAwait(false);
-					_reentrancyLockSceneId = null;
-				}).SafeFireAndForget();
-			}
-
-			return false;
-		}
-
-		public async Task SwitchTo(Scene? scene)
-		{
-			if (object.Equals(scene, _current))
-				return;
-
-			if (IsReentrancy(scene))
-				return;
-
-			try
-			{
-				_suspend = true;
-
-				var prior = _current;
-				_current = scene;
-
-				foreach (var s in _scenes)
-					s.IsSelected = s.Equals(scene);
-
-				if (scene is object)
-				{
-					var targetWindows = scene.Windows.ToArray();
-					foreach (var w in targetWindows)
-						WindowStrategy.Show(w);
-
-					if (!targetWindows.Any(w => w.IsFocused))
-						targetWindows.LastOrDefault()?.Focus();
-				}
-
-				CurrentSceneSelectionChanged?.Invoke(this, new CurrentSceneSelectionChangedEventArgs(prior, _current));
-
-				_desktop.ShowIcons();
-			}
-			finally
-			{
-				_suspend = false;
-			}
-		}
-
-		public Task MoveWindow(Scene sourceScene, IWindow window, Scene targetScene)
-		{
-			try
-			{
-				_suspend = true;
-
-				if (sourceScene is null || sourceScene.Equals(targetScene))
-					return Task.CompletedTask;
-
-				sourceScene.Remove(window);
-				targetScene.Add(window);
-
-				SceneChanged?.Invoke(this, new SceneChangedEventArgs(sourceScene, window, ChangeType.Updated));
-				SceneChanged?.Invoke(this, new SceneChangedEventArgs(targetScene, window, ChangeType.Updated));
-
-				if (!sourceScene.Windows.Any())
-				{
-					_scenes.Remove(sourceScene);
-					SceneChanged?.Invoke(this, new SceneChangedEventArgs(sourceScene, window, ChangeType.Removed));
-				}
-
-				if (targetScene.Equals(_current))
-				{
-					WindowStrategy.Show(window);
-					window.Focus();
-				}
-				else
-				{
-					WindowStrategy.Hide(window);
-
-					// reset window position after move so that the window is back at the starting position on the new scene
-					if (window is WindowsWindow w && w.PopLastLocation() is IWindowLocation l)
-						Win32.SetWindowPos(window.Handle, IntPtr.Zero, l.X, l.Y, 0, 0, Win32.SetWindowPosFlags.IgnoreResize);
-				}
-
 				return Task.CompletedTask;
-			}
-			finally
+			}, "window move completed");
+		}
+	}
+
+	private void OnWindowDestroyed(IWindow window) => Queue(() =>
+	{
+		var stage = FindStageForWindow(window);
+		if (stage is null)
+			return Task.CompletedTask;
+		var desktopId = _stagesByDesktop.First(pair => pair.Value.Contains(stage)).Key;
+		stage.Remove(window);
+		if (stage.WindowCount == 0)
+		{
+			_stagesByDesktop[desktopId].Remove(stage);
+			if (_currentByDesktop.TryGetValue(desktopId, out var current) && current?.Id == stage.Id)
+				_currentByDesktop[desktopId] = null;
+			if (desktopId == _currentDesktopId)
+				StageChanged?.Invoke(this, new StageChangedEventArgs(stage, window, ChangeType.Removed));
+		}
+		else if (desktopId == _currentDesktopId)
+			StageChanged?.Invoke(this, new StageChangedEventArgs(stage, window, ChangeType.Updated));
+		return Task.CompletedTask;
+	}, "window destroyed");
+
+	private void OnDesktopChanged(object? sender, EventArgs e) => Queue(() =>
+	{
+		var detected = _virtualDesktops.GetCurrentDesktopId(WindowsManager.Windows, Win32.GetForegroundWindow());
+		_currentDesktopId = detected;
+		ReconcileCurrentDesktop();
+		StagesReset?.Invoke(this, EventArgs.Empty);
+		return Task.CompletedTask;
+	}, "virtual desktop changed");
+
+	private void OnSettingsChanged(object? sender, EventArgs e) => Queue(async () =>
+	{
+		WindowsManager.ReevaluateWindows();
+		if (_settings.Current.StageMode == StageMode.Coexist)
+			RestoreAllManagerMinimizedWindows();
+		else if (CurrentStage is not null)
+			await ApplyFocusModeAsync(CurrentStage);
+		StagesReset?.Invoke(this, EventArgs.Empty);
+	}, "settings changed");
+
+	private async Task SelectStageInternalAsync(Stage? stage, bool activateWindows, bool explicitSelection)
+	{
+		if (stage is not null && !CurrentStages.Contains(stage))
+			return;
+
+		var prior = CurrentStage;
+		var repeated = stage is not null && prior?.Id == stage.Id;
+		if (repeated && !explicitSelection)
+			return;
+
+		prior?.CaptureLayouts(_displays);
+		CurrentStage = stage;
+		foreach (var candidate in CurrentStages)
+			candidate.IsSelected = candidate.Id == stage?.Id;
+
+		if (stage is not null)
+		{
+			stage.Touch();
+			if (_settings.Current.StageMode == StageMode.Focus)
+				await ApplyFocusModeAsync(stage);
+			await RestoreAndActivateStageAsync(stage, activateWindows, repeated);
+		}
+
+		if (!repeated)
+			CurrentStageSelectionChanged?.Invoke(this, new CurrentStageSelectionChangedEventArgs(prior, stage));
+		else
+			StageChanged?.Invoke(this, new StageChangedEventArgs(stage!, null, ChangeType.Updated));
+	}
+
+	private Task ApplyFocusModeAsync(Stage target)
+	{
+		foreach (var stage in CurrentStages.Where(candidate => candidate.Id != target.Id))
+		{
+			stage.CaptureLayouts(_displays);
+			foreach (var window in stage.Windows.Where(window => !window.IsMinimized))
 			{
-				_suspend = false;
+				stage.MarkMinimizedByManager(window.Handle);
+				_ignoreForegroundUntil[window.Handle] = DateTime.UtcNow.AddMilliseconds(650);
+				Win32.ShowWindowAsync(window.Handle, Win32.SW.SW_MINIMIZE);
 			}
 		}
+		return Task.CompletedTask;
+	}
 
-		public async Task MoveWindow(IntPtr handle, Scene targetScene)
+	private Task RestoreAndActivateStageAsync(Stage stage, bool activateWindows, bool repeated)
+	{
+		if (_settings.Current.AppWindowsMode == AppWindowsMode.OneAtATime)
 		{
-			var source = FindSceneForWindow(handle);
-
-			if (source is null || source.Equals(targetScene))
-				return;
-
-			var window = source.Windows.First(w => w.Handle == handle);
-			await MoveWindow(source, window, targetScene);
-		}
-
-		public async Task PopWindowFrom(Scene sourceScene)
-		{
-			if (sourceScene is null || _current is null || sourceScene.Equals(_current))
-				return;
-
-			var window = sourceScene.Windows.LastOrDefault();
-
-			if (window is object)
-				await MoveWindow(sourceScene, window, _current).ConfigureAwait(false);
-		}
-
-		private IEnumerable<IWindow> GetSceneableWindows() => WindowsManager?.Windows?.Where(w => !string.IsNullOrEmpty(w.ProcessFileName) && !string.IsNullOrEmpty(w.Title));
-
-		public IEnumerable<Scene> GetScenes()
-		{
-			if (_scenes is null)
+			var target = stage.GetNextWindow();
+			if (target is null)
+				return Task.CompletedTask;
+			if (_settings.Current.StageMode == StageMode.Focus)
 			{
-				_scenes = GetSceneableWindows()
-							.GroupBy(GetWindowGroupKey)
-							.Select(group => new Scene(group.Key, group.ToArray()))
-							.ToList();
+				foreach (var other in stage.Windows.Where(window => window.Handle != target.Handle && !window.IsMinimized))
+				{
+					stage.MarkMinimizedByManager(other.Handle);
+					Win32.ShowWindowAsync(other.Handle, Win32.SW.SW_MINIMIZE);
+				}
 			}
-
-			return _scenes;
+			RestoreManagedWindow(stage, target, restoreUserMinimized: true);
+			if (activateWindows)
+				FocusWindow(target);
+			return Task.CompletedTask;
 		}
 
-		public IEnumerable<IWindow> GetCurrentWindows() => GetSceneableWindows();
+		foreach (var window in stage.Windows)
+		{
+			RestoreManagedWindow(stage, window, restoreUserMinimized: true);
+			if (!window.IsMinimized)
+				window.BringToTop();
+		}
+		if (activateWindows)
+			FocusWindow(stage.Windows.LastOrDefault());
+		return Task.CompletedTask;
+	}
 
-		private string GetWindowGroupKey(IWindow window) => window.ProcessName;
+	private void RestoreManagedWindow(Stage stage, IWindow window, bool restoreUserMinimized = false)
+	{
+		if (!stage.WasMinimizedByManager(window.Handle))
+		{
+			if (restoreUserMinimized && window.IsMinimized)
+				Win32.ShowWindowAsync(window.Handle, Win32.SW.SW_RESTORE);
+			return;
+		}
+		_ignoreForegroundUntil[window.Handle] = DateTime.UtcNow.AddMilliseconds(650);
+		if (stage.TryGetLayout(window.Handle, out var snapshot) && snapshot is not null)
+			_displays.Restore(window, snapshot);
+		else
+			Win32.ShowWindowAsync(window.Handle, Win32.SW.SW_RESTORE);
+		stage.ClearManagerMinimized(window.Handle);
+	}
+
+	private void FocusWindow(IWindow? window)
+	{
+		if (window is null)
+			return;
+		_ignoreForegroundUntil[window.Handle] = DateTime.UtcNow.AddMilliseconds(650);
+		window.BringToTop();
+		window.Focus();
+	}
+
+	private async Task MoveWindowInternalAsync(Stage? sourceStage, IWindow window, Stage targetStage, bool emitForEach = true)
+	{
+		if (sourceStage?.Id == targetStage.Id)
+			return;
+		sourceStage?.Remove(window);
+		targetStage.Add(window);
+		if (sourceStage is not null && emitForEach)
+			StageChanged?.Invoke(this, new StageChangedEventArgs(sourceStage, window, ChangeType.Updated));
+		if (emitForEach)
+			StageChanged?.Invoke(this, new StageChangedEventArgs(targetStage, window, ChangeType.Updated));
+		if (sourceStage is not null)
+			RemoveStageIfEmpty(sourceStage);
+
+		if (_settings.Current.StageMode == StageMode.Focus && CurrentStage?.Id != targetStage.Id && !window.IsMinimized)
+		{
+			targetStage.CaptureLayouts(_displays);
+			targetStage.MarkMinimizedByManager(window.Handle);
+			Win32.ShowWindowAsync(window.Handle, Win32.SW.SW_MINIMIZE);
+		}
+		else if (CurrentStage?.Id == targetStage.Id)
+		{
+			RestoreManagedWindow(targetStage, window, restoreUserMinimized: true);
+			FocusWindow(window);
+		}
+		await Task.CompletedTask;
+	}
+
+	private void RemoveStageIfEmpty(Stage stage)
+	{
+		if (stage.WindowCount != 0)
+			return;
+		CurrentStages.Remove(stage);
+		if (CurrentStage?.Id == stage.Id)
+			CurrentStage = null;
+		StageChanged?.Invoke(this, new StageChangedEventArgs(stage, null, ChangeType.Removed));
+	}
+
+	private void ReconcileCurrentDesktop()
+	{
+		var currentWindows = WindowsManager.Windows.Where(IsOnCurrentDesktop).ToArray();
+		var handles = currentWindows.Select(window => window.Handle).ToHashSet();
+		foreach (var stage in CurrentStages.ToArray())
+		{
+			foreach (var staleWindow in stage.Windows.Where(window => !handles.Contains(window.Handle)).ToArray())
+				stage.Remove(staleWindow);
+			if (stage.WindowCount == 0)
+				CurrentStages.Remove(stage);
+		}
+
+		foreach (var window in currentWindows.Where(window => FindStageForWindow(window) is null))
+		{
+			var appKey = Stage.GetAppKey(window);
+			var stage = CurrentStages.FirstOrDefault(candidate => candidate.ContainsApp(appKey));
+			if (stage is null)
+				CurrentStages.Add(new Stage(appKey, window));
+			else
+				stage.Add(window);
+		}
+
+		var foreground = Win32.GetForegroundWindow();
+		CurrentStage = CurrentStages.FirstOrDefault(stage => stage.ContainsWindow(foreground));
+		foreach (var stage in CurrentStages)
+			stage.IsSelected = stage.Id == CurrentStage?.Id;
+	}
+
+	private List<Stage> GetOrCreateStages(Guid desktopId)
+	{
+		if (!_stagesByDesktop.TryGetValue(desktopId, out var stages))
+		{
+			stages = new List<Stage>();
+			_stagesByDesktop[desktopId] = stages;
+		}
+		return stages;
+	}
+
+	private Guid GetDesktopId(IWindow window)
+	{
+		var id = window is WindowsWindow concrete ? concrete.Identity.VirtualDesktopId : _virtualDesktops.GetDesktopId(window.Handle);
+		return _virtualDesktops.IsAvailable ? id : Guid.Empty;
+	}
+
+	private bool IsOnCurrentDesktop(IWindow window) => !_virtualDesktops.IsAvailable || _virtualDesktops.IsWindowOnCurrentDesktop(window.Handle);
+
+	private void RestoreAllManagerMinimizedWindows()
+	{
+		foreach (var stage in AllStages)
+		{
+			foreach (var window in stage.Windows.ToArray())
+				RestoreManagedWindow(stage, window);
+		}
+	}
+
+	private void Queue(Func<Task> action, string operation)
+	{
+		if (_stopping)
+			return;
+		var dispatcherOperation = _dispatcher.InvokeAsync(() => RunSerializedAsync(action, operation), DispatcherPriority.Background);
+		_ = dispatcherOperation.Task.Unwrap().ContinueWith(task =>
+		{
+			if (task.Exception is not null)
+				AppLogger.Error($"Queued operation '{operation}' failed.", task.Exception.Flatten());
+		}, TaskScheduler.Default);
+	}
+
+	private async Task RunSerializedAsync(Func<Task> action, string operation)
+	{
+		if (_stopping)
+			return;
+		await _gate.WaitAsync(_lifetime.Token).ConfigureAwait(true);
+		try
+		{
+			await action().ConfigureAwait(true);
+		}
+		catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+		{
+		}
+		catch (Exception ex)
+		{
+			AppLogger.Error($"Stage operation '{operation}' failed.", ex);
+		}
+		finally
+		{
+			_gate.Release();
+		}
 	}
 }
