@@ -442,7 +442,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 		var dpi = VisualTreeHelper.GetDpi(this);
 		_lastNativeWidth = Math.Max(1, (int)Math.Ceiling(Width * dpi.DpiScaleX));
 		var hidden = Mode == WindowMode.OffScreen || _manualSidebarHidden || _exclusiveFullScreen;
-		Topmost = !hidden && (Mode == WindowMode.Flyover || !_settings.Current.AutoHideSidebar);
+		Topmost = !hidden && Mode == WindowMode.Flyover;
 		var nativeLeft = hidden ? target.WorkingArea.Left - _lastNativeWidth + 2 : target.WorkingArea.Left;
 		Win32.SetWindowPos(_thisHandle, IntPtr.Zero, nativeLeft, target.WorkingArea.Top, _lastNativeWidth, target.WorkingArea.Height,
 			Win32.SetWindowPosFlags.IgnoreZOrder | Win32.SetWindowPosFlags.DoNotActivate | Win32.SetWindowPosFlags.ShowWindow);

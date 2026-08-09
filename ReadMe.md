@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.0.3
+# Stage_Manager_Lai v2.0.4
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -12,8 +12,11 @@ v2.0.1 makes the sidebar canvas fully transparent while retaining the individual
 v2.0.2 retries late-forming Office and packaged-app windows, and suppresses native previews while cards are
 being reordered so stale DWM rectangles cannot overlap neighboring cards.
 
-v2.0.3 uses 60% cards by default and keeps the sidebar visible and above ordinary windows when they approach or overlap it.
+v2.0.3 uses 60% cards by default and prevents ordinary windows from triggering sidebar auto-hide.
 Exclusive full-screen applications still suppress the sidebar, and the sidebar can still be hidden manually.
+
+v2.0.4 removes persistent topmost behavior. The sidebar remains at the left edge but normal foreground windows
+can cover it naturally.
 
 ## What v2 adds
 
