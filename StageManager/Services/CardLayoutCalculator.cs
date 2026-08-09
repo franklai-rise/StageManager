@@ -17,7 +17,7 @@ public static class CardLayoutCalculator
 {
 	public static CardLayout Calculate(double availableHeight, int visibleCount, double preferenceScale)
 	{
-		preferenceScale = Math.Clamp(preferenceScale, 0.75, 1.25);
+		preferenceScale = Math.Clamp(preferenceScale, 0.55, 1.25);
 		availableHeight = Math.Max(1, availableHeight);
 		visibleCount = Math.Max(0, visibleCount);
 		var maximumWidth = 196 * preferenceScale;

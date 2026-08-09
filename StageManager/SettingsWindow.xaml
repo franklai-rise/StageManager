@@ -70,7 +70,7 @@
                         <CheckBox Content="Use animations" IsChecked="{Binding Draft.AnimationsEnabled}" />
                         <CheckBox Content="Start with Windows" IsChecked="{Binding Draft.StartWithWindows}" />
                         <TextBlock Text="Card size" Margin="0,8,0,0" />
-                        <Slider Minimum="0.75" Maximum="1.25" TickFrequency="0.05" IsSnapToTickEnabled="True"
+						<Slider Minimum="0.55" Maximum="1.25" TickFrequency="0.05" IsSnapToTickEnabled="True"
                                 Value="{Binding Draft.CardScale}" />
                         <TextBlock Text="Sidebar opacity" Margin="0,8,0,0" />
                         <Slider Minimum="0.65" Maximum="1" TickFrequency="0.05" IsSnapToTickEnabled="True"

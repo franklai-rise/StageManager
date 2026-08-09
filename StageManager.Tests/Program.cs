@@ -84,13 +84,19 @@ internal static class TestRunner
 		try
 		{
 			var service = new SettingsService(path);
+			Assert(!service.Current.AutoHideSidebar, "Sidebar auto-hide should be disabled by default.");
+			Assert(Math.Abs(service.Current.CardScale - 0.60) < 0.001, "Default card scale should be 60%.");
 			var settings = service.CloneCurrent();
 			settings.CardScale = 99;
 			settings.SidebarOpacity = 0;
 			settings.StageMode = StageMode.Focus;
 			settings.IgnoredProcesses = new List<string> { "yuanbao", "YuanBao", "  explorer  " };
 			service.Apply(settings);
-			Assert(service.Current.CardScale == 1.25, "Card scale was not clamped.");
+			Assert(service.Current.CardScale == 1.25, "Maximum card scale was not clamped.");
+			settings = service.CloneCurrent();
+			settings.CardScale = 0;
+			service.Apply(settings);
+			Assert(service.Current.CardScale == 0.55, "Minimum card scale was not clamped.");
 			Assert(service.Current.SidebarOpacity == 0.65, "Opacity was not clamped.");
 			Assert(service.Current.IgnoredProcesses.Count == 2, "Ignored process names were not normalized.");
 			var reloaded = new SettingsService(path);

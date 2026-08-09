@@ -19,11 +19,11 @@ public sealed class AppSettings
 	public int SchemaVersion { get; set; } = 1;
 	public StageMode StageMode { get; set; } = StageMode.Coexist;
 	public AppWindowsMode AppWindowsMode { get; set; } = AppWindowsMode.AllAtOnce;
-	public bool AutoHideSidebar { get; set; } = true;
+	public bool AutoHideSidebar { get; set; }
 	public bool AnimationsEnabled { get; set; } = true;
 	public bool HotkeysEnabled { get; set; } = true;
 	public bool StartWithWindows { get; set; } = true;
-	public double CardScale { get; set; } = 1.0;
+	public double CardScale { get; set; } = 0.60;
 	public double SidebarOpacity { get; set; } = 0.94;
 	public string ToggleSidebarHotkey { get; set; } = "Win+Alt+S";
 	public string PreviousStageHotkey { get; set; } = "Win+Alt+[";

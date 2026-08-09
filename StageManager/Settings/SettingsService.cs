@@ -93,7 +93,7 @@ public sealed class SettingsService
 	private static AppSettings Normalize(AppSettings settings)
 	{
 		settings.SchemaVersion = 1;
-		settings.CardScale = Math.Clamp(settings.CardScale, 0.75, 1.25);
+		settings.CardScale = Math.Clamp(settings.CardScale, 0.55, 1.25);
 		settings.SidebarOpacity = Math.Clamp(settings.SidebarOpacity, 0.65, 1.0);
 		settings.IgnoredProcesses ??= new List<string>();
 		settings.IgnoredProcesses = settings.IgnoredProcesses

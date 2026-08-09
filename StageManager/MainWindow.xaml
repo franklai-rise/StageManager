@@ -11,7 +11,7 @@
         Topmost="False"
         WindowStyle="None"
         ResizeMode="NoResize"
-        Title="Stage_Manager_Lai_v2.0.2"
+        Title="Stage_Manager_Lai_v2.0.3"
         Height="450"
         Width="224"
         ShowActivated="False"
@@ -165,7 +165,7 @@
 
         <tb:TaskbarIcon x:Name="trayIcon"
                         Visibility="Visible"
-                        ToolTipText="Stage_Manager_Lai v2.0.2"
+                        ToolTipText="Stage_Manager_Lai v2.0.3"
                         IconSource="StageManager.ico"
                         MenuActivation="LeftOrRightClick">
             <tb:TaskbarIcon.ContextMenu>
