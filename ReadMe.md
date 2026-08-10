@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.2.3
+# Stage_Manager_Lai v2.2.4
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -41,6 +41,11 @@ v2.2.3 fixes activation for visible background windows such as Zotero and WeChat
 relevant Windows input threads before raising the selected window. Tray-hidden, non-minimized windows such as
 Nutstore's background WPF shell and WeChat's hidden main window are removed from the sidebar instead of being
 forced into a stale black frame. Taskbar-minimized windows remain managed and restore normally.
+
+v2.2.4 adds full-screen edge reveal on the physical leftmost display. While a full-screen application is active,
+the sidebar stays out of the way, slides over the application when the pointer reaches the left edge, and hides
+again shortly after the pointer leaves. It is raised to the topmost band only for this temporary reveal and is
+demoted as soon as the hide animation completes; normal operation remains non-topmost.
 
 ## What v2 adds
 

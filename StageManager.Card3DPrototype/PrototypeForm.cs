@@ -26,6 +26,7 @@ internal sealed class PrototypeForm : Form
 	private readonly ToolTip _toolTip = new() { InitialDelay = 450, ReshowDelay = 100, AutoPopDelay = 3000, ShowAlways = true };
 	private readonly ContextMenuStrip _contextMenu = new();
 	private readonly HashSet<int> _registeredHotkeys = new();
+	private readonly Screen _sidebarDisplay;
 	private readonly Rectangle _sidebarScreenBounds;
 	private Compositor? _compositor;
 	private DesktopWindowTarget? _target;
@@ -35,7 +36,12 @@ internal sealed class PrototypeForm : Form
 	private NotifyIcon? _trayIcon;
 	private IntPtr _toolTipHandle;
 	private DateTime _lastSidebarInteractionUtc = DateTime.UtcNow;
+	private DateTime _fullScreenRevealUtc = DateTime.MinValue;
 	private bool _sidebarVisible = true;
+	private bool _fullScreenSession;
+	private bool _sidebarWasVisibleBeforeFullScreen;
+	private bool _fullScreenOverlayRaised;
+	private bool _demoteOverlayAfterHide;
 	private bool _closing;
 
 	public PrototypeForm()
@@ -45,9 +51,9 @@ internal sealed class PrototypeForm : Form
 		ShowInTaskbar = false;
 		StartPosition = FormStartPosition.Manual;
 		TopMost = false;
-		var screen = Screen.AllScreens.OrderBy(item => item.WorkingArea.Left).First();
-		_sidebarScreenBounds = screen.WorkingArea;
-		Bounds = new Rectangle(screen.WorkingArea.Left, screen.WorkingArea.Top, Math.Min(900, screen.WorkingArea.Width), screen.WorkingArea.Height);
+		_sidebarDisplay = Screen.AllScreens.OrderBy(item => item.WorkingArea.Left).First();
+		_sidebarScreenBounds = _sidebarDisplay.WorkingArea;
+		Bounds = new Rectangle(_sidebarDisplay.WorkingArea.Left, _sidebarDisplay.WorkingArea.Top, Math.Min(900, _sidebarDisplay.WorkingArea.Width), _sidebarDisplay.WorkingArea.Height);
 		SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
 
 		var toggleItem = new ToolStripMenuItem("Show / Hide sidebar");
@@ -56,7 +62,7 @@ internal sealed class PrototypeForm : Form
 		settingsItem.Click += (_, _) => ShowSettings();
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => Close();
-		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.2.3") { Enabled = false });
+		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.2.4") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(settingsItem);
@@ -69,6 +75,11 @@ internal sealed class PrototypeForm : Form
 			_regionCollapseTimer.Stop();
 			if (!_sidebarVisible)
 				UpdateWindowRegion(false);
+			if (_demoteOverlayAfterHide)
+			{
+				_demoteOverlayAfterHide = false;
+				SetFullScreenOverlayRaised(false);
+			}
 		};
 	}
 
@@ -350,11 +361,12 @@ internal sealed class PrototypeForm : Form
 		_regionCollapseTimer.Stop();
 		if (visible)
 		{
+			_demoteOverlayAfterHide = false;
 			_lastSidebarInteractionUtc = DateTime.UtcNow;
 			UpdateWindowRegion(true);
 			NativeMethods.SetWindowPos(
 				Handle,
-				NativeMethods.HwndTop,
+				_fullScreenOverlayRaised ? NativeMethods.HwndTopmost : NativeMethods.HwndTop,
 				0,
 				0,
 				0,
@@ -367,10 +379,18 @@ internal sealed class PrototypeForm : Form
 		_renderer.CollapseExpandedStage();
 		_renderer.SetSidebarVisible(false, animate: true);
 		var animate = _catalog?.Settings.Current.AnimationsEnabled == true;
+		_demoteOverlayAfterHide = _fullScreenOverlayRaised;
 		if (animate)
 			_regionCollapseTimer.Start();
 		else
+		{
 			UpdateWindowRegion(false);
+			if (_demoteOverlayAfterHide)
+			{
+				_demoteOverlayAfterHide = false;
+				SetFullScreenOverlayRaised(false);
+			}
+		}
 	}
 
 	private void ActivateRelativeStage(int delta)
@@ -430,9 +450,28 @@ internal sealed class PrototypeForm : Form
 		if (_closing || _renderer is null || _catalog is null)
 			return;
 		var screenPoint = Cursor.Position;
+		var nowUtc = DateTime.UtcNow;
+		var pointerAtLeftEdge = IsNearLeftEdge(screenPoint);
+		var fullScreenActive = FullScreenService.IsExclusiveFullScreenOn(
+			NativeMethods.GetForegroundWindow(),
+			_sidebarDisplay);
+		UpdateFullScreenSession(fullScreenActive, nowUtc);
 		if (!_sidebarVisible)
 		{
-			if (IsNearLeftEdge(screenPoint))
+			var hiddenAction = FullScreenSidebarBehavior.Decide(
+				fullScreenActive,
+				false,
+				pointerAtLeftEdge,
+				false,
+				_fullScreenRevealUtc,
+				nowUtc);
+			if (hiddenAction == FullScreenSidebarAction.Reveal)
+			{
+				_fullScreenRevealUtc = nowUtc;
+				SetFullScreenOverlayRaised(true);
+				SetSidebarVisible(true);
+			}
+			else if (!fullScreenActive && pointerAtLeftEdge)
 				SetSidebarVisible(true);
 			return;
 		}
@@ -445,8 +484,9 @@ internal sealed class PrototypeForm : Form
 			client.X <= _renderer.SidebarInteractionWidth &&
 			client.Y >= 0 &&
 			client.Y < ClientSize.Height;
+		var pointerWithinTransientSidebar = hit is not null || pointerNearSidebar || pointerAtLeftEdge;
 		if (hit is not null || pointerNearSidebar)
-			_lastSidebarInteractionUtc = DateTime.UtcNow;
+			_lastSidebarInteractionUtc = nowUtc;
 		else
 		{
 			_toolTipHandle = IntPtr.Zero;
@@ -455,15 +495,73 @@ internal sealed class PrototypeForm : Form
 		if (wasExpanded != _renderer.HasExpandedStage)
 			UpdateWindowRegion(true);
 
+		var fullScreenAction = FullScreenSidebarBehavior.Decide(
+			fullScreenActive,
+			true,
+			pointerAtLeftEdge,
+			pointerWithinTransientSidebar,
+			_fullScreenRevealUtc,
+			nowUtc);
+		if (fullScreenAction == FullScreenSidebarAction.Hide)
+		{
+			SetSidebarVisible(false);
+			return;
+		}
+		if (fullScreenActive)
+		{
+			if (pointerWithinTransientSidebar && !_fullScreenOverlayRaised)
+			{
+				_fullScreenRevealUtc = nowUtc;
+				SetFullScreenOverlayRaised(true);
+			}
+			return;
+		}
+
 		var settings = _catalog.Settings.Current;
 		if (SidebarIdleBehavior.ShouldHide(
 			settings.IdleAutoHideEnabled,
 			settings.IdleAutoHideSeconds,
 			_lastSidebarInteractionUtc,
-			DateTime.UtcNow))
+			nowUtc))
 		{
 			SetSidebarVisible(false);
 		}
+	}
+
+	private void UpdateFullScreenSession(bool fullScreenActive, DateTime nowUtc)
+	{
+		if (fullScreenActive)
+		{
+			if (_fullScreenSession)
+				return;
+			_fullScreenSession = true;
+			_sidebarWasVisibleBeforeFullScreen = _sidebarVisible;
+			_fullScreenRevealUtc = nowUtc - TimeSpan.FromSeconds(1);
+			return;
+		}
+
+		if (!_fullScreenSession)
+			return;
+		_fullScreenSession = false;
+		SetFullScreenOverlayRaised(false);
+		if (_sidebarWasVisibleBeforeFullScreen && !_sidebarVisible)
+			SetSidebarVisible(true);
+		_sidebarWasVisibleBeforeFullScreen = false;
+	}
+
+	private void SetFullScreenOverlayRaised(bool raised)
+	{
+		if (_fullScreenOverlayRaised == raised || !IsHandleCreated)
+			return;
+		_fullScreenOverlayRaised = raised;
+		NativeMethods.SetWindowPos(
+			Handle,
+			raised ? NativeMethods.HwndTopmost : NativeMethods.HwndNotTopmost,
+			0,
+			0,
+			0,
+			0,
+			NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
 	}
 
 	private bool IsNearLeftEdge(Point screenPoint)
@@ -506,7 +604,7 @@ internal sealed class PrototypeForm : Form
 		var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 		_trayIcon = new NotifyIcon
 		{
-			Text = "Stage_Manager_Lai v2.2.3",
+			Text = "Stage_Manager_Lai v2.2.4",
 			Icon = icon,
 			ContextMenuStrip = _contextMenu,
 			Visible = true

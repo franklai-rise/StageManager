@@ -10,6 +10,8 @@ internal static class NativeMethods
 	public const int SwMinimize = 6;
 	public const int SwRestore = 9;
 	public static readonly IntPtr HwndTop = IntPtr.Zero;
+	public static readonly IntPtr HwndTopmost = new(-1);
+	public static readonly IntPtr HwndNotTopmost = new(-2);
 	public const uint SwpNoSize = 0x0001;
 	public const uint SwpNoMove = 0x0002;
 	public const uint SwpNoActivate = 0x0010;

@@ -34,7 +34,7 @@ internal sealed class SettingsForm : Form
 
 		Controls.Add(new Label
 		{
-			Text = "Stage_Manager_Lai v2.2.3",
+			Text = "Stage_Manager_Lai v2.2.4",
 			Font = new Font("Segoe UI", 17f, FontStyle.Bold),
 			AutoSize = true,
 			Location = new Point(22, 18)
