@@ -28,7 +28,7 @@ internal static class TestRunner
 		RunTest("Capture fallback produces a valid transparent card", CaptureFallback);
 		RunTest("Prototype stage slots do not jump after activation", PrototypeStageSlotsStayStable);
 		RunTest("Prototype card click toggles only the selected foreground window", PrototypeClickToggle);
-		RunTest("Multi-window cards expand only after the first click", MultiWindowCardClicking);
+		RunTest("Multi-window child selection stays expanded until the primary card is clicked", MultiWindowCardClicking);
 		RunTest("Tray-hidden windows leave the sidebar while taskbar-minimized windows remain", ManagedWindowVisibility);
 		RunTest("Idle auto-hide waits one minute and wakes at the left edge", IdleAutoHideBehavior);
 		RunTest("Full-screen or maximized sidebar reveals at the edge and hides after pointer leave", LargeWindowTransientSidebar);
@@ -102,8 +102,24 @@ internal static class TestRunner
 		var path = Path.Combine(directory, "settings.json");
 		try
 		{
+			Directory.CreateDirectory(directory);
+			File.WriteAllText(path, """
+				{
+				  "SchemaVersion": 3,
+				  "IgnoredProcesses": ["explorer", "yuanbao"]
+				}
+				""");
 			var service = new SettingsService(path);
-			Assert(service.Current.SchemaVersion == 2, "Settings schema was not upgraded for idle auto-hide.");
+			Assert(service.Current.SchemaVersion == 4, "Settings schema was not upgraded for Explorer folder support.");
+			Assert(!service.Current.IgnoredProcesses.Contains("explorer", StringComparer.OrdinalIgnoreCase),
+				"The legacy default Explorer ignore entry was not migrated.");
+			Assert(service.Current.IgnoredProcesses.Contains("yuanbao", StringComparer.OrdinalIgnoreCase),
+				"An unrelated ignored process was lost during migration.");
+			var migratedJson = File.ReadAllText(path);
+			Assert(migratedJson.Contains("\"SchemaVersion\": 4", StringComparison.Ordinal),
+				"The migrated schema was not written back to disk.");
+			Assert(!migratedJson.Contains("explorer", StringComparison.OrdinalIgnoreCase),
+				"The legacy Explorer ignore entry remained in the persisted settings.");
 			Assert(!service.Current.AutoHideSidebar, "Sidebar auto-hide should be disabled by default.");
 			Assert(service.Current.IdleAutoHideEnabled && service.Current.IdleAutoHideSeconds == 60,
 				"3D sidebar idle auto-hide should default to one minute.");
@@ -273,12 +289,14 @@ internal static class TestRunner
 
 	private static void MultiWindowCardClicking()
 	{
-		Assert(MultiWindowCardInteraction.Decide(1, false) == MultiWindowCardClickAction.SelectWindow,
+		Assert(MultiWindowCardInteraction.Decide(1, false, true) == MultiWindowCardClickAction.SelectWindow,
 			"A single-window card did not remain a direct selection.");
-		Assert(MultiWindowCardInteraction.Decide(4, false) == MultiWindowCardClickAction.Expand,
+		Assert(MultiWindowCardInteraction.Decide(4, false, true) == MultiWindowCardClickAction.Expand,
 			"A collapsed multi-window card did not require an explicit first click to expand.");
-		Assert(MultiWindowCardInteraction.Decide(4, true) == MultiWindowCardClickAction.SelectWindow,
-			"An expanded multi-window card did not allow direct window selection.");
+		Assert(MultiWindowCardInteraction.Decide(4, true, false) == MultiWindowCardClickAction.SelectWindow,
+			"Selecting an expanded child card did not preserve the expanded list.");
+		Assert(MultiWindowCardInteraction.Decide(4, true, true) == MultiWindowCardClickAction.Collapse,
+			"Clicking the expanded primary card did not collapse the child list.");
 	}
 
 	private static void ManagedWindowVisibility()

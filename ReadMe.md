@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.2.5
+# Stage_Manager_Lai v2.2.6
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -50,6 +50,11 @@ demoted as soon as the hide animation completes; normal operation remains non-to
 v2.2.5 applies the same transient edge behavior when the foreground window is maximized on the sidebar's display.
 Maximized windows on another monitor do not hide the left sidebar, and ordinary restored windows retain the normal
 one-minute idle behavior.
+
+v2.2.6 keeps a multi-window child list expanded after selecting a child window or moving the pointer away. The
+expanded list now collapses only when its primary card is clicked again, while pagination and direct child-window
+selection continue to work normally. Real File Explorer folder windows are also included as cards, while desktop,
+taskbar, notification-area, and other Explorer shell surfaces remain protected.
 
 ## What v2 adds
 

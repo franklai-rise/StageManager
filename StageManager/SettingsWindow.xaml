@@ -106,7 +106,7 @@
 
                 <GroupBox Header="Ignored applications">
                     <StackPanel>
-                        <TextBlock Text="One process name per line. Explorer and Windows shell surfaces remain protected regardless of this list."
+                        <TextBlock Text="One process name per line. Explorer folder windows are supported; desktop and taskbar shell surfaces always remain protected."
                                    TextWrapping="Wrap" Foreground="#FFACB3BF" Margin="0,0,0,6" />
                         <TextBox Text="{Binding IgnoredProcessesText, UpdateSourceTrigger=PropertyChanged}"
                                  AcceptsReturn="True" Height="100" VerticalScrollBarVisibility="Auto" />

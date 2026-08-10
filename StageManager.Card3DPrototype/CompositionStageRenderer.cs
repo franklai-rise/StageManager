@@ -215,7 +215,11 @@ internal sealed class CompositionStageRenderer : IDisposable
 			}
 			return;
 		}
-		CollapseExpandedStage();
+		if (_hoveredWindowHandle != IntPtr.Zero)
+		{
+			_hoveredWindowHandle = IntPtr.Zero;
+			LayoutStages(true);
+		}
 	}
 
 	public IWindow? ActivateAt(Point clientPoint)
@@ -231,8 +235,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (hit.Window is null)
 			return null;
 		var isExpandedStage = string.Equals(_expandedStageKey, hit.StageKey, StringComparison.OrdinalIgnoreCase);
-		if (_stages.TryGetValue(hit.StageKey, out var stage) &&
-			MultiWindowCardInteraction.Decide(stage.Windows.Count, isExpandedStage) == MultiWindowCardClickAction.Expand)
+		if (!_stages.TryGetValue(hit.StageKey, out var stage))
+			return null;
+		var action = MultiWindowCardInteraction.Decide(stage.Windows.Count, isExpandedStage, hit.IsPrimaryCard);
+		if (action == MultiWindowCardClickAction.Expand)
 		{
 			_expandedStageKey = hit.StageKey;
 			_hoveredStageKey = hit.StageKey;
@@ -242,7 +248,11 @@ internal sealed class CompositionStageRenderer : IDisposable
 			LayoutStages(true);
 			return null;
 		}
-		CollapseExpandedStage();
+		if (action == MultiWindowCardClickAction.Collapse)
+		{
+			CollapseExpandedStage();
+			return null;
+		}
 		return hit.Window;
 	}
 
@@ -384,7 +394,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 				card.Pivot,
 				cameraCenter,
 				PerspectiveDistance * _dpiScale);
-			_hitTargets.Add(new CardHitTarget(stage.Key, card.Window, polygon, stageIndex * 20 + (3 - index) + (hovered ? 10 : 0)));
+			_hitTargets.Add(new CardHitTarget(
+				stage.Key,
+				card.Window,
+				polygon,
+				stageIndex * 20 + (3 - index) + (hovered ? 10 : 0),
+				IsPrimaryCard: index == 0));
 		}
 	}
 
@@ -425,7 +440,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 				card.Pivot,
 				cameraCenter,
 				PerspectiveDistance * _dpiScale);
-			_hitTargets.Add(new CardHitTarget(stage.Key, card.Window, polygon, 10000 + index + (hovered ? 100 : 0)));
+			_hitTargets.Add(new CardHitTarget(
+				stage.Key,
+				card.Window,
+				polygon,
+				10000 + index + (hovered ? 100 : 0),
+				IsPrimaryCard: index == 0));
 		}
 
 		stage.SetPaginationVisible(pageCount > 1);
@@ -529,7 +549,13 @@ internal sealed class CompositionStageRenderer : IDisposable
 	}
 }
 
-internal sealed record CardHitTarget(string StageKey, IWindow? Window, IReadOnlyList<Vector2> Polygon, int ZOrder, int PageDelta = 0);
+internal sealed record CardHitTarget(
+	string StageKey,
+	IWindow? Window,
+	IReadOnlyList<Vector2> Polygon,
+	int ZOrder,
+	int PageDelta = 0,
+	bool IsPrimaryCard = false);
 
 internal sealed class StageCardVisual : IDisposable
 {

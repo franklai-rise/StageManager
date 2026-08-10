@@ -65,7 +65,13 @@ public sealed class SettingsService
 			{
 				var loaded = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_settingsPath), _jsonOptions);
 				if (loaded is not null)
-					return Normalize(loaded);
+				{
+					var loadedSchemaVersion = loaded.SchemaVersion;
+					var normalized = Normalize(loaded);
+					if (loadedSchemaVersion != normalized.SchemaVersion)
+						Save(normalized);
+					return normalized;
+				}
 			}
 		}
 		catch (Exception ex)
@@ -76,12 +82,14 @@ public sealed class SettingsService
 		return Normalize(new AppSettings());
 	}
 
-	private void Save()
+	private void Save() => Save(Current);
+
+	private void Save(AppSettings settings)
 	{
 		try
 		{
 			var tempPath = _settingsPath + ".tmp";
-			File.WriteAllText(tempPath, JsonSerializer.Serialize(Current, _jsonOptions));
+			File.WriteAllText(tempPath, JsonSerializer.Serialize(settings, _jsonOptions));
 			File.Move(tempPath, _settingsPath, true);
 		}
 		catch (Exception ex)
@@ -92,7 +100,8 @@ public sealed class SettingsService
 
 	private static AppSettings Normalize(AppSettings settings)
 	{
-		settings.SchemaVersion = 2;
+		var sourceSchemaVersion = settings.SchemaVersion;
+		settings.SchemaVersion = 4;
 		settings.CardScale = Math.Clamp(settings.CardScale, 0.55, 1.25);
 		settings.IdleAutoHideSeconds = Math.Clamp(settings.IdleAutoHideSeconds, 15, 600);
 		settings.SidebarOpacity = Math.Clamp(settings.SidebarOpacity, 0.65, 1.0);
@@ -100,6 +109,7 @@ public sealed class SettingsService
 		settings.IgnoredProcesses = settings.IgnoredProcesses
 			.Where(value => !string.IsNullOrWhiteSpace(value))
 			.Select(value => value.Trim())
+			.Where(value => sourceSchemaVersion >= 4 || !value.Equals("explorer", StringComparison.OrdinalIgnoreCase))
 			.Distinct(StringComparer.OrdinalIgnoreCase)
 			.OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
 			.ToList();

@@ -13,6 +13,12 @@ public interface IWindowClassifier
 
 public sealed class WindowClassifier : IWindowClassifier
 {
+	private static readonly HashSet<string> ExplorerFolderClasses = new(StringComparer.OrdinalIgnoreCase)
+	{
+		"CabinetWClass",
+		"ExploreWClass"
+	};
+
 	private static readonly HashSet<string> IgnoredClasses = new(StringComparer.OrdinalIgnoreCase)
 	{
 		"TaskManagerWindow",
@@ -64,7 +70,7 @@ public sealed class WindowClassifier : IWindowClassifier
 			return Reject("untitled/transient window", out reason);
 		if (IgnoredClasses.Contains(window.Class))
 			return Reject($"protected class {window.Class}", out reason);
-		if (ProtectedProcesses.Contains(window.ProcessName))
+		if (ProtectedProcesses.Contains(window.ProcessName) && !IsExplorerFolderWindow(window))
 			return Reject($"protected process {window.ProcessName}", out reason);
 		if (_settings.Current.IgnoredProcesses.Exists(name => string.Equals(name, window.ProcessName, StringComparison.OrdinalIgnoreCase)))
 			return Reject($"user ignored process {window.ProcessName}", out reason);
@@ -75,6 +81,12 @@ public sealed class WindowClassifier : IWindowClassifier
 
 		reason = string.Empty;
 		return true;
+	}
+
+	private static bool IsExplorerFolderWindow(WindowsWindow window)
+	{
+		return window.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase) &&
+			ExplorerFolderClasses.Contains(window.Class);
 	}
 
 	private static bool Reject(string value, out string reason)

@@ -34,7 +34,6 @@ public sealed class AppSettings
 	public string ToggleWindowInStageHotkey { get; set; } = "Win+Alt+G";
 	public List<string> IgnoredProcesses { get; set; } = new()
 	{
-		"explorer",
 		"yuanbao"
 	};
 }
