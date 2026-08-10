@@ -29,6 +29,7 @@ internal static class TestRunner
 		RunTest("Prototype stage slots do not jump after activation", PrototypeStageSlotsStayStable);
 		RunTest("Prototype card click toggles only the selected foreground window", PrototypeClickToggle);
 		RunTest("Multi-window cards expand only after the first click", MultiWindowCardClicking);
+		RunTest("Tray-hidden windows leave the sidebar while taskbar-minimized windows remain", ManagedWindowVisibility);
 		RunTest("Idle auto-hide waits one minute and wakes at the left edge", IdleAutoHideBehavior);
 		Console.WriteLine(_failures == 0 ? "All Stage_Manager_Lai tests passed." : $"{_failures} test(s) failed.");
 		return _failures == 0 ? 0 : 1;
@@ -277,6 +278,13 @@ internal static class TestRunner
 			"A collapsed multi-window card did not require an explicit first click to expand.");
 		Assert(MultiWindowCardInteraction.Decide(4, true) == MultiWindowCardClickAction.SelectWindow,
 			"An expanded multi-window card did not allow direct window selection.");
+	}
+
+	private static void ManagedWindowVisibility()
+	{
+		Assert(ManagedWindowPresence.ShouldDisplay(true, false), "A visible background window was removed from the sidebar.");
+		Assert(ManagedWindowPresence.ShouldDisplay(false, true), "A taskbar-minimized window was removed from the sidebar.");
+		Assert(!ManagedWindowPresence.ShouldDisplay(false, false), "A tray-hidden background window remained in the sidebar.");
 	}
 
 	private static void IdleAutoHideBehavior()

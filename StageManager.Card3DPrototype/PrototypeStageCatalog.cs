@@ -47,6 +47,9 @@ internal sealed class PrototypeStageCatalog : IDisposable
 		var ignoredProcesses = _settings.Current.IgnoredProcesses.ToHashSet(StringComparer.OrdinalIgnoreCase);
 		var candidates = _windows.Windows
 			.Where(window => NativeMethods.IsWindow(window.Handle) &&
+				ManagedWindowPresence.ShouldDisplay(
+					NativeMethods.IsWindowVisible(window.Handle),
+					NativeMethods.IsIconic(window.Handle)) &&
 				_virtualDesktops.IsWindowOnCurrentDesktop(window.Handle) &&
 				!ignoredProcesses.Contains(window.ProcessName))
 			.ToArray();

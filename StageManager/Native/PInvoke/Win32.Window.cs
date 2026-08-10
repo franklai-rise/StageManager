@@ -218,6 +218,9 @@ namespace StageManager.Native.PInvoke
 		[return: MarshalAs(UnmanagedType.Bool)]
 		public static extern bool SetForegroundWindow(IntPtr hWnd);
 
+		[DllImport("user32.dll")]
+		public static extern IntPtr SetActiveWindow(IntPtr hWnd);
+
         [DllImport("user32.dll")]
         public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 

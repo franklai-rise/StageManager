@@ -56,7 +56,7 @@ internal sealed class PrototypeForm : Form
 		settingsItem.Click += (_, _) => ShowSettings();
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => Close();
-		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.2.2") { Enabled = false });
+		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.2.3") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(settingsItem);
@@ -403,6 +403,10 @@ internal sealed class PrototypeForm : Form
 
 	private static void ActivateSelectedWindow(StageManager.Native.Window.IWindow window, bool allowMinimize)
 	{
+		if (!ManagedWindowPresence.ShouldDisplay(
+			NativeMethods.IsWindowVisible(window.Handle),
+			NativeMethods.IsIconic(window.Handle)))
+			return;
 		var action = WindowClickBehavior.Decide(
 			window.Handle,
 			NativeMethods.GetForegroundWindow(),
@@ -418,10 +422,7 @@ internal sealed class PrototypeForm : Form
 
 		if (window.IsMinimized)
 			NativeMethods.ShowWindowAsync(window.Handle, NativeMethods.SwRestore);
-		NativeMethods.BringWindowToTop(window.Handle);
-		NativeMethods.SetForegroundWindow(window.Handle);
-		if (NativeMethods.GetForegroundWindow() != window.Handle)
-			window.Focus();
+		window.Focus();
 	}
 
 	private void PollPointer()
@@ -505,7 +506,7 @@ internal sealed class PrototypeForm : Form
 		var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 		_trayIcon = new NotifyIcon
 		{
-			Text = "Stage_Manager_Lai v2.2.2",
+			Text = "Stage_Manager_Lai v2.2.3",
 			Icon = icon,
 			ContextMenuStrip = _contextMenu,
 			Visible = true

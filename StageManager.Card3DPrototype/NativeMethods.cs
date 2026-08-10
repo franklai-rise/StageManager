@@ -31,6 +31,10 @@ internal static class NativeMethods
 	public static extern bool IsIconic(IntPtr windowHandle);
 
 	[DllImport("user32.dll")]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	public static extern bool IsWindowVisible(IntPtr windowHandle);
+
+	[DllImport("user32.dll")]
 	public static extern IntPtr GetForegroundWindow();
 
 	[DllImport("user32.dll")]

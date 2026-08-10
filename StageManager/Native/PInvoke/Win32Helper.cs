@@ -62,9 +62,9 @@ namespace StageManager.Native.PInvoke
             */
         }
 
-        public static void ForceForegroundWindow(IntPtr hWnd)
+        public static bool ForceForegroundWindow(IntPtr hWnd)
         {
-            FocusStealer.Steal(hWnd);
+            return FocusStealer.Steal(hWnd);
         }
     }
 }

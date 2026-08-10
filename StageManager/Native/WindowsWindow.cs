@@ -1,4 +1,5 @@
 using StageManager.Model;
+using StageManager.Infrastructure;
 using StageManager.Native.PInvoke;
 using StageManager.Native.Window;
 using StageManager.Services;
@@ -115,8 +116,10 @@ public sealed class WindowsWindow : IWindow
 	{
 		if (!IsFocused && Win32.IsWindow(_handle))
 		{
-			Win32Helper.ForceForegroundWindow(_handle);
-			WindowFocused?.Invoke(this);
+			if (Win32Helper.ForceForegroundWindow(_handle))
+				WindowFocused?.Invoke(this);
+			else
+				AppLogger.Warn($"Foreground activation was rejected for {ProcessName} window {_handle} ({Title}).");
 		}
 	}
 

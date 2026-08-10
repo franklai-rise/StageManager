@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.2.2
+# Stage_Manager_Lai v2.2.3
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -36,6 +36,11 @@ each window keeps a separate full-size card, while a blue-gray connector line sh
 Hover only raises the pointed card slightly, and a second click selects that exact window. Single-window cards
 remain direct one-click targets. The expanded native region follows every card so transparent space continues
 to click through. Collapsed cards retain a small hover lift and angle response without opening automatically.
+
+v2.2.3 fixes activation for visible background windows such as Zotero and WeChat by temporarily attaching the
+relevant Windows input threads before raising the selected window. Tray-hidden, non-minimized windows such as
+Nutstore's background WPF shell and WeChat's hidden main window are removed from the sidebar instead of being
+forced into a stale black frame. Taskbar-minimized windows remain managed and restore normally.
 
 ## What v2 adds
 
