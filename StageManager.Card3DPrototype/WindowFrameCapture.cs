@@ -51,6 +51,54 @@ internal sealed class WindowFrameCapture : IDisposable
 		return new CapturedCardFrame(window.Handle, CopyPremultipliedPixels(card), targetWidth, targetHeight, placeholder);
 	}
 
+	public CapturedCardFrame CaptureApplicationCard(IWindow window, int targetWidth, int targetHeight)
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		targetWidth = Math.Max(32, targetWidth);
+		targetHeight = Math.Max(24, targetHeight);
+		using var card = new Bitmap(targetWidth, targetHeight, PixelFormat.Format32bppArgb);
+		using var graphics = Graphics.FromImage(card);
+		graphics.Clear(Color.Transparent);
+		graphics.CompositingMode = CompositingMode.SourceOver;
+		graphics.CompositingQuality = CompositingQuality.HighQuality;
+		graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+		graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+		graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+		var radius = Math.Max(8, (int)Math.Round(targetHeight * 0.10));
+		using var clipPath = CreateRoundedRectangle(new Rectangle(1, 1, targetWidth - 2, targetHeight - 2), radius);
+		graphics.SetClip(clipPath);
+		using var cardBackground = new SolidBrush(Color.White);
+		graphics.FillPath(cardBackground, clipPath);
+		var iconSize = Math.Max(24, (int)Math.Round(Math.Min(targetHeight * 0.56, targetWidth * 0.40)));
+		var iconBounds = new Rectangle(
+			(targetWidth - iconSize) / 2,
+			(targetHeight - iconSize) / 2,
+			iconSize,
+			iconSize);
+		var icon = GetCachedIcon(window);
+		if (icon is not null)
+		{
+			lock (icon)
+				graphics.DrawImage(icon, iconBounds);
+		}
+		else
+		{
+			using var fallbackBrush = new SolidBrush(Color.FromArgb(255, 235, 239, 248));
+			graphics.FillEllipse(fallbackBrush, iconBounds);
+			using var font = new Font("Segoe UI", Math.Max(12, iconSize * 0.48f), FontStyle.Bold, GraphicsUnit.Pixel);
+			using var textBrush = new SolidBrush(Color.FromArgb(255, 52, 65, 91));
+			var letter = string.IsNullOrWhiteSpace(window.ProcessName) ? "?" : window.ProcessName[..1].ToUpperInvariant();
+			var size = graphics.MeasureString(letter, font);
+			graphics.DrawString(letter, font, textBrush, iconBounds.Left + (iconBounds.Width - size.Width) / 2, iconBounds.Top + (iconBounds.Height - size.Height) / 2);
+		}
+
+		graphics.ResetClip();
+		using var border = new Pen(Color.FromArgb(105, 194, 202, 218), Math.Max(1, targetWidth / 220f));
+		graphics.DrawPath(border, clipPath);
+		return new CapturedCardFrame(window.Handle, CopyPremultipliedPixels(card), targetWidth, targetHeight, false);
+	}
+
 	public void Dispose()
 	{
 		if (_disposed)
@@ -159,18 +207,7 @@ internal sealed class WindowFrameCapture : IDisposable
 		using var badgeBrush = new SolidBrush(Color.FromArgb(218, 246, 248, 252));
 		graphics.FillPath(badgeBrush, badgePath);
 
-		var key = string.IsNullOrWhiteSpace(window.ProcessExecutable) ? window.ProcessName : window.ProcessExecutable;
-		_icons.TryGetValue(key, out var icon);
-		if (icon is null)
-		{
-			var extracted = ExtractIcon(window);
-			if (extracted is not null)
-			{
-				if (!_icons.TryAdd(key, extracted))
-					extracted.Dispose();
-				_icons.TryGetValue(key, out icon);
-			}
-		}
+		var icon = GetCachedIcon(window);
 		if (icon is not null)
 		{
 			lock (icon)
@@ -183,6 +220,21 @@ internal sealed class WindowFrameCapture : IDisposable
 		var letter = string.IsNullOrWhiteSpace(window.ProcessName) ? "?" : window.ProcessName[..1].ToUpperInvariant();
 		var size = graphics.MeasureString(letter, font);
 		graphics.DrawString(letter, font, textBrush, badgeBounds.Left + (badgeBounds.Width - size.Width) / 2, badgeBounds.Top + (badgeBounds.Height - size.Height) / 2);
+	}
+
+	private Bitmap? GetCachedIcon(IWindow window)
+	{
+		var key = string.IsNullOrWhiteSpace(window.ProcessExecutable) ? window.ProcessName : window.ProcessExecutable;
+		_icons.TryGetValue(key, out var icon);
+		if (icon is not null)
+			return icon;
+		var extracted = ExtractIcon(window);
+		if (extracted is null)
+			return null;
+		if (!_icons.TryAdd(key, extracted))
+			extracted.Dispose();
+		_icons.TryGetValue(key, out icon);
+		return icon;
 	}
 
 	private static void DrawCountBadge(Graphics graphics, string text, int width)

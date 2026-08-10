@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.2.7
+# Stage_Manager_Lai v2.3.0
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -59,6 +59,11 @@ taskbar, notification-area, and other Explorer shell surfaces remain protected.
 v2.2.7 keeps the card that opened a multi-window group permanently visible at the top of every expanded page. The
 primary card remains stable even when another child window receives focus or the user changes pages, so it is always
 available as the explicit collapse control. Child cards continue below it and remain expanded after selection.
+
+v2.3.0 replaces the window-backed primary card for multi-window applications with a synthetic application group card.
+The group card uses a white background with the application logo centered on it and never activates or minimizes a
+window. It only expands or collapses the group. Every real window now appears below it as a selectable child; groups
+with more than five windows page only the child cards while the application card remains available at the top.
 
 ## What v2 adds
 

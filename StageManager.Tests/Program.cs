@@ -29,7 +29,8 @@ internal static class TestRunner
 		RunTest("Prototype stage slots do not jump after activation", PrototypeStageSlotsStayStable);
 		RunTest("Prototype card click toggles only the selected foreground window", PrototypeClickToggle);
 		RunTest("Multi-window child selection stays expanded until the primary card is clicked", MultiWindowCardClicking);
-		RunTest("Expanded multi-window pages always retain the original primary card", ExpandedPrimaryCardPersistence);
+		RunTest("Expanded application groups keep every real window available", ExpandedApplicationGroupPaging);
+		RunTest("Application group cards render a white logo surface", ApplicationGroupCardRendering);
 		RunTest("Tray-hidden windows leave the sidebar while taskbar-minimized windows remain", ManagedWindowVisibility);
 		RunTest("Idle auto-hide waits one minute and wakes at the left edge", IdleAutoHideBehavior);
 		RunTest("Full-screen or maximized sidebar reveals at the edge and hides after pointer leave", LargeWindowTransientSidebar);
@@ -300,23 +301,30 @@ internal static class TestRunner
 			"Clicking the expanded primary card did not collapse the child list.");
 	}
 
-	private static void ExpandedPrimaryCardPersistence()
+	private static void ExpandedApplicationGroupPaging()
 	{
 		var windows = Enumerable.Range(101, 8).Select(value => new IntPtr(value)).ToArray();
-		var firstPage = MultiWindowCardInteraction.CreateExpandedPage(windows, handle => handle, new IntPtr(103), 0, 6);
-		Assert(firstPage.Primary == new IntPtr(103), "The card used to expand the stage was not retained as its primary card.");
-		Assert(firstPage.VisibleCards[0] == new IntPtr(103), "The primary card is not the first visible card.");
-		Assert(firstPage.VisibleCards.Count == 6 && firstPage.PageCount == 2,
-			"Expanded paging did not reserve one permanent slot for the primary card.");
+		var firstPage = MultiWindowCardInteraction.CreateExpandedChildPage(windows, 0, 5);
+		Assert(firstPage.VisibleChildren.SequenceEqual(windows.Take(5)) && firstPage.PageCount == 2,
+			"The first group page did not contain the first five real windows.");
 
-		var secondPage = MultiWindowCardInteraction.CreateExpandedPage(windows, handle => handle, new IntPtr(103), 1, 6);
-		Assert(secondPage.VisibleCards[0] == new IntPtr(103), "The primary card disappeared after paging.");
-		Assert(secondPage.VisibleCards.Skip(1).SequenceEqual(new[] { new IntPtr(107), new IntPtr(108) }),
-			"The second child page contains the wrong windows.");
+		var secondPage = MultiWindowCardInteraction.CreateExpandedChildPage(windows, 1, 5);
+		Assert(secondPage.VisibleChildren.SequenceEqual(windows.Skip(5)),
+			"The second group page did not contain every remaining real window.");
+		Assert(firstPage.VisibleChildren.Concat(secondPage.VisibleChildren).SequenceEqual(windows),
+			"The synthetic application card displaced a real window from the expanded group.");
+	}
 
-		var recovered = MultiWindowCardInteraction.CreateExpandedPage(windows, handle => handle, new IntPtr(999), 1, 6);
-		Assert(recovered.Primary == windows[0] && recovered.PageIndex == 1,
-			"A destroyed primary card did not fall back to a visible window.");
+	private static void ApplicationGroupCardRendering()
+	{
+		using var capture = new WindowFrameCapture();
+		var frame = capture.CaptureApplicationCard(new FakeWindow(0, "Example", "missing.exe"), 254, 158);
+		Assert(!frame.IsPlaceholder, "The synthetic application card was marked as a failed window capture.");
+		Assert(frame.Pixels[3] == 0, "The rounded application card corner is not transparent.");
+		var backgroundIndex = (8 * frame.Width + frame.Width / 2) * 4;
+		Assert(frame.Pixels[backgroundIndex] > 245 && frame.Pixels[backgroundIndex + 1] > 245 &&
+			frame.Pixels[backgroundIndex + 2] > 245 && frame.Pixels[backgroundIndex + 3] == 255,
+			"The synthetic application card does not have a white background.");
 	}
 
 	private static void ManagedWindowVisibility()
