@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+	<ApplicationIcon>..\StageManager\StageManager.ico</ApplicationIcon>
+	<AssemblyName>Stage_Manager_Lai_v2.2.0</AssemblyName>
+    <RootNamespace>StageManager.Card3DPrototype</RootNamespace>
+	<Version>2.2.0</Version>
+	<AssemblyVersion>2.2.0.0</AssemblyVersion>
+	<FileVersion>2.2.0.0</FileVersion>
+	<InformationalVersion>Stage_Manager_Lai_v2.2.0</InformationalVersion>
+	<IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+	<Product>Stage_Manager_Lai_v2.2.0</Product>
+	<Authors>Andreas Wäscher; Frank Lai (modified fork)</Authors>
+	<Description>Stage Manager for Windows with native 3D window cards, stable click targeting, click-through transparency, and adjustable card sizing.</Description>
+	<Copyright>Original copyright (c) 2022 Andreas Wäscher; Lai modifications (c) 2026 Frank Lai</Copyright>
+	<RepositoryUrl>https://github.com/franklai-rise/StageManager</RepositoryUrl>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\StageManager\StageManager.csproj" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
+  </ItemGroup>
+</Project>

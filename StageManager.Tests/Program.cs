@@ -1,10 +1,12 @@
 using StageManager;
+using StageManager.Card3DPrototype;
 using StageManager.Model;
 using StageManager.Native.Window;
 using StageManager.Services;
 using StageManager.Settings;
 using System.Drawing;
 using System.IO;
+using System.Numerics;
 
 return TestRunner.Run();
 
@@ -20,6 +22,11 @@ internal static class TestRunner
 		RunTest("Adaptive cards fit or scroll at 2, 6, 10, and 20 stages", AdaptiveCards);
 		RunTest("Settings are normalized and persisted atomically", SettingsPersistence);
 		RunTest("Default and custom hotkeys parse", HotkeyParsing);
+		RunTest("3D projection recedes toward the left edge", PerspectiveProjection);
+		RunTest("3D hover response stays subtle without reversing order", SubtleHoverProjection);
+		RunTest("Capture fallback produces a valid transparent card", CaptureFallback);
+		RunTest("Prototype stage slots do not jump after activation", PrototypeStageSlotsStayStable);
+		RunTest("Prototype card click toggles only the selected foreground window", PrototypeClickToggle);
 		Console.WriteLine(_failures == 0 ? "All Stage_Manager_Lai tests passed." : $"{_failures} test(s) failed.");
 		return _failures == 0 ? 0 : 1;
 	}
@@ -128,6 +135,107 @@ internal static class TestRunner
 		Assert(!HotkeyManager.TryParse("Win+Magic+S", out _, out _), "Unknown modifier should be rejected.");
 	}
 
+	private static void PerspectiveProjection()
+	{
+		var cardSize = new Vector2(196 * 0.65f, 122 * 0.65f);
+		var pivot = new Vector2(cardSize.X * 0.88f, cardSize.Y * 0.5f);
+		var polygon = Card3DGeometry.ProjectCard(
+			new Vector3(12, 220, 0),
+			1,
+			Vector3.Zero,
+			Vector3.One,
+			-7.5f,
+			cardSize,
+			pivot,
+			new Vector2(450, 450),
+			1200);
+		var leftHeight = Vector2.Distance(polygon[0], polygon[3]);
+		var rightHeight = Vector2.Distance(polygon[1], polygon[2]);
+		Assert(leftHeight < rightHeight, "The left edge did not recede in perspective.");
+		var center = polygon.Aggregate(Vector2.Zero, (sum, point) => sum + point) / polygon.Length;
+		Assert(Card3DGeometry.Contains(polygon, center), "Projected-card hit testing rejected its center.");
+		Assert(!Card3DGeometry.Contains(polygon, new Vector2(-1000, -1000)), "Projected-card hit testing accepted an outside point.");
+	}
+
+	private static void SubtleHoverProjection()
+	{
+		var cardSize = new Vector2(196 * 0.65f, 122 * 0.65f);
+		var pivot = new Vector2(cardSize.X * 0.88f, cardSize.Y * 0.5f);
+		var priorCenter = float.NegativeInfinity;
+		var firstCenter = 0f;
+		var lastCenter = 0f;
+		for (var index = 0; index < 6; index++)
+		{
+			var transform = Card3DGeometry.CreateSubtleHoverTransform(index, 6, index == 2, 1f);
+			var polygon = Card3DGeometry.ProjectCard(
+				new Vector3(12, 300, 8),
+				1,
+				transform.Offset,
+				transform.Scale,
+				transform.Angle,
+				cardSize,
+				pivot,
+				new Vector2(450, 450),
+				1200);
+			var center = polygon.Average(point => point.X);
+			Assert(center > priorCenter, $"Hover window {index} did not preserve stacking order.");
+			if (index == 0)
+				firstCenter = center;
+			if (index == 5)
+				lastCenter = center;
+			priorCenter = center;
+		}
+		Assert(lastCenter - firstCenter < 30f, "Hover spread is still large enough to look like a flying fan.");
+		var hoveredTransform = Card3DGeometry.CreateSubtleHoverTransform(2, 6, true, 1f);
+		Assert(hoveredTransform.Scale.X <= 1.02f, "Hovered card scales too aggressively.");
+	}
+
+	private static void CaptureFallback()
+	{
+		using var capture = new WindowFrameCapture();
+		var frame = capture.Capture(new FakeWindow(0, "Missing", "missing.exe"), 254, 158, "+2");
+		Assert(frame.IsPlaceholder, "Invalid HWND did not use the placeholder renderer.");
+		Assert(frame.Pixels.Length == frame.Width * frame.Height * 4, "Placeholder pixel buffer size is invalid.");
+		Assert(frame.Pixels[3] == 0, "Rounded placeholder corner is not transparent.");
+		var centerAlpha = frame.Pixels[((frame.Height / 2) * frame.Width + frame.Width / 2) * 4 + 3];
+		Assert(centerAlpha < 16, "Placeholder still paints a dark card background.");
+	}
+
+	private static void PrototypeStageSlotsStayStable()
+	{
+		var slots = new StableStageOrder();
+		var baseline = new[]
+		{
+			new OrderedStage("A", new DateTime(2026, 1, 3)),
+			new OrderedStage("B", new DateTime(2026, 1, 2)),
+			new OrderedStage("C", new DateTime(2026, 1, 1))
+		};
+		var first = slots.Apply(baseline, stage => stage.Key, stage => stage.Priority);
+		Assert(string.Concat(first.Select(stage => stage.Key)) == "ABC", "Initial stage priority was not respected.");
+
+		var afterActivation = new[]
+		{
+			new OrderedStage("C", new DateTime(2026, 1, 5)),
+			new OrderedStage("B", new DateTime(2026, 1, 2)),
+			new OrderedStage("A", new DateTime(2026, 1, 3))
+		};
+		var stable = slots.Apply(afterActivation, stage => stage.Key, stage => stage.Priority);
+		Assert(string.Concat(stable.Select(stage => stage.Key)) == "ABC", "Activation reordered card slots under the pointer.");
+	}
+
+	private static void PrototypeClickToggle()
+	{
+		var selected = new IntPtr(101);
+		Assert(WindowClickBehavior.Decide(selected, selected, false, true) == WindowClickAction.Minimize,
+			"Clicking the selected foreground window should minimize it.");
+		Assert(WindowClickBehavior.Decide(selected, new IntPtr(202), false, true) == WindowClickAction.Activate,
+			"Clicking a background window should activate that exact window.");
+		Assert(WindowClickBehavior.Decide(selected, selected, true, true) == WindowClickAction.Activate,
+			"A minimized window should be restored instead of minimized again.");
+		Assert(WindowClickBehavior.Decide(selected, IntPtr.Zero, false, false) == WindowClickAction.Ignore,
+			"A destroyed window should not trigger another application.");
+	}
+
 	private static void RunTest(string name, Action test)
 	{
 		try
@@ -148,6 +256,8 @@ internal static class TestRunner
 			throw new InvalidOperationException(message);
 	}
 }
+
+internal sealed record OrderedStage(string Key, DateTime Priority);
 
 internal sealed class FakeWindow : IWindow
 {

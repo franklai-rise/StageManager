@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.1.0
+# Stage_Manager_Lai v2.2.0
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -21,6 +21,11 @@ can cover it naturally.
 v2.1.0 adds optional macOS-style 2.5D stage cards. Live previews remain rectangular and readable while
 slanted backplates, depth rails, highlights, shadows, and MRU-based offsets create a perspective stack without
 transforming the native DWM thumbnails. The effect is enabled by default and can be disabled in Settings.
+
+v2.2.0 promotes the native Windows Composition 3D renderer to the formal personal build. It adds real
+perspective-transformed window captures, subtle hover feedback, transparent crop-to-fill cards, stable card
+slots, exact click-to-activate/minimize behavior, reliable click-through outside card shapes, and a persisted
+55%–125% card-size control in the tray menu.
 
 ## What v2 adds
 
