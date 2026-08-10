@@ -6,6 +6,17 @@ namespace StageManager.Services;
 
 public static class FullScreenService
 {
+	public static bool UsesTransientSidebarOn(IntPtr handle, Screen display)
+	{
+		if (handle == IntPtr.Zero || !Win32.IsWindow(handle) || Win32.IsIconic(handle))
+			return false;
+
+		var windowDisplay = Screen.FromHandle(handle);
+		var isMaximizedOnDisplay = Win32.IsZoomed(handle) &&
+			string.Equals(windowDisplay.DeviceName, display.DeviceName, StringComparison.OrdinalIgnoreCase);
+		return isMaximizedOnDisplay || IsExclusiveFullScreenOn(handle, display);
+	}
+
 	public static bool IsExclusiveFullScreenOn(IntPtr handle, Screen display)
 	{
 		if (handle == IntPtr.Zero || !Win32.IsWindow(handle) || Win32.IsIconic(handle))

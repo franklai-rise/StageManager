@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.2.4
+# Stage_Manager_Lai v2.2.5
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -46,6 +46,10 @@ v2.2.4 adds full-screen edge reveal on the physical leftmost display. While a fu
 the sidebar stays out of the way, slides over the application when the pointer reaches the left edge, and hides
 again shortly after the pointer leaves. It is raised to the topmost band only for this temporary reveal and is
 demoted as soon as the hide animation completes; normal operation remains non-topmost.
+
+v2.2.5 applies the same transient edge behavior when the foreground window is maximized on the sidebar's display.
+Maximized windows on another monitor do not hide the left sidebar, and ordinary restored windows retain the normal
+one-minute idle behavior.
 
 ## What v2 adds
 

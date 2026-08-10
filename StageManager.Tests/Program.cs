@@ -31,7 +31,7 @@ internal static class TestRunner
 		RunTest("Multi-window cards expand only after the first click", MultiWindowCardClicking);
 		RunTest("Tray-hidden windows leave the sidebar while taskbar-minimized windows remain", ManagedWindowVisibility);
 		RunTest("Idle auto-hide waits one minute and wakes at the left edge", IdleAutoHideBehavior);
-		RunTest("Full-screen sidebar reveals at the edge and hides after pointer leave", FullScreenTransientSidebar);
+		RunTest("Full-screen or maximized sidebar reveals at the edge and hides after pointer leave", LargeWindowTransientSidebar);
 		Console.WriteLine(_failures == 0 ? "All Stage_Manager_Lai tests passed." : $"{_failures} test(s) failed.");
 		return _failures == 0 ? 0 : 1;
 	}
@@ -299,19 +299,19 @@ internal static class TestRunner
 		Assert(!SidebarIdleBehavior.IsNearLeftEdge(new Point(20, 500), screen, 8), "Left-edge activation zone is wider than requested.");
 	}
 
-	private static void FullScreenTransientSidebar()
+	private static void LargeWindowTransientSidebar()
 	{
 		var now = new DateTime(2026, 8, 10, 12, 0, 0, DateTimeKind.Utc);
-		Assert(FullScreenSidebarBehavior.Decide(true, false, true, false, DateTime.MinValue, now) == FullScreenSidebarAction.Reveal,
-			"A hidden sidebar did not reveal at the left edge during full-screen use.");
-		Assert(FullScreenSidebarBehavior.Decide(true, true, false, true, now, now.AddSeconds(1)) == FullScreenSidebarAction.None,
-			"A full-screen sidebar hid while the pointer was still over it.");
-		Assert(FullScreenSidebarBehavior.Decide(true, true, false, false, now, now.AddMilliseconds(200)) == FullScreenSidebarAction.None,
-			"A full-screen sidebar ignored the pointer-leave grace period.");
-		Assert(FullScreenSidebarBehavior.Decide(true, true, false, false, now, now.AddMilliseconds(400)) == FullScreenSidebarAction.Hide,
-			"A full-screen sidebar did not hide after the pointer left.");
-		Assert(FullScreenSidebarBehavior.Decide(false, false, true, false, DateTime.MinValue, now) == FullScreenSidebarAction.None,
-			"Full-screen behavior changed the normal sidebar edge policy.");
+		Assert(TransientSidebarBehavior.Decide(true, false, true, false, DateTime.MinValue, now) == TransientSidebarAction.Reveal,
+			"A hidden sidebar did not reveal at the left edge for a full-screen or maximized window.");
+		Assert(TransientSidebarBehavior.Decide(true, true, false, true, now, now.AddSeconds(1)) == TransientSidebarAction.None,
+			"A transient sidebar hid while the pointer was still over it.");
+		Assert(TransientSidebarBehavior.Decide(true, true, false, false, now, now.AddMilliseconds(200)) == TransientSidebarAction.None,
+			"A transient sidebar ignored the pointer-leave grace period.");
+		Assert(TransientSidebarBehavior.Decide(true, true, false, false, now, now.AddMilliseconds(400)) == TransientSidebarAction.Hide,
+			"A transient sidebar did not hide after the pointer left.");
+		Assert(TransientSidebarBehavior.Decide(false, false, true, false, DateTime.MinValue, now) == TransientSidebarAction.None,
+			"Large-window behavior changed the normal sidebar edge policy.");
 	}
 
 	private static void RunTest(string name, Action test)
