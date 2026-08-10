@@ -20,6 +20,7 @@ public sealed class AppSettings
 	public StageMode StageMode { get; set; } = StageMode.Coexist;
 	public AppWindowsMode AppWindowsMode { get; set; } = AppWindowsMode.AllAtOnce;
 	public bool AutoHideSidebar { get; set; }
+	public bool UsePerspectiveCards { get; set; } = true;
 	public bool AnimationsEnabled { get; set; } = true;
 	public bool HotkeysEnabled { get; set; } = true;
 	public bool StartWithWindows { get; set; } = true;

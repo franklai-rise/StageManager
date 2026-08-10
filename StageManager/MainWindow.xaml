@@ -11,7 +11,7 @@
         Topmost="False"
         WindowStyle="None"
         ResizeMode="NoResize"
-        Title="Stage_Manager_Lai_v2.0.4"
+        Title="Stage_Manager_Lai_v2.1.0"
         Height="450"
         Width="224"
         ShowActivated="False"
@@ -19,15 +19,15 @@
         Name="thisWindow">
     <Window.Resources>
         <Style x:Key="StageCardStyle" TargetType="Border">
-            <Setter Property="Opacity" Value="0.88" />
+            <Setter Property="Opacity" Value="0.96" />
             <Setter Property="CornerRadius" Value="13" />
-            <Setter Property="Background" Value="#D923262C" />
-            <Setter Property="BorderBrush" Value="#665E6572" />
+            <Setter Property="Background" Value="#E51B1E25" />
+            <Setter Property="BorderBrush" Value="#8A8993A8" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="SnapsToDevicePixels" Value="True" />
             <Setter Property="Effect">
                 <Setter.Value>
-                    <DropShadowEffect BlurRadius="14" ShadowDepth="2" Opacity="0.38" Color="Black" />
+                    <DropShadowEffect BlurRadius="13" ShadowDepth="3" Direction="315" Opacity="0.48" Color="Black" />
                 </Setter.Value>
             </Setter>
             <Style.Triggers>
@@ -70,18 +70,22 @@
                                 <StackPanel Orientation="Vertical" />
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemContainerStyle>
+                            <Style TargetType="{x:Type ContentPresenter}">
+                                <Setter Property="Panel.ZIndex" Value="{Binding PerspectiveZIndex}" />
+                            </Style>
+                        </ItemsControl.ItemContainerStyle>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Border Width="{Binding SceneCardWidth, Source={x:Reference thisWindow}}"
-                                        Height="{Binding SceneCardHeight, Source={x:Reference thisWindow}}"
-                                        Margin="{Binding SceneCardMargin, Source={x:Reference thisWindow}}"
-                                        ClipToBounds="True"
-                                        Visibility="{Binding Visibility}"
-                                        ToolTip="{Binding Title}"
-                                        AutomationProperties.Name="{Binding Title}"
-                                        MouseLeftButtonUp="StageCard_MouseLeftButtonUp"
-                                        Style="{StaticResource StageCardStyle}">
-                                    <Border.ContextMenu>
+                                <Grid Width="{Binding SceneCardSlotWidth, Source={x:Reference thisWindow}}"
+                                      Height="{Binding SceneCardHeight, Source={x:Reference thisWindow}}"
+                                      Margin="{Binding SceneCardMargin, Source={x:Reference thisWindow}}"
+                                      Background="Transparent"
+                                      Visibility="{Binding Visibility}"
+                                      ToolTip="{Binding Title}"
+                                      AutomationProperties.Name="{Binding Title}"
+                                      MouseLeftButtonUp="StageCard_MouseLeftButtonUp">
+                                    <Grid.ContextMenu>
                                         <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
                                             <MenuItem Header="Merge into current stage" Click="MenuItem_MergeStage_Click" />
                                             <MenuItem Header="Move one window out" Click="MenuItem_ExtractWindow_Click" />
@@ -96,66 +100,139 @@
                                             <MenuItem Header="Ignore applications in this stage" Click="MenuItem_IgnoreStage_Click" />
                                             <MenuItem Header="Close most recent window" Click="MenuItem_CloseWindow_Click" />
                                         </ContextMenu>
-                                    </Border.ContextMenu>
+                                    </Grid.ContextMenu>
 
-                                    <Grid ClipToBounds="True">
-                                        <ItemsControl Width="{Binding ScenePreviewWidth, Source={x:Reference thisWindow}}"
-                                                      Height="{Binding ScenePreviewHeight, Source={x:Reference thisWindow}}"
-                                                      HorizontalAlignment="Left"
-                                                      VerticalAlignment="Top"
-                                                      ClipToBounds="True"
-                                                      ItemsSource="{Binding PreviewWindows}">
-                                            <ItemsControl.ItemsPanel>
-                                                <ItemsPanelTemplate>
-                                                    <Grid />
-                                                </ItemsPanelTemplate>
-                                            </ItemsControl.ItemsPanel>
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate>
-                                                    <local:DwmThumbnail PreviewHandle="{Binding Handle}"
-                                                                        Width="{Binding ScenePreviewWidth, Source={x:Reference thisWindow}}"
-                                                                        Height="{Binding ScenePreviewHeight, Source={x:Reference thisWindow}}"
-                                                                        Margin="{Binding PreviewMargin}"
-                                                                        Panel.ZIndex="{Binding PreviewZIndex}"
-                                                                        HorizontalAlignment="Left"
-                                                                        VerticalAlignment="Top" />
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
+                                    <Grid Width="{Binding SceneCardWidth, Source={x:Reference thisWindow}}"
+                                          Height="{Binding SceneCardHeight, Source={x:Reference thisWindow}}"
+                                          Margin="{Binding PerspectiveCardMargin}"
+                                          HorizontalAlignment="Left"
+                                          VerticalAlignment="Top">
+                                        <Border Visibility="{Binding PerspectiveVisibility}"
+                                                Margin="-4,0,4,0"
+                                                CornerRadius="14"
+                                                BorderBrush="#997886A5"
+                                                BorderThickness="1"
+                                                Opacity="{Binding PerspectiveBackplateOpacity}"
+                                                RenderTransformOrigin="0.5,0.5"
+                                                IsHitTestVisible="False">
+                                            <Border.Background>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                    <GradientStop Color="#E26D7FA8" Offset="0" />
+                                                    <GradientStop Color="#D63C465D" Offset="0.48" />
+                                                    <GradientStop Color="#E2141821" Offset="1" />
+                                                </LinearGradientBrush>
+                                            </Border.Background>
+                                            <Border.RenderTransform>
+                                                <SkewTransform AngleX="{Binding PerspectiveAngle}" />
+                                            </Border.RenderTransform>
+                                            <Border.Effect>
+                                                <DropShadowEffect BlurRadius="19" ShadowDepth="7" Direction="315" Opacity="0.58" Color="#FF05070B" />
+                                            </Border.Effect>
+                                        </Border>
 
-                                        <Border VerticalAlignment="Bottom" Background="#D91A1C21" Padding="7,4">
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
-                                                <StackPanel Orientation="Horizontal">
-                                                    <ItemsControl ItemsSource="{Binding Windows}" Height="{Binding SceneIconHostHeight, Source={x:Reference thisWindow}}">
-                                                        <ItemsControl.ItemsPanel>
-                                                            <ItemsPanelTemplate>
-                                                                <StackPanel Orientation="Horizontal" />
-                                                            </ItemsPanelTemplate>
-                                                        </ItemsControl.ItemsPanel>
-                                                        <ItemsControl.ItemTemplate>
-                                                            <DataTemplate>
-                                                                <Image Width="{Binding SceneIconSize, Source={x:Reference thisWindow}}"
-                                                                       Height="{Binding SceneIconSize, Source={x:Reference thisWindow}}"
-                                                                       Margin="0,0,3,0" Source="{Binding Icon}" />
-                                                            </DataTemplate>
-                                                        </ItemsControl.ItemTemplate>
-                                                    </ItemsControl>
-                                                </StackPanel>
-                                                <TextBlock Grid.Column="1" Text="{Binding Title}" Foreground="White" FontSize="10"
-                                                           MaxWidth="92" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                                                <Border Grid.Column="2" Visibility="{Binding ExtraWindowVisibility}" Background="#DD4778D0"
-                                                        CornerRadius="8" Padding="5,1" Margin="5,0,0,0">
-                                                    <TextBlock Text="{Binding ExtraWindowLabel}" Foreground="White" FontSize="10" FontWeight="SemiBold" />
+                                        <Border Visibility="{Binding PerspectiveVisibility}"
+                                                Width="8"
+                                                Margin="0,6,-7,6"
+                                                HorizontalAlignment="Right"
+                                                CornerRadius="0,7,7,0"
+                                                BorderBrush="#667E8AA5"
+                                                BorderThickness="0,1,1,1"
+                                                Opacity="{Binding PerspectiveBackplateOpacity}"
+                                                RenderTransformOrigin="0.5,0.5"
+                                                IsHitTestVisible="False">
+                                            <Border.Background>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                    <GradientStop Color="#E6535F78" Offset="0" />
+                                                    <GradientStop Color="#EB151923" Offset="1" />
+                                                </LinearGradientBrush>
+                                            </Border.Background>
+                                            <Border.RenderTransform>
+                                                <SkewTransform AngleX="{Binding PerspectiveAngle}" />
+                                            </Border.RenderTransform>
+                                        </Border>
+
+                                        <Border ClipToBounds="True" Style="{StaticResource StageCardStyle}">
+                                            <Grid ClipToBounds="True">
+                                                <ItemsControl Width="{Binding ScenePreviewWidth, Source={x:Reference thisWindow}}"
+                                                              Height="{Binding ScenePreviewHeight, Source={x:Reference thisWindow}}"
+                                                              HorizontalAlignment="Left"
+                                                              VerticalAlignment="Top"
+                                                              ClipToBounds="True"
+                                                              ItemsSource="{Binding PreviewWindows}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <Grid />
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <local:DwmThumbnail PreviewHandle="{Binding Handle}"
+                                                                                Width="{Binding ScenePreviewWidth, Source={x:Reference thisWindow}}"
+                                                                                Height="{Binding ScenePreviewHeight, Source={x:Reference thisWindow}}"
+                                                                                Margin="{Binding PreviewMargin}"
+                                                                                Panel.ZIndex="{Binding PreviewZIndex}"
+                                                                                HorizontalAlignment="Left"
+                                                                                VerticalAlignment="Top" />
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+
+                                                <Border VerticalAlignment="Bottom" Background="#E0171A21" Padding="7,4">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <ItemsControl ItemsSource="{Binding Windows}" Height="{Binding SceneIconHostHeight, Source={x:Reference thisWindow}}">
+                                                                <ItemsControl.ItemsPanel>
+                                                                    <ItemsPanelTemplate>
+                                                                        <StackPanel Orientation="Horizontal" />
+                                                                    </ItemsPanelTemplate>
+                                                                </ItemsControl.ItemsPanel>
+                                                                <ItemsControl.ItemTemplate>
+                                                                    <DataTemplate>
+                                                                        <Image Width="{Binding SceneIconSize, Source={x:Reference thisWindow}}"
+                                                                               Height="{Binding SceneIconSize, Source={x:Reference thisWindow}}"
+                                                                               Margin="0,0,3,0" Source="{Binding Icon}" />
+                                                                    </DataTemplate>
+                                                                </ItemsControl.ItemTemplate>
+                                                            </ItemsControl>
+                                                        </StackPanel>
+                                                        <TextBlock Grid.Column="1" Text="{Binding Title}" Foreground="White" FontSize="10"
+                                                                   MaxWidth="92" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                                        <Border Grid.Column="2" Visibility="{Binding ExtraWindowVisibility}" Background="#E45A78C7"
+                                                                CornerRadius="8" Padding="5,1" Margin="5,0,0,0">
+                                                            <TextBlock Text="{Binding ExtraWindowLabel}" Foreground="White" FontSize="10" FontWeight="SemiBold" />
+                                                        </Border>
+                                                    </Grid>
                                                 </Border>
                                             </Grid>
                                         </Border>
+
+                                        <Border Visibility="{Binding PerspectiveVisibility}"
+                                                CornerRadius="13"
+                                                BorderThickness="1"
+                                                IsHitTestVisible="False">
+                                            <Border.BorderBrush>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                    <GradientStop Color="#B8FFFFFF" Offset="0" />
+                                                    <GradientStop Color="#31D5E0FA" Offset="0.42" />
+                                                    <GradientStop Color="#68070A10" Offset="1" />
+                                                </LinearGradientBrush>
+                                            </Border.BorderBrush>
+                                            <Border.Background>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                                    <GradientStop Color="#12FFFFFF" Offset="0" />
+                                                    <GradientStop Color="#00FFFFFF" Offset="0.55" />
+                                                    <GradientStop Color="#1E000000" Offset="0.83" />
+                                                    <GradientStop Color="#47000000" Offset="1" />
+                                                </LinearGradientBrush>
+                                            </Border.Background>
+                                        </Border>
                                     </Grid>
-                                </Border>
+                                </Grid>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
@@ -165,7 +242,7 @@
 
         <tb:TaskbarIcon x:Name="trayIcon"
                         Visibility="Visible"
-                        ToolTipText="Stage_Manager_Lai v2.0.4"
+                        ToolTipText="Stage_Manager_Lai v2.1.0"
                         IconSource="StageManager.ico"
                         MenuActivation="LeftOrRightClick">
             <tb:TaskbarIcon.ContextMenu>

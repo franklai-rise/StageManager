@@ -35,6 +35,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	private const double BaseIconSize = 20;
 	private const double BaseGap = 8;
 	private const double SceneListVerticalPadding = 16;
+	private const double PerspectiveSlotPadding = 16;
 
 	private readonly SettingsService _settings = AppServices.Settings;
 	private readonly DisplayTopologyService _displays = AppServices.Displays;
@@ -56,6 +57,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	private bool _stageRefreshQueued;
 	private bool _isSafeMode = AppServices.SafeMode;
 	private double _sceneCardWidth = BaseCardWidth;
+	private double _sceneCardSlotWidth = BaseCardWidth;
 	private double _sceneCardHeight = BaseCardHeight;
 	private Thickness _sceneCardMargin = new(0, 0, 0, BaseGap);
 	private double _scenePreviewWidth = BasePreviewWidth;
@@ -97,6 +99,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	}
 	public Visibility SafeModeVisibility => IsSafeMode ? Visibility.Visible : Visibility.Collapsed;
 	public double SceneCardWidth { get => _sceneCardWidth; private set => SetLayoutValue(ref _sceneCardWidth, value); }
+	public double SceneCardSlotWidth { get => _sceneCardSlotWidth; private set => SetLayoutValue(ref _sceneCardSlotWidth, value); }
 	public double SceneCardHeight { get => _sceneCardHeight; private set => SetLayoutValue(ref _sceneCardHeight, value); }
 	public Thickness SceneCardMargin { get => _sceneCardMargin; private set => SetLayoutValue(ref _sceneCardMargin, value); }
 	public double ScenePreviewWidth { get => _scenePreviewWidth; private set => SetLayoutValue(ref _scenePreviewWidth, value); }
@@ -272,11 +275,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 	{
 		var preferenceScale = _settings.Current.CardScale;
 		var maximumWidth = BaseCardWidth * preferenceScale;
+		var perspectivePadding = _settings.Current.UsePerspectiveCards ? PerspectiveSlotPadding : 0;
 		var visibleCount = Scenes.Count(scene => scene.IsVisible);
 		var availableHeight = Math.Max(1, (ActualHeight > 0 ? ActualHeight : Height) - SceneListVerticalPadding - (IsSafeMode ? 74 : 0));
 		var layout = CardLayoutCalculator.Calculate(availableHeight, visibleCount, preferenceScale);
 
 		SceneCardWidth = layout.CardWidth;
+		SceneCardSlotWidth = layout.CardWidth + perspectivePadding;
 		SceneCardHeight = layout.CardHeight;
 		SceneCardMargin = new Thickness(0, 0, 0, layout.Gap);
 		ScenePreviewWidth = layout.PreviewWidth;
@@ -284,10 +289,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 		SceneIconHostHeight = layout.IconHostHeight;
 		SceneIconSize = layout.IconSize;
 		SceneListMaxHeight = availableHeight;
+		UpdatePerspectiveCardMetadata();
 
-		var desiredWidth = Math.Ceiling(maximumWidth + 28);
+		var desiredWidth = Math.Ceiling(maximumWidth + 28 + perspectivePadding);
 		if (Math.Abs(Width - desiredWidth) > 0.5)
 			Width = desiredWidth;
+	}
+
+	private void UpdatePerspectiveCardMetadata()
+	{
+		var visibleIndex = 0;
+		foreach (var scene in Scenes)
+		{
+			scene.SetPerspectiveIndex(visibleIndex, _settings.Current.UsePerspectiveCards);
+			if (scene.IsVisible)
+				visibleIndex++;
+		}
 	}
 
 	private void StartHook()

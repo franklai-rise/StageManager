@@ -67,6 +67,7 @@
                 <GroupBox Header="Sidebar">
                     <StackPanel>
                         <CheckBox Content="Auto-hide when a window overlaps the sidebar" IsChecked="{Binding Draft.AutoHideSidebar}" />
+						<CheckBox Content="Use macOS-style 3D cards" IsChecked="{Binding Draft.UsePerspectiveCards}" />
                         <CheckBox Content="Use animations" IsChecked="{Binding Draft.AnimationsEnabled}" />
                         <CheckBox Content="Start with Windows" IsChecked="{Binding Draft.StartWithWindows}" />
                         <TextBlock Text="Card size" Margin="0,8,0,0" />

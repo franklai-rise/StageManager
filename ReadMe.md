@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.0.4
+# Stage_Manager_Lai v2.1.0
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -18,6 +18,10 @@ Exclusive full-screen applications still suppress the sidebar, and the sidebar c
 v2.0.4 removes persistent topmost behavior. The sidebar remains at the left edge but normal foreground windows
 can cover it naturally.
 
+v2.1.0 adds optional macOS-style 2.5D stage cards. Live previews remain rectangular and readable while
+slanted backplates, depth rails, highlights, shadows, and MRU-based offsets create a perspective stack without
+transforming the native DWM thumbnails. The effect is enabled by default and can be disabled in Settings.
+
 ## What v2 adds
 
 - Runtime task stages can contain windows from several applications.
@@ -25,6 +29,7 @@ can cover it naturally.
 - **Focus mode** minimizes only managed inactive stages and restores their exact position and state later.
 - A stage can span multiple displays; the sidebar stays on the physical left edge of the leftmost display.
 - Up to three live DWM previews form a stacked stage card, with an overflow badge for additional windows.
+- Cards use a macOS-inspired perspective stack by default, with a flat-card fallback in Settings.
 - Cards shrink automatically down to 55%; larger lists scroll without overlapping.
 - Public Windows virtual-desktop APIs keep recent stages separate per virtual desktop.
 - Full-screen detection suppresses the sidebar over games and videos.

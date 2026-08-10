@@ -7,12 +7,12 @@
 		<UseWPF>true</UseWPF>
 		<UseWindowsForms>true</UseWindowsForms>
 		<ApplicationIcon>StageManager.ico</ApplicationIcon>
-		<Version>2.0.4</Version>
-		<AssemblyVersion>2.0.4.0</AssemblyVersion>
-		<FileVersion>2.0.4.0</FileVersion>
-		<InformationalVersion>Stage_Manager_Lai_v2.0.4</InformationalVersion>
+		<Version>2.1.0</Version>
+		<AssemblyVersion>2.1.0.0</AssemblyVersion>
+		<FileVersion>2.1.0.0</FileVersion>
+		<InformationalVersion>Stage_Manager_Lai_v2.1.0</InformationalVersion>
 		<IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-		<Product>Stage_Manager_Lai_v2.0.4</Product>
+		<Product>Stage_Manager_Lai_v2.1.0</Product>
 		<Authors>Andreas Wäscher; Frank Lai (modified fork)</Authors>
 		<Description>Personal Stage Manager for Windows with runtime task stages, dual operating modes, multi-display layout restoration, settings, and virtual desktop awareness.</Description>
 		<Copyright>Original copyright (c) 2022 Andreas Wäscher; Lai v1 series modifications (c) 2026 Frank Lai</Copyright>

@@ -12,6 +12,11 @@ public sealed class SceneModel : INotifyPropertyChanged
 {
 	private Stage _stage = null!;
 	private bool _isVisible = true;
+	private Thickness _perspectiveCardMargin;
+	private Visibility _perspectiveVisibility = Visibility.Collapsed;
+	private int _perspectiveZIndex;
+	private double _perspectiveBackplateOpacity;
+	private double _perspectiveAngle;
 
 	private SceneModel()
 	{
@@ -35,6 +40,11 @@ public sealed class SceneModel : INotifyPropertyChanged
 	public string ExtraWindowLabel => ExtraWindowCount > 0 ? $"+{ExtraWindowCount}" : string.Empty;
 	public Visibility ExtraWindowVisibility => ExtraWindowCount > 0 ? Visibility.Visible : Visibility.Collapsed;
 	public DateTime Updated { get; private set; } = DateTime.UtcNow;
+	public Thickness PerspectiveCardMargin => _perspectiveCardMargin;
+	public Visibility PerspectiveVisibility => _perspectiveVisibility;
+	public int PerspectiveZIndex => _perspectiveZIndex;
+	public double PerspectiveBackplateOpacity => _perspectiveBackplateOpacity;
+	public double PerspectiveAngle => _perspectiveAngle;
 
 	public Stage Stage
 	{
@@ -82,6 +92,17 @@ public sealed class SceneModel : INotifyPropertyChanged
 		UpdatePreviewMetadata();
 	}
 
+	public void SetPerspectiveIndex(int index, bool enabled)
+	{
+		var depth = Math.Min(Math.Max(index, 0), 4);
+		var margin = enabled ? new Thickness(9 - depth * 0.9, 0, 0, 0) : new Thickness();
+		SetPerspectiveValue(ref _perspectiveCardMargin, margin, nameof(PerspectiveCardMargin));
+		SetPerspectiveValue(ref _perspectiveVisibility, enabled ? Visibility.Visible : Visibility.Collapsed, nameof(PerspectiveVisibility));
+		SetPerspectiveValue(ref _perspectiveZIndex, enabled ? 1000 - index : 0, nameof(PerspectiveZIndex));
+		SetPerspectiveValue(ref _perspectiveBackplateOpacity, enabled ? 0.88 - depth * 0.06 : 0, nameof(PerspectiveBackplateOpacity));
+		SetPerspectiveValue(ref _perspectiveAngle, enabled ? -7 + depth * 0.6 : 0, nameof(PerspectiveAngle));
+	}
+
 	private void SynchronizeWindows()
 	{
 		var updatedWindows = Stage.Windows.ToArray();
@@ -126,4 +147,12 @@ public sealed class SceneModel : INotifyPropertyChanged
 
 	private void RaisePropertyChanged([CallerMemberName] string memberName = "") =>
 		PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(memberName));
+
+	private void SetPerspectiveValue<T>(ref T field, T value, string propertyName)
+	{
+		if (Equals(field, value))
+			return;
+		field = value;
+		RaisePropertyChanged(propertyName);
+	}
 }

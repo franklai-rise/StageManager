@@ -54,6 +54,13 @@ internal static class TestRunner
 		var model = SceneModel.FromStage(new Stage("preview", windows));
 		Assert(model.PreviewWindows.Count == 3, "Preview count is not capped at three.");
 		Assert(model.ExtraWindowCount == 2 && model.ExtraWindowLabel == "+2", "Overflow badge is incorrect.");
+		model.SetPerspectiveIndex(0, true);
+		Assert(model.PerspectiveVisibility == System.Windows.Visibility.Visible && model.PerspectiveCardMargin.Left > 0,
+			"Perspective metadata was not enabled.");
+		Assert(model.PerspectiveAngle < 0 && model.PerspectiveZIndex > 0, "Perspective depth metadata is invalid.");
+		model.SetPerspectiveIndex(0, false);
+		Assert(model.PerspectiveVisibility == System.Windows.Visibility.Collapsed && model.PerspectiveCardMargin.Left == 0,
+			"Flat-card metadata was not restored.");
 	}
 
 	private static void AdaptiveCards()
@@ -85,11 +92,13 @@ internal static class TestRunner
 		{
 			var service = new SettingsService(path);
 			Assert(!service.Current.AutoHideSidebar, "Sidebar auto-hide should be disabled by default.");
+			Assert(service.Current.UsePerspectiveCards, "macOS-style cards should be enabled by default.");
 			Assert(Math.Abs(service.Current.CardScale - 0.60) < 0.001, "Default card scale should be 60%.");
 			var settings = service.CloneCurrent();
 			settings.CardScale = 99;
 			settings.SidebarOpacity = 0;
 			settings.StageMode = StageMode.Focus;
+			settings.UsePerspectiveCards = false;
 			settings.IgnoredProcesses = new List<string> { "yuanbao", "YuanBao", "  explorer  " };
 			service.Apply(settings);
 			Assert(service.Current.CardScale == 1.25, "Maximum card scale was not clamped.");
@@ -101,6 +110,7 @@ internal static class TestRunner
 			Assert(service.Current.IgnoredProcesses.Count == 2, "Ignored process names were not normalized.");
 			var reloaded = new SettingsService(path);
 			Assert(reloaded.Current.StageMode == StageMode.Focus, "Enum setting did not persist.");
+			Assert(!reloaded.Current.UsePerspectiveCards, "Perspective-card setting did not persist.");
 			Assert(File.Exists(path) && !File.Exists(path + ".tmp"), "Atomic settings replacement left an invalid temporary file.");
 		}
 		finally
