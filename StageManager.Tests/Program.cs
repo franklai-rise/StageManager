@@ -27,6 +27,7 @@ internal static class TestRunner
 		RunTest("Capture fallback produces a valid transparent card", CaptureFallback);
 		RunTest("Prototype stage slots do not jump after activation", PrototypeStageSlotsStayStable);
 		RunTest("Prototype card click toggles only the selected foreground window", PrototypeClickToggle);
+		RunTest("Idle auto-hide waits one minute and wakes at the left edge", IdleAutoHideBehavior);
 		Console.WriteLine(_failures == 0 ? "All Stage_Manager_Lai tests passed." : $"{_failures} test(s) failed.");
 		return _failures == 0 ? 0 : 1;
 	}
@@ -98,12 +99,16 @@ internal static class TestRunner
 		try
 		{
 			var service = new SettingsService(path);
+			Assert(service.Current.SchemaVersion == 2, "Settings schema was not upgraded for idle auto-hide.");
 			Assert(!service.Current.AutoHideSidebar, "Sidebar auto-hide should be disabled by default.");
+			Assert(service.Current.IdleAutoHideEnabled && service.Current.IdleAutoHideSeconds == 60,
+				"3D sidebar idle auto-hide should default to one minute.");
 			Assert(service.Current.UsePerspectiveCards, "macOS-style cards should be enabled by default.");
 			Assert(Math.Abs(service.Current.CardScale - 0.60) < 0.001, "Default card scale should be 60%.");
 			var settings = service.CloneCurrent();
 			settings.CardScale = 99;
 			settings.SidebarOpacity = 0;
+			settings.IdleAutoHideSeconds = 1;
 			settings.StageMode = StageMode.Focus;
 			settings.UsePerspectiveCards = false;
 			settings.IgnoredProcesses = new List<string> { "yuanbao", "YuanBao", "  explorer  " };
@@ -114,6 +119,7 @@ internal static class TestRunner
 			service.Apply(settings);
 			Assert(service.Current.CardScale == 0.55, "Minimum card scale was not clamped.");
 			Assert(service.Current.SidebarOpacity == 0.65, "Opacity was not clamped.");
+			Assert(service.Current.IdleAutoHideSeconds == 15, "Idle auto-hide minimum was not clamped.");
 			Assert(service.Current.IgnoredProcesses.Count == 2, "Ignored process names were not normalized.");
 			var reloaded = new SettingsService(path);
 			Assert(reloaded.Current.StageMode == StageMode.Focus, "Enum setting did not persist.");
@@ -234,6 +240,17 @@ internal static class TestRunner
 			"A minimized window should be restored instead of minimized again.");
 		Assert(WindowClickBehavior.Decide(selected, IntPtr.Zero, false, false) == WindowClickAction.Ignore,
 			"A destroyed window should not trigger another application.");
+	}
+
+	private static void IdleAutoHideBehavior()
+	{
+		var now = new DateTime(2026, 8, 10, 12, 0, 0, DateTimeKind.Utc);
+		Assert(!SidebarIdleBehavior.ShouldHide(true, 60, now.AddSeconds(-59), now), "Sidebar hid before one idle minute elapsed.");
+		Assert(SidebarIdleBehavior.ShouldHide(true, 60, now.AddSeconds(-60), now), "Sidebar did not hide after one idle minute.");
+		Assert(!SidebarIdleBehavior.ShouldHide(false, 60, now.AddHours(-1), now), "Disabled idle auto-hide still hid the sidebar.");
+		var screen = new Rectangle(0, 0, 1920, 1040);
+		Assert(SidebarIdleBehavior.IsNearLeftEdge(new Point(7, 500), screen, 8), "Left-edge activation zone rejected a nearby pointer.");
+		Assert(!SidebarIdleBehavior.IsNearLeftEdge(new Point(20, 500), screen, 8), "Left-edge activation zone is wider than requested.");
 	}
 
 	private static void RunTest(string name, Action test)

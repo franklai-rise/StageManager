@@ -44,8 +44,11 @@ internal sealed class PrototypeStageCatalog : IDisposable
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		var foreground = NativeMethods.GetForegroundWindow();
+		var ignoredProcesses = _settings.Current.IgnoredProcesses.ToHashSet(StringComparer.OrdinalIgnoreCase);
 		var candidates = _windows.Windows
-			.Where(window => NativeMethods.IsWindow(window.Handle) && _virtualDesktops.IsWindowOnCurrentDesktop(window.Handle))
+			.Where(window => NativeMethods.IsWindow(window.Handle) &&
+				_virtualDesktops.IsWindowOnCurrentDesktop(window.Handle) &&
+				!ignoredProcesses.Contains(window.ProcessName))
 			.ToArray();
 		var foregroundWindow = candidates.FirstOrDefault(window => window.Handle == foreground);
 		var foregroundKey = foregroundWindow is null ? null : Stage.GetAppKey(foregroundWindow);

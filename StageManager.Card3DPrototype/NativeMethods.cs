@@ -12,9 +12,7 @@ internal static class NativeMethods
 	public static readonly IntPtr HwndTop = IntPtr.Zero;
 	public const uint SwpNoSize = 0x0001;
 	public const uint SwpNoMove = 0x0002;
-	public const uint SwpNoZOrder = 0x0004;
 	public const uint SwpNoActivate = 0x0010;
-	public const uint SwpFrameChanged = 0x0020;
 
 	[DllImport("user32.dll")]
 	[return: MarshalAs(UnmanagedType.Bool)]
@@ -53,11 +51,13 @@ internal static class NativeMethods
 	[return: MarshalAs(UnmanagedType.Bool)]
 	public static extern bool SetForegroundWindow(IntPtr windowHandle);
 
-	[DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
-	public static extern IntPtr GetWindowLongPtr(IntPtr windowHandle, int index);
+	[DllImport("user32.dll", SetLastError = true)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	public static extern bool RegisterHotKey(IntPtr windowHandle, int id, uint modifiers, uint virtualKey);
 
-	[DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
-	public static extern IntPtr SetWindowLongPtr(IntPtr windowHandle, int index, IntPtr newValue);
+	[DllImport("user32.dll", SetLastError = true)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	public static extern bool UnregisterHotKey(IntPtr windowHandle, int id);
 
 	[DllImport("user32.dll")]
 	[return: MarshalAs(UnmanagedType.Bool)]

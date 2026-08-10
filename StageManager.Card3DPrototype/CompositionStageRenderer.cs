@@ -32,14 +32,17 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private int _expandedPage;
 	private bool _disposeCaptureWhenIdle;
 	private bool _disposed;
+	private bool _animationsEnabled;
+	private bool _sidebarVisible = true;
 	private float _preferenceScale;
 
-	public CompositionStageRenderer(Control owner, Compositor compositor, ContainerVisual cameraRoot, double cardScale)
+	public CompositionStageRenderer(Control owner, Compositor compositor, ContainerVisual cameraRoot, double cardScale, bool animationsEnabled)
 	{
 		_owner = owner;
 		_compositor = compositor;
 		_cameraRoot = cameraRoot;
 		_preferenceScale = NormalizeCardScale(cardScale);
+		_animationsEnabled = animationsEnabled;
 		_graphics = new D3DCompositionDevice();
 		_captureTimer = new System.Windows.Forms.Timer { Interval = 125 };
 		_captureTimer.Tick += (_, _) => ScheduleCaptures();
@@ -48,6 +51,38 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	public bool HasExpandedStage => _expandedStageKey is not null;
 	public double CardScale => _preferenceScale;
+	public bool SidebarVisible => _sidebarVisible;
+	public float SidebarInteractionWidth => CardSize.X + 48f * _dpiScale;
+	public TimeSpan SidebarAnimationDuration => TimeSpan.FromMilliseconds(220);
+
+	public IReadOnlyList<PointF[]> GetInteractivePolygons()
+	{
+		return _hitTargets
+			.Select(target => target.Polygon.Select(point => new PointF(point.X, point.Y)).ToArray())
+			.ToArray();
+	}
+
+	public void SetAnimationsEnabled(bool enabled) => _animationsEnabled = enabled;
+
+	public void SetSidebarVisible(bool visible, bool animate)
+	{
+		if (_sidebarVisible == visible && (!visible || Math.Abs(_cameraRoot.Offset.X) < 0.1f))
+			return;
+		var previous = _cameraRoot.Offset;
+		var target = new Vector3(visible ? 0 : HiddenOffsetX, 0, 0);
+		_sidebarVisible = visible;
+		_cameraRoot.StopAnimation(nameof(Visual.Offset));
+		_cameraRoot.Offset = target;
+		if (!animate || !_animationsEnabled)
+			return;
+
+		using var easing = _compositor.CreateCubicBezierEasingFunction(new Vector2(0.22f, 0f), new Vector2(0f, 1f));
+		using var animation = _compositor.CreateVector3KeyFrameAnimation();
+		animation.Duration = SidebarAnimationDuration;
+		animation.InsertKeyFrame(0, previous);
+		animation.InsertKeyFrame(1, target, easing);
+		_cameraRoot.StartAnimation(nameof(Visual.Offset), animation);
+	}
 
 	public void SetCardScale(double cardScale)
 	{
@@ -63,6 +98,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 		}
 		_stages.Clear();
 		Synchronize(_snapshots);
+		if (!_sidebarVisible)
+			_cameraRoot.Offset = new Vector3(HiddenOffsetX, 0, 0);
 	}
 
 	public void Resize(float width, float height, float dpiScale)
@@ -76,6 +113,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 		perspective.M34 = -1f / (PerspectiveDistance * _dpiScale);
 		_cameraRoot.TransformMatrix = perspective;
 		LayoutStages(false);
+		if (!_sidebarVisible)
+			_cameraRoot.Offset = new Vector3(HiddenOffsetX, 0, 0);
 	}
 
 	public void Synchronize(IReadOnlyList<PrototypeStageSnapshot> snapshots)
@@ -223,6 +262,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	private Vector2 CardSize => new(BaseCardWidth * _preferenceScale * _dpiScale, BaseCardHeight * _preferenceScale * _dpiScale);
 	private float Gap => 14f * _dpiScale;
+	private float HiddenOffsetX => -(CardSize.X + 48f * _dpiScale);
 	private int CardPixelWidth => Math.Max(128, (int)Math.Ceiling(CardSize.X * 2f));
 	private int CardPixelHeight => Math.Max(80, (int)Math.Ceiling(CardSize.Y * 2f));
 
@@ -232,6 +272,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		if (_disposed || _viewportHeight <= 0)
 			return;
+		animate &= _animationsEnabled;
 		_hitTargets.Clear();
 		var cardSize = CardSize;
 		var stride = cardSize.Y + Gap;

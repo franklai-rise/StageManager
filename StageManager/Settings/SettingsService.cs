@@ -73,7 +73,7 @@ public sealed class SettingsService
 			AppLogger.Error("Settings could not be loaded; defaults will be used.", ex);
 		}
 
-		return new AppSettings();
+		return Normalize(new AppSettings());
 	}
 
 	private void Save()
@@ -92,8 +92,9 @@ public sealed class SettingsService
 
 	private static AppSettings Normalize(AppSettings settings)
 	{
-		settings.SchemaVersion = 1;
+		settings.SchemaVersion = 2;
 		settings.CardScale = Math.Clamp(settings.CardScale, 0.55, 1.25);
+		settings.IdleAutoHideSeconds = Math.Clamp(settings.IdleAutoHideSeconds, 15, 600);
 		settings.SidebarOpacity = Math.Clamp(settings.SidebarOpacity, 0.65, 1.0);
 		settings.IgnoredProcesses ??= new List<string>();
 		settings.IgnoredProcesses = settings.IgnoredProcesses

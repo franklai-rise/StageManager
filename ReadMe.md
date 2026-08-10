@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.2.0
+# Stage_Manager_Lai v2.2.1
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -26,6 +26,10 @@ v2.2.0 promotes the native Windows Composition 3D renderer to the formal persona
 perspective-transformed window captures, subtle hover feedback, transparent crop-to-fill cards, stable card
 slots, exact click-to-activate/minimize behavior, reliable click-through outside card shapes, and a persisted
 55%–125% card-size control in the tray menu.
+
+v2.2.1 restores the practical settings and global shortcuts used by the earlier builds. It replaces extended-
+style click-through with a card-shaped native window region, adds a one-minute idle slide-away behavior with
+left-edge wake-up, and keeps card size, animations, startup, shortcuts, and ignored applications configurable.
 
 ## What v2 adds
 
