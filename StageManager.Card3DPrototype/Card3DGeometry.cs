@@ -6,19 +6,46 @@ internal readonly record struct CardHoverTransform(Vector3 Offset, Vector3 Scale
 
 internal static class Card3DGeometry
 {
-	public static CardHoverTransform CreateSubtleHoverTransform(int index, int count, bool hovered, float dpiScale)
+	public static CardHoverTransform CreateCollapsedStackTransform(int index, bool hovered, float dpiScale)
 	{
 		var safeScale = Math.Max(0.75f, dpiScale);
-		var middle = (Math.Max(1, count) - 1) / 2f;
-		var offset = new Vector3(
-			index * 4f * safeScale,
-			(index - middle) * 0.75f * safeScale,
-			index * 3f * safeScale);
-		if (hovered)
-			offset += new Vector3(1.5f * safeScale, -1f * safeScale, 8f * safeScale);
+		var reverse = Math.Min(index, 2);
+		var offset = new Vector3(-reverse * 7f * safeScale, -reverse * 4f * safeScale, -reverse * 12f * safeScale);
+		var scale = 1f - reverse * 0.04f;
+		var angle = -7.5f - reverse;
+		if (hovered && index == 0)
+		{
+			offset += new Vector3(1.2f * safeScale, -1f * safeScale, 8f * safeScale);
+			scale = 1.012f;
+			angle += 0.6f;
+		}
+		return new CardHoverTransform(offset, new Vector3(scale, scale, 1), angle);
+	}
 
-		var scale = hovered ? 1.015f : 1f;
-		var angle = -7.5f - Math.Min(index, 4) * 0.20f + (hovered ? 0.75f : 0f);
+	public static float CalculateExpandedListStride(float cardHeight, float dpiScale)
+	{
+		var safeScale = Math.Max(0.75f, dpiScale);
+		return cardHeight + Math.Clamp(13f * safeScale, 10f, 18f * safeScale);
+	}
+
+	public static CardHoverTransform CreateExpandedListTransform(
+		int index,
+		int hoveredIndex,
+		float dpiScale,
+		float stride,
+		float childIndent)
+	{
+		var safeScale = Math.Max(0.75f, dpiScale);
+		var hovered = index == hoveredIndex;
+		var offset = new Vector3(
+			index == 0 ? 0 : childIndent,
+			index * stride,
+			index * 2f * safeScale);
+		if (hovered)
+			offset += new Vector3(2f * safeScale, 0, 16f * safeScale);
+
+		var scale = hovered ? 1.012f : 1f;
+		var angle = -7.5f + (hovered ? 0.55f : 0f);
 		return new CardHoverTransform(offset, new Vector3(scale, scale, 1), angle);
 	}
 

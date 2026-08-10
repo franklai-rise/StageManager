@@ -23,10 +23,12 @@ internal static class TestRunner
 		RunTest("Settings are normalized and persisted atomically", SettingsPersistence);
 		RunTest("Default and custom hotkeys parse", HotkeyParsing);
 		RunTest("3D projection recedes toward the left edge", PerspectiveProjection);
-		RunTest("3D hover response stays subtle without reversing order", SubtleHoverProjection);
+		RunTest("Collapsed cards retain subtle hover feedback without expanding", CollapsedHoverFeedback);
+		RunTest("Expanded multi-window cards form a full vertical child list", SubtleHoverProjection);
 		RunTest("Capture fallback produces a valid transparent card", CaptureFallback);
 		RunTest("Prototype stage slots do not jump after activation", PrototypeStageSlotsStayStable);
 		RunTest("Prototype card click toggles only the selected foreground window", PrototypeClickToggle);
+		RunTest("Multi-window cards expand only after the first click", MultiWindowCardClicking);
 		RunTest("Idle auto-hide waits one minute and wakes at the left edge", IdleAutoHideBehavior);
 		Console.WriteLine(_failures == 0 ? "All Stage_Manager_Lai tests passed." : $"{_failures} test(s) failed.");
 		return _failures == 0 ? 0 : 1;
@@ -170,9 +172,14 @@ internal static class TestRunner
 		var priorCenter = float.NegativeInfinity;
 		var firstCenter = 0f;
 		var lastCenter = 0f;
+		var firstCenterX = 0f;
+		var lastCenterX = 0f;
+		var stride = Card3DGeometry.CalculateExpandedListStride(cardSize.Y, 1f);
+		var childIndent = 18f;
+		Assert(stride > cardSize.Y + 10f, "Expanded child cards are still vertically stacked instead of separated.");
 		for (var index = 0; index < 6; index++)
 		{
-			var transform = Card3DGeometry.CreateSubtleHoverTransform(index, 6, index == 2, 1f);
+			var transform = Card3DGeometry.CreateExpandedListTransform(index, 2, 1f, stride, childIndent);
 			var polygon = Card3DGeometry.ProjectCard(
 				new Vector3(12, 300, 8),
 				1,
@@ -183,17 +190,37 @@ internal static class TestRunner
 				pivot,
 				new Vector2(450, 450),
 				1200);
-			var center = polygon.Average(point => point.X);
-			Assert(center > priorCenter, $"Hover window {index} did not preserve stacking order.");
+			var center = polygon.Average(point => point.Y);
+			Assert(center > priorCenter, $"Expanded child window {index} did not preserve vertical order.");
 			if (index == 0)
+			{
 				firstCenter = center;
+				firstCenterX = polygon.Average(point => point.X);
+			}
 			if (index == 5)
+			{
 				lastCenter = center;
+				lastCenterX = polygon.Average(point => point.X);
+			}
 			priorCenter = center;
 		}
-		Assert(lastCenter - firstCenter < 30f, "Hover spread is still large enough to look like a flying fan.");
-		var hoveredTransform = Card3DGeometry.CreateSubtleHoverTransform(2, 6, true, 1f);
-		Assert(hoveredTransform.Scale.X <= 1.02f, "Hovered card scales too aggressively.");
+		Assert(lastCenter - firstCenter >= cardSize.Y * 5f, "Expanded child cards still overlap vertically.");
+		Assert(lastCenter - firstCenter < 520f, "Expanded child list uses excessive vertical spacing.");
+		Assert(Math.Abs(lastCenterX - firstCenterX) >= 12f && Math.Abs(lastCenterX - firstCenterX) < 30f,
+			"Expanded child cards did not keep the small connector-line indent.");
+		var hoveredTransform = Card3DGeometry.CreateExpandedListTransform(2, 2, 1f, stride, childIndent);
+		Assert(hoveredTransform.Scale.X <= 1.025f, "Hovered card scales too aggressively.");
+		Assert(hoveredTransform.Offset.Z >= 20f, "Hovered card does not rise clearly above the stack.");
+	}
+
+	private static void CollapsedHoverFeedback()
+	{
+		var normal = Card3DGeometry.CreateCollapsedStackTransform(0, false, 1f);
+		var hovered = Card3DGeometry.CreateCollapsedStackTransform(0, true, 1f);
+		Assert(hovered.Offset.Z > normal.Offset.Z, "Collapsed card does not move forward on hover.");
+		Assert(hovered.Offset.X - normal.Offset.X < 2f, "Collapsed hover moves too far sideways.");
+		Assert(hovered.Scale.X > normal.Scale.X && hovered.Scale.X <= 1.015f,
+			"Collapsed hover scaling is missing or too aggressive.");
 	}
 
 	private static void CaptureFallback()
@@ -240,6 +267,16 @@ internal static class TestRunner
 			"A minimized window should be restored instead of minimized again.");
 		Assert(WindowClickBehavior.Decide(selected, IntPtr.Zero, false, false) == WindowClickAction.Ignore,
 			"A destroyed window should not trigger another application.");
+	}
+
+	private static void MultiWindowCardClicking()
+	{
+		Assert(MultiWindowCardInteraction.Decide(1, false) == MultiWindowCardClickAction.SelectWindow,
+			"A single-window card did not remain a direct selection.");
+		Assert(MultiWindowCardInteraction.Decide(4, false) == MultiWindowCardClickAction.Expand,
+			"A collapsed multi-window card did not require an explicit first click to expand.");
+		Assert(MultiWindowCardInteraction.Decide(4, true) == MultiWindowCardClickAction.SelectWindow,
+			"An expanded multi-window card did not allow direct window selection.");
 	}
 
 	private static void IdleAutoHideBehavior()

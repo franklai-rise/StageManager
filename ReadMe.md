@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.2.1
+# Stage_Manager_Lai v2.2.2
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -30,6 +30,12 @@ slots, exact click-to-activate/minimize behavior, reliable click-through outside
 v2.2.1 restores the practical settings and global shortcuts used by the earlier builds. It replaces extended-
 style click-through with a card-shaped native window region, adds a one-minute idle slide-away behavior with
 left-edge wake-up, and keeps card size, animations, startup, shortcuts, and ignored applications configurable.
+
+v2.2.2 improves same-application multi-window cards. Clicking a stacked card opens a full downward child list:
+each window keeps a separate full-size card, while a blue-gray connector line shows the parent/child relationship.
+Hover only raises the pointed card slightly, and a second click selects that exact window. Single-window cards
+remain direct one-click targets. The expanded native region follows every card so transparent space continues
+to click through. Collapsed cards retain a small hover lift and angle response without opening automatically.
 
 ## What v2 adds
 

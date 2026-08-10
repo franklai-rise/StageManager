@@ -56,7 +56,7 @@ internal sealed class PrototypeForm : Form
 		settingsItem.Click += (_, _) => ShowSettings();
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => Close();
-		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.2.1") { Enabled = false });
+		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.2.2") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(settingsItem);
@@ -168,7 +168,12 @@ internal sealed class PrototypeForm : Form
 		}
 		if (e.Button != MouseButtons.Left || _renderer is null)
 			return;
+		var wasExpanded = _renderer.HasExpandedStage;
 		var window = _renderer.ActivateAt(e.Location);
+		if (!wasExpanded && _renderer.HasExpandedStage)
+			NativeMethods.SetWindowPos(Handle, NativeMethods.HwndTop, 0, 0, 0, 0, NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
+		if (wasExpanded != _renderer.HasExpandedStage)
+			UpdateWindowRegion(true);
 		if (window is null)
 			return;
 		ActivateSelectedWindow(window, allowMinimize: true);
@@ -500,7 +505,7 @@ internal sealed class PrototypeForm : Form
 		var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 		_trayIcon = new NotifyIcon
 		{
-			Text = "Stage_Manager_Lai v2.2.1",
+			Text = "Stage_Manager_Lai v2.2.2",
 			Icon = icon,
 			ContextMenuStrip = _contextMenu,
 			Visible = true
