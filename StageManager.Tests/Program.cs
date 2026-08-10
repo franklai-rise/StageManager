@@ -29,6 +29,7 @@ internal static class TestRunner
 		RunTest("Prototype stage slots do not jump after activation", PrototypeStageSlotsStayStable);
 		RunTest("Prototype card click toggles only the selected foreground window", PrototypeClickToggle);
 		RunTest("Multi-window child selection stays expanded until the primary card is clicked", MultiWindowCardClicking);
+		RunTest("Expanded multi-window pages always retain the original primary card", ExpandedPrimaryCardPersistence);
 		RunTest("Tray-hidden windows leave the sidebar while taskbar-minimized windows remain", ManagedWindowVisibility);
 		RunTest("Idle auto-hide waits one minute and wakes at the left edge", IdleAutoHideBehavior);
 		RunTest("Full-screen or maximized sidebar reveals at the edge and hides after pointer leave", LargeWindowTransientSidebar);
@@ -297,6 +298,25 @@ internal static class TestRunner
 			"Selecting an expanded child card did not preserve the expanded list.");
 		Assert(MultiWindowCardInteraction.Decide(4, true, true) == MultiWindowCardClickAction.Collapse,
 			"Clicking the expanded primary card did not collapse the child list.");
+	}
+
+	private static void ExpandedPrimaryCardPersistence()
+	{
+		var windows = Enumerable.Range(101, 8).Select(value => new IntPtr(value)).ToArray();
+		var firstPage = MultiWindowCardInteraction.CreateExpandedPage(windows, handle => handle, new IntPtr(103), 0, 6);
+		Assert(firstPage.Primary == new IntPtr(103), "The card used to expand the stage was not retained as its primary card.");
+		Assert(firstPage.VisibleCards[0] == new IntPtr(103), "The primary card is not the first visible card.");
+		Assert(firstPage.VisibleCards.Count == 6 && firstPage.PageCount == 2,
+			"Expanded paging did not reserve one permanent slot for the primary card.");
+
+		var secondPage = MultiWindowCardInteraction.CreateExpandedPage(windows, handle => handle, new IntPtr(103), 1, 6);
+		Assert(secondPage.VisibleCards[0] == new IntPtr(103), "The primary card disappeared after paging.");
+		Assert(secondPage.VisibleCards.Skip(1).SequenceEqual(new[] { new IntPtr(107), new IntPtr(108) }),
+			"The second child page contains the wrong windows.");
+
+		var recovered = MultiWindowCardInteraction.CreateExpandedPage(windows, handle => handle, new IntPtr(999), 1, 6);
+		Assert(recovered.Primary == windows[0] && recovered.PageIndex == 1,
+			"A destroyed primary card did not fall back to a visible window.");
 	}
 
 	private static void ManagedWindowVisibility()

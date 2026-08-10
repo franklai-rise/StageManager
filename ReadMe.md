@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.2.6
+# Stage_Manager_Lai v2.2.7
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -55,6 +55,10 @@ v2.2.6 keeps a multi-window child list expanded after selecting a child window o
 expanded list now collapses only when its primary card is clicked again, while pagination and direct child-window
 selection continue to work normally. Real File Explorer folder windows are also included as cards, while desktop,
 taskbar, notification-area, and other Explorer shell surfaces remain protected.
+
+v2.2.7 keeps the card that opened a multi-window group permanently visible at the top of every expanded page. The
+primary card remains stable even when another child window receives focus or the user changes pages, so it is always
+available as the explicit collapse control. Child cards continue below it and remain expanded after selection.
 
 ## What v2 adds
 

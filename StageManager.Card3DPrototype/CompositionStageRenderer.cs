@@ -22,6 +22,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private readonly List<CardHitTarget> _hitTargets = new();
 	private IReadOnlyList<PrototypeStageSnapshot> _snapshots = Array.Empty<PrototypeStageSnapshot>();
 	private string? _expandedStageKey;
+	private IntPtr _expandedPrimaryWindowHandle;
 	private string? _hoveredStageKey;
 	private IntPtr _hoveredWindowHandle;
 	private DateTime _lastPointerInsideUtc;
@@ -146,6 +147,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (_expandedStageKey is not null && !liveKeys.Contains(_expandedStageKey))
 		{
 			_expandedStageKey = null;
+			_expandedPrimaryWindowHandle = IntPtr.Zero;
 			_hoveredWindowHandle = IntPtr.Zero;
 			_expandedPage = 0;
 		}
@@ -154,7 +156,15 @@ internal sealed class CompositionStageRenderer : IDisposable
 			expandedStage.Windows.Count <= 1)
 		{
 			_expandedStageKey = null;
+			_expandedPrimaryWindowHandle = IntPtr.Zero;
 			_hoveredWindowHandle = IntPtr.Zero;
+			_expandedPage = 0;
+		}
+		else if (_expandedStageKey is not null &&
+			_stages.TryGetValue(_expandedStageKey, out expandedStage) &&
+			expandedStage.Windows.All(card => card.Window.Handle != _expandedPrimaryWindowHandle))
+		{
+			_expandedPrimaryWindowHandle = expandedStage.Windows[0].Window.Handle;
 			_expandedPage = 0;
 		}
 		if (_hoveredStageKey is not null && !liveKeys.Contains(_hoveredStageKey))
@@ -241,6 +251,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (action == MultiWindowCardClickAction.Expand)
 		{
 			_expandedStageKey = hit.StageKey;
+			_expandedPrimaryWindowHandle = hit.Window.Handle;
 			_hoveredStageKey = hit.StageKey;
 			_expandedPage = 0;
 			_hoveredWindowHandle = hit.Window.Handle;
@@ -268,6 +279,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (_expandedStageKey is null)
 			return;
 		_expandedStageKey = null;
+		_expandedPrimaryWindowHandle = IntPtr.Zero;
 		_hoveredStageKey = null;
 		_hoveredWindowHandle = IntPtr.Zero;
 		_expandedPage = 0;
@@ -406,9 +418,16 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private void LayoutExpandedStage(StageCardVisual stage, Vector3 stageOffset, float stageScale, Vector2 cameraCenter, bool animate)
 	{
 		var cardSize = CardSize;
-		var pageCount = Math.Max(1, (int)Math.Ceiling(stage.Windows.Count / (double)PageSize));
-		_expandedPage = Math.Clamp(_expandedPage, 0, pageCount - 1);
-		var page = stage.Windows.Skip(_expandedPage * PageSize).Take(PageSize).ToArray();
+		var expandedPage = MultiWindowCardInteraction.CreateExpandedPage(
+			stage.Windows,
+			card => card.Window.Handle,
+			_expandedPrimaryWindowHandle,
+			_expandedPage,
+			PageSize);
+		_expandedPrimaryWindowHandle = expandedPage.Primary.Window.Handle;
+		_expandedPage = expandedPage.PageIndex;
+		var pageCount = expandedPage.PageCount;
+		var page = expandedPage.VisibleCards.ToArray();
 		var pageHandles = page.Select(card => card.Window.Handle).ToHashSet();
 		foreach (var card in stage.Windows)
 			card.SetVisible(pageHandles.Contains(card.Window.Handle));
@@ -484,7 +503,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		if (_expandedStageKey is null || !_stages.TryGetValue(_expandedStageKey, out var expanded))
 			return;
-		var pageCount = Math.Max(1, (int)Math.Ceiling(expanded.Windows.Count / (double)PageSize));
+		var pageCount = Math.Max(1, (int)Math.Ceiling(Math.Max(0, expanded.Windows.Count - 1) / (double)(PageSize - 1)));
 		if (pageCount <= 1)
 			return;
 		_expandedPage = (_expandedPage + delta + pageCount) % pageCount;
