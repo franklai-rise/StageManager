@@ -32,8 +32,5 @@ public sealed class AppSettings
 	public string PreviousStageHotkey { get; set; } = "Win+Alt+[";
 	public string NextStageHotkey { get; set; } = "Win+Alt+]";
 	public string ToggleWindowInStageHotkey { get; set; } = "Win+Alt+G";
-	public List<string> IgnoredProcesses { get; set; } = new()
-	{
-		"yuanbao"
-	};
+	public List<string> IgnoredProcesses { get; set; } = new();
 }

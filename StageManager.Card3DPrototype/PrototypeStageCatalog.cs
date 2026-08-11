@@ -11,6 +11,20 @@ internal sealed record PrototypeStageSnapshot(
 	IReadOnlyList<IWindow> Windows,
 	DateTime LastActivatedUtc);
 
+internal sealed record PrototypeApplicationChoice(
+	string ProcessName,
+	int WindowCount)
+{
+	public override string ToString()
+	{
+		if (WindowCount <= 0)
+			return $"{ProcessName} (not currently running)";
+
+		var suffix = WindowCount == 1 ? "window" : "windows";
+		return $"{ProcessName} ({WindowCount} {suffix})";
+	}
+}
+
 internal sealed class PrototypeStageCatalog : IDisposable
 {
 	private readonly SettingsService _settings;
@@ -39,6 +53,39 @@ internal sealed class PrototypeStageCatalog : IDisposable
 	}
 
 	public SettingsService Settings => _settings;
+
+	public void ReevaluateWindows()
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		_windows.ReevaluateWindows();
+	}
+
+	public IReadOnlyList<PrototypeApplicationChoice> GetApplicationChoices()
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		var choices = _windows.Windows
+			.Where(window => NativeMethods.IsWindow(window.Handle) &&
+				ManagedWindowPresence.ShouldDisplay(
+					NativeMethods.IsWindowVisible(window.Handle),
+					NativeMethods.IsIconic(window.Handle)) &&
+				_virtualDesktops.IsWindowOnCurrentDesktop(window.Handle) &&
+				!string.IsNullOrWhiteSpace(window.ProcessName))
+			.GroupBy(window => window.ProcessName, StringComparer.OrdinalIgnoreCase)
+			.ToDictionary(
+				group => group.Key,
+				group => new PrototypeApplicationChoice(group.First().ProcessName, group.Count()),
+				StringComparer.OrdinalIgnoreCase);
+
+		foreach (var ignoredProcess in _settings.Current.IgnoredProcesses)
+		{
+			if (!choices.ContainsKey(ignoredProcess))
+				choices[ignoredProcess] = new PrototypeApplicationChoice(ignoredProcess, 0);
+		}
+
+		return choices.Values
+			.OrderBy(choice => choice.ProcessName, StringComparer.CurrentCultureIgnoreCase)
+			.ToArray();
+	}
 
 	public IReadOnlyList<PrototypeStageSnapshot> GetStages()
 	{

@@ -109,20 +109,24 @@ internal static class TestRunner
 			File.WriteAllText(path, """
 				{
 				  "SchemaVersion": 3,
-				  "IgnoredProcesses": ["explorer", "yuanbao"]
+				  "IgnoredProcesses": ["explorer", "yuanbao", "custom-app"]
 				}
 				""");
 			var service = new SettingsService(path);
-			Assert(service.Current.SchemaVersion == 4, "Settings schema was not upgraded for Explorer folder support.");
+			Assert(service.Current.SchemaVersion == 5, "Settings schema was not upgraded for selectable application ignores.");
 			Assert(!service.Current.IgnoredProcesses.Contains("explorer", StringComparer.OrdinalIgnoreCase),
 				"The legacy default Explorer ignore entry was not migrated.");
-			Assert(service.Current.IgnoredProcesses.Contains("yuanbao", StringComparer.OrdinalIgnoreCase),
-				"An unrelated ignored process was lost during migration.");
+			Assert(!service.Current.IgnoredProcesses.Contains("yuanbao", StringComparer.OrdinalIgnoreCase),
+				"Yuanbao should no longer be ignored by default.");
+			Assert(service.Current.IgnoredProcesses.Contains("custom-app", StringComparer.OrdinalIgnoreCase),
+				"A user-selected ignored process was lost during migration.");
 			var migratedJson = File.ReadAllText(path);
-			Assert(migratedJson.Contains("\"SchemaVersion\": 4", StringComparison.Ordinal),
+			Assert(migratedJson.Contains("\"SchemaVersion\": 5", StringComparison.Ordinal),
 				"The migrated schema was not written back to disk.");
 			Assert(!migratedJson.Contains("explorer", StringComparison.OrdinalIgnoreCase),
 				"The legacy Explorer ignore entry remained in the persisted settings.");
+			Assert(!migratedJson.Contains("yuanbao", StringComparison.OrdinalIgnoreCase),
+				"The legacy Yuanbao ignore entry remained in the persisted settings.");
 			Assert(!service.Current.AutoHideSidebar, "Sidebar auto-hide should be disabled by default.");
 			Assert(service.Current.IdleAutoHideEnabled && service.Current.IdleAutoHideSeconds == 60,
 				"3D sidebar idle auto-hide should default to one minute.");

@@ -15,9 +15,10 @@ internal sealed class SettingsForm : Form
 	private readonly TextBox _toggleSidebarHotkey;
 	private readonly TextBox _previousStageHotkey;
 	private readonly TextBox _nextStageHotkey;
+	private readonly CheckedListBox _ignoredApplications;
 	private readonly TextBox _ignoredProcesses;
 
-	public SettingsForm(AppSettings draft)
+	public SettingsForm(AppSettings draft, IReadOnlyList<PrototypeApplicationChoice>? applicationChoices = null)
 	{
 		Draft = draft;
 		Text = "Stage_Manager_Lai Settings";
@@ -27,14 +28,14 @@ internal sealed class SettingsForm : Form
 		MaximizeBox = false;
 		MinimizeBox = false;
 		AutoScaleMode = AutoScaleMode.Dpi;
-		ClientSize = new Size(620, 710);
+		ClientSize = new Size(620, 805);
 		BackColor = Color.FromArgb(24, 26, 31);
 		ForeColor = Color.FromArgb(244, 246, 250);
 		Font = new Font("Segoe UI", 10f);
 
 		Controls.Add(new Label
 		{
-			Text = "Stage_Manager_Lai v2.3.1",
+			Text = "Stage_Manager_Lai v2.3.2",
 			Font = new Font("Segoe UI", 17f, FontStyle.Bold),
 			AutoSize = true,
 			Location = new Point(22, 18)
@@ -90,13 +91,36 @@ internal sealed class SettingsForm : Form
 		shortcutsGroup.Controls.AddRange(new Control[] { _toggleSidebarHotkey, _previousStageHotkey, _nextStageHotkey });
 
 		var ignoredGroup = CreateGroup("Ignored applications", new Rectangle(20, 535, 580, 112));
+		ignoredGroup.Bounds = new Rectangle(20, 535, 580, 192);
+		ignoredGroup.Controls.Add(CreateLabel("Check a running app to hide it; no .exe name is required.", 18, 25, 540));
+		_ignoredApplications = new CheckedListBox
+		{
+			CheckOnClick = true,
+			FormattingEnabled = true,
+			IntegralHeight = false,
+			BackColor = Color.FromArgb(34, 37, 44),
+			ForeColor = Color.FromArgb(244, 246, 250),
+			Location = new Point(18, 51),
+			Size = new Size(540, 88)
+		};
+		var choices = applicationChoices ?? Array.Empty<PrototypeApplicationChoice>();
+		var choiceNames = choices
+			.Select(choice => choice.ProcessName)
+			.ToHashSet(StringComparer.OrdinalIgnoreCase);
+		foreach (var choice in choices)
+		{
+			var index = _ignoredApplications.Items.Add(choice);
+			_ignoredApplications.SetItemChecked(index, draft.IgnoredProcesses.Contains(choice.ProcessName, StringComparer.OrdinalIgnoreCase));
+		}
+		ignoredGroup.Controls.Add(_ignoredApplications);
+		ignoredGroup.Controls.Add(CreateLabel("Advanced: process names (optional)", 18, 138, 250));
 		_ignoredProcesses = new TextBox
 		{
 			Multiline = true,
 			ScrollBars = ScrollBars.Vertical,
-			Text = string.Join(Environment.NewLine, draft.IgnoredProcesses),
-			Location = new Point(18, 27),
-			Size = new Size(540, 66)
+			Text = string.Join(Environment.NewLine, draft.IgnoredProcesses.Where(name => !choiceNames.Contains(name))),
+			Location = new Point(18, 166),
+			Size = new Size(540, 20)
 		};
 		ignoredGroup.Controls.Add(_ignoredProcesses);
 
@@ -104,13 +128,13 @@ internal sealed class SettingsForm : Form
 		{
 			Text = "Cancel",
 			DialogResult = DialogResult.Cancel,
-			Location = new Point(412, 662),
+			Location = new Point(412, 755),
 			Size = new Size(88, 34)
 		};
 		var saveButton = new Button
 		{
 			Text = "Save",
-			Location = new Point(510, 662),
+			Location = new Point(510, 755),
 			Size = new Size(88, 34)
 		};
 		saveButton.Click += SaveButton_Click;
@@ -149,9 +173,18 @@ internal sealed class SettingsForm : Form
 		Draft.ToggleSidebarHotkey = _toggleSidebarHotkey.Text.Trim();
 		Draft.PreviousStageHotkey = _previousStageHotkey.Text.Trim();
 		Draft.NextStageHotkey = _nextStageHotkey.Text.Trim();
-		Draft.IgnoredProcesses = _ignoredProcesses.Text
+		var ignored = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		for (var index = 0; index < _ignoredApplications.Items.Count; index++)
+		{
+			if (_ignoredApplications.GetItemChecked(index) && _ignoredApplications.Items[index] is PrototypeApplicationChoice choice)
+				ignored.Add(choice.ProcessName);
+		}
+		foreach (var processName in _ignoredProcesses.Text
 			.Split(new[] { '\r', '\n', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.Where(value => !string.IsNullOrWhiteSpace(value)))
+			ignored.Add(processName);
+		Draft.IgnoredProcesses = ignored
+			.OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
 			.ToList();
 		DialogResult = DialogResult.OK;
 		Close();

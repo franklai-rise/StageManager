@@ -10,6 +10,7 @@ namespace StageManager.Settings;
 
 public sealed class SettingsService
 {
+	private const int CurrentSchemaVersion = 5;
 	private readonly JsonSerializerOptions _jsonOptions = new()
 	{
 		WriteIndented = true,
@@ -101,7 +102,7 @@ public sealed class SettingsService
 	private static AppSettings Normalize(AppSettings settings)
 	{
 		var sourceSchemaVersion = settings.SchemaVersion;
-		settings.SchemaVersion = 4;
+		settings.SchemaVersion = CurrentSchemaVersion;
 		settings.CardScale = Math.Clamp(settings.CardScale, 0.55, 1.25);
 		settings.IdleAutoHideSeconds = Math.Clamp(settings.IdleAutoHideSeconds, 15, 600);
 		settings.SidebarOpacity = Math.Clamp(settings.SidebarOpacity, 0.65, 1.0);
@@ -110,6 +111,7 @@ public sealed class SettingsService
 			.Where(value => !string.IsNullOrWhiteSpace(value))
 			.Select(value => value.Trim())
 			.Where(value => sourceSchemaVersion >= 4 || !value.Equals("explorer", StringComparison.OrdinalIgnoreCase))
+			.Where(value => sourceSchemaVersion >= 5 || !value.Equals("yuanbao", StringComparison.OrdinalIgnoreCase))
 			.Distinct(StringComparer.OrdinalIgnoreCase)
 			.OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
 			.ToList();

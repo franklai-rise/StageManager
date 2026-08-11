@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.3.1
+# Stage_Manager_Lai v2.3.2
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -69,6 +69,10 @@ v2.3.1 changes live previews to static initial snapshots. Each real window is ca
 visible, then the captured texture remains on the card. The renderer no longer calls PrintWindow or GDI capture on a
 125/500ms refresh loop, reducing redraw pressure and preventing flicker in Abaqus and other hardware-accelerated apps.
 
+v2.3.2 stops ignoring Tencent Yuanbao by default. Settings now show detected applications with their current window
+count, so an application can be ignored or restored by checking a name in the list instead of finding its executable.
+An advanced process-name field remains available for applications that are not currently running.
+
 ## What v2 adds
 
 - Runtime task stages can contain windows from several applications.
@@ -88,8 +92,8 @@ visible, then the captured texture remains on the card. The renderer no longer c
 ## Safety rules
 
 Windows Explorer, the taskbar, desktop surfaces, and other Windows shell processes are permanently excluded.
-Desktop icons are never hidden or toggled. Tencent Yuanbao is ignored by default so selection-translation
-overlays cannot become stage cards; it can be removed from the user ignore list if desired.
+Desktop icons are never hidden or toggled. Tencent Yuanbao is shown normally by default; if its selection-translation
+overlay is distracting, select Yuanbao in Settings > Ignored applications to hide it.
 
 ## Controls
 
