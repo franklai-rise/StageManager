@@ -574,13 +574,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		if (_disposed)
 			return;
-		var now = DateTime.UtcNow;
 		var due = _stages.Values
 			.SelectMany(stage => stage.Windows.Select(card => (stage, card)))
 			.Where(tuple => tuple.card.IsVisible)
-			.Where(tuple => now - tuple.card.LastCaptureUtc >= (string.Equals(tuple.stage.Key, _expandedStageKey, StringComparison.OrdinalIgnoreCase)
-				? TimeSpan.FromMilliseconds(125)
-				: TimeSpan.FromMilliseconds(500)))
+			.Where(tuple => tuple.card.NeedsInitialCapture)
 			.OrderByDescending(tuple => tuple.card.Window.Handle == _hoveredWindowHandle)
 			.Take(2)
 			.ToArray();
@@ -1019,6 +1016,7 @@ internal sealed class WindowCardVisual : IDisposable
 	public bool IsVisible { get; private set; }
 	public string? DesiredBadge { get; set; }
 	public DateTime LastCaptureUtc { get; private set; } = DateTime.MinValue;
+	public bool NeedsInitialCapture => WindowCapturePolicy.NeedsInitialCapture(LastCaptureUtc);
 
 	public void SetVisible(bool visible)
 	{

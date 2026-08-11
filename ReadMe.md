@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.3.0
+# Stage_Manager_Lai v2.3.1
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -64,6 +64,10 @@ v2.3.0 replaces the window-backed primary card for multi-window applications wit
 The group card uses a white background with the application logo centered on it and never activates or minimizes a
 window. It only expands or collapses the group. Every real window now appears below it as a selectable child; groups
 with more than five windows page only the child cards while the application card remains available at the top.
+
+v2.3.1 changes live previews to static initial snapshots. Each real window is captured once when its card first becomes
+visible, then the captured texture remains on the card. The renderer no longer calls PrintWindow or GDI capture on a
+125/500ms refresh loop, reducing redraw pressure and preventing flicker in Abaqus and other hardware-accelerated apps.
 
 ## What v2 adds
 
