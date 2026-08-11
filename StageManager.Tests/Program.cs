@@ -31,7 +31,7 @@ internal static class TestRunner
 		RunTest("Multi-window child selection stays expanded until the primary card is clicked", MultiWindowCardClicking);
 		RunTest("Expanded application groups keep every real window available", ExpandedApplicationGroupPaging);
 		RunTest("Application group cards render a white logo surface", ApplicationGroupCardRendering);
-		RunTest("Window cards request only one initial capture", InitialCapturePolicy);
+		RunTest("Window cards refresh snapshots only every five minutes", InitialCapturePolicy);
 		RunTest("Tray-hidden windows leave the sidebar while taskbar-minimized windows remain", ManagedWindowVisibility);
 		RunTest("Idle auto-hide waits one minute and wakes at the left edge", IdleAutoHideBehavior);
 		RunTest("Full-screen or maximized sidebar reveals at the edge and hides after pointer leave", LargeWindowTransientSidebar);
@@ -334,10 +334,13 @@ internal static class TestRunner
 
 	private static void InitialCapturePolicy()
 	{
-		Assert(WindowCapturePolicy.NeedsInitialCapture(DateTime.MinValue),
+		var capturedAt = new DateTime(2026, 8, 11, 12, 0, 0, DateTimeKind.Utc);
+		Assert(WindowCapturePolicy.NeedsCapture(DateTime.MinValue, capturedAt),
 			"A new window card did not request its initial snapshot.");
-		Assert(!WindowCapturePolicy.NeedsInitialCapture(DateTime.UtcNow),
-			"A captured window card still requested a periodic refresh.");
+		Assert(!WindowCapturePolicy.NeedsCapture(capturedAt, capturedAt.AddMinutes(4).AddSeconds(59)),
+			"A window card refreshed before the five-minute interval elapsed.");
+		Assert(WindowCapturePolicy.NeedsCapture(capturedAt, capturedAt.AddMinutes(5)),
+			"A window card did not request a five-minute snapshot refresh.");
 	}
 
 	private static void ManagedWindowVisibility()

@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.3.2
+# Stage_Manager_Lai v2.3.3
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -72,6 +72,10 @@ visible, then the captured texture remains on the card. The renderer no longer c
 v2.3.2 stops ignoring Tencent Yuanbao by default. Settings now show detected applications with their current window
 count, so an application can be ignored or restored by checking a name in the list instead of finding its executable.
 An advanced process-name field remains available for applications that are not currently running.
+
+v2.3.3 keeps the low-frequency snapshot mode but refreshes each visible window card at most once every five minutes.
+The renderer still avoids the former 125/500ms capture loop, so hardware-accelerated applications such as Abaqus are
+not repeatedly captured while their cards remain on screen.
 
 ## What v2 adds
 
