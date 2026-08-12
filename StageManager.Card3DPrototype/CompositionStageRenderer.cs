@@ -1,5 +1,8 @@
 using StageManager.Native.Window;
+using System.Drawing.Imaging;
+using System.Drawing.Text;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using Windows.UI.Composition;
 
 namespace StageManager.Card3DPrototype;
@@ -15,11 +18,14 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private readonly ContainerVisual _cameraRoot;
 	private readonly D3DCompositionDevice _graphics;
 	private readonly WindowFrameCapture _capture = new();
+	private readonly SidebarCollapseButtonVisual _collapseButton;
+	private readonly SidebarHintVisual _sidebarHint;
 	private readonly Dictionary<string, StageCardVisual> _stages = new(StringComparer.OrdinalIgnoreCase);
 	private readonly System.Windows.Forms.Timer _captureTimer;
 	private readonly object _captureGate = new();
 	private readonly HashSet<IntPtr> _capturesInFlight = new();
 	private readonly List<CardHitTarget> _hitTargets = new();
+	private readonly List<IReadOnlyList<Vector2>> _passivePolygons = new();
 	private IReadOnlyList<PrototypeStageSnapshot> _snapshots = Array.Empty<PrototypeStageSnapshot>();
 	private string? _expandedStageKey;
 	private string? _hoveredStageKey;
@@ -36,6 +42,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private bool _disposed;
 	private bool _animationsEnabled;
 	private bool _sidebarVisible = true;
+	private bool _collapseButtonHovered;
+	private bool _collapseRequested;
 	private float _preferenceScale;
 
 	public CompositionStageRenderer(Control owner, Compositor compositor, ContainerVisual cameraRoot, double cardScale, bool animationsEnabled)
@@ -46,6 +54,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_preferenceScale = NormalizeCardScale(cardScale);
 		_animationsEnabled = animationsEnabled;
 		_graphics = new D3DCompositionDevice();
+		_collapseButton = new SidebarCollapseButtonVisual(_compositor);
+		_sidebarHint = new SidebarHintVisual(_graphics, _compositor);
+		_cameraRoot.Children.InsertAtTop(_collapseButton.Root);
+		_cameraRoot.Children.InsertAtTop(_sidebarHint.Root);
 		_captureTimer = new System.Windows.Forms.Timer { Interval = 125 };
 		_captureTimer.Tick += (_, _) => ScheduleCaptures();
 		_captureTimer.Start();
@@ -57,11 +69,20 @@ internal sealed class CompositionStageRenderer : IDisposable
 	public float SidebarInteractionWidth => CardSize.X + 48f * _dpiScale;
 	public TimeSpan SidebarAnimationDuration => TimeSpan.FromMilliseconds(220);
 
+	public bool ConsumeSidebarCollapseRequest()
+	{
+		var requested = _collapseRequested;
+		_collapseRequested = false;
+		return requested;
+	}
+
 	public IReadOnlyList<PointF[]> GetInteractivePolygons()
 	{
-		return _hitTargets
+		var polygons = _hitTargets
 			.Select(target => target.Polygon.Select(point => new PointF(point.X, point.Y)).ToArray())
-			.ToArray();
+			.ToList();
+		polygons.AddRange(_passivePolygons.Select(polygon => polygon.Select(point => new PointF(point.X, point.Y)).ToArray()));
+		return polygons;
 	}
 
 	public void SetAnimationsEnabled(bool enabled) => _animationsEnabled = enabled;
@@ -73,6 +94,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var previous = _cameraRoot.Offset;
 		var target = new Vector3(visible ? 0 : HiddenOffsetX, 0, 0);
 		_sidebarVisible = visible;
+		_collapseButton.SetPressed(false);
+		SetCollapseButtonHovered(false);
 		_cameraRoot.StopAnimation(nameof(Visual.Offset));
 		_cameraRoot.Offset = target;
 		if (!animate || !_animationsEnabled)
@@ -185,6 +208,9 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (hit is null)
 			return;
 		_lastPointerInsideUtc = DateTime.UtcNow;
+		SetCollapseButtonHovered(hit.IsSidebarCollapseButton);
+		if (hit.IsSidebarCollapseButton)
+			return;
 		if (_expandedStageKey is null ||
 			!string.Equals(_expandedStageKey, hit.StageKey, StringComparison.OrdinalIgnoreCase))
 		{
@@ -207,11 +233,14 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	public void PollPointer(Point clientPoint)
 	{
-		if (HitTest(clientPoint) is not null)
+		var hit = HitTest(clientPoint);
+		if (hit is not null)
 		{
 			_lastPointerInsideUtc = DateTime.UtcNow;
+			SetCollapseButtonHovered(hit.IsSidebarCollapseButton);
 			return;
 		}
+		SetCollapseButtonHovered(false);
 		if (DateTime.UtcNow - _lastPointerInsideUtc < TimeSpan.FromMilliseconds(500))
 			return;
 		if (_expandedStageKey is null)
@@ -236,6 +265,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var hit = HitTest(clientPoint);
 		if (hit is null)
 			return null;
+		if (hit.IsSidebarCollapseButton)
+		{
+			_collapseRequested = true;
+			_collapseButton.SetPressed(true);
+			return null;
+		}
 		if (hit.PageDelta != 0)
 		{
 			ChangeExpandedPage(hit.PageDelta);
@@ -293,6 +328,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 		foreach (var stage in _stages.Values)
 			stage.Dispose();
 		_stages.Clear();
+		_collapseButton.Dispose();
+		_sidebarHint.Dispose();
 		lock (_captureGate)
 		{
 			if (_capturesInFlight.Count == 0)
@@ -317,6 +354,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 			return;
 		animate &= _animationsEnabled;
 		_hitTargets.Clear();
+		_passivePolygons.Clear();
 		var cardSize = CardSize;
 		var stride = cardSize.Y + Gap;
 		var baseTotalHeight = Math.Max(0, _snapshots.Count * stride - Gap);
@@ -358,6 +396,57 @@ internal sealed class CompositionStageRenderer : IDisposable
 				LayoutCollapsedStage(stage, stageOffset, stageScale, cameraCenter, animate, stageIndex);
 			currentY += stride + (isExpanded ? expandedExtraHeight : 0);
 		}
+
+		LayoutCollapseButton();
+	}
+
+	private void LayoutCollapseButton()
+	{
+		_collapseButton.SetDpiScale(_dpiScale);
+		_sidebarHint.SetDpiScale(_dpiScale);
+		_cameraRoot.Children.Remove(_sidebarHint.Root);
+		_cameraRoot.Children.InsertAtTop(_sidebarHint.Root);
+		_cameraRoot.Children.Remove(_collapseButton.Root);
+		_cameraRoot.Children.InsertAtTop(_collapseButton.Root);
+		var margin = 10f * _dpiScale;
+		var hintY = Math.Max(margin, _viewportHeight - _sidebarHint.Size.Y - margin);
+		_sidebarHint.SetOffset(new Vector3(0, hintY, 118));
+		_sidebarHint.SetVisible(true);
+		var hintPolygon = new[]
+		{
+			new Vector2(0, hintY),
+			new Vector2(_sidebarHint.Size.X, hintY),
+			new Vector2(_sidebarHint.Size.X, hintY + _sidebarHint.Size.Y),
+			new Vector2(0, hintY + _sidebarHint.Size.Y)
+		};
+		_passivePolygons.Add(hintPolygon);
+
+		var buttonGap = 6f * _dpiScale;
+		var x = 10f * _dpiScale;
+		var y = Math.Max(margin, hintY - _collapseButton.Size.Y - buttonGap);
+		_collapseButton.SetOffset(new Vector3(x, y, 120));
+		_collapseButton.SetVisible(true);
+		var polygon = new[]
+		{
+			new Vector2(x, y),
+			new Vector2(x + _collapseButton.Size.X, y),
+			new Vector2(x + _collapseButton.Size.X, y + _collapseButton.Size.Y),
+			new Vector2(x, y + _collapseButton.Size.Y)
+		};
+		_hitTargets.Add(new CardHitTarget(
+			"__sidebar_collapse__",
+			null,
+			polygon,
+			int.MaxValue,
+			IsSidebarCollapseButton: true));
+	}
+
+	private void SetCollapseButtonHovered(bool hovered)
+	{
+		if (_collapseButtonHovered == hovered)
+			return;
+		_collapseButtonHovered = hovered;
+		_collapseButton.SetHovered(hovered);
 	}
 
 	private float GetExpandedExtraHeight(StageCardVisual stage)
@@ -631,7 +720,8 @@ internal sealed record CardHitTarget(
 	IReadOnlyList<Vector2> Polygon,
 	int ZOrder,
 	int PageDelta = 0,
-	bool IsPrimaryCard = false);
+	bool IsPrimaryCard = false,
+	bool IsSidebarCollapseButton = false);
 
 internal sealed class StageCardVisual : IDisposable
 {
@@ -958,6 +1048,195 @@ internal sealed class PageButtonVisual : IDisposable
 		stroke.RotationAngleInDegrees = angle;
 		stroke.Brush = _strokeBrush;
 		return stroke;
+	}
+}
+
+internal sealed class SidebarCollapseButtonVisual : IDisposable
+{
+	private readonly SpriteVisual _background;
+	private readonly CompositionColorBrush _backgroundBrush;
+	private readonly CompositionRoundedRectangleGeometry _geometry;
+	private readonly CompositionGeometricClip _clip;
+	private readonly SpriteVisual _upperStroke;
+	private readonly SpriteVisual _lowerStroke;
+	private readonly CompositionColorBrush _strokeBrush;
+	private bool _hovered;
+	private bool _pressed;
+	private bool _disposed;
+
+	public SidebarCollapseButtonVisual(Compositor compositor)
+	{
+		Root = compositor.CreateContainerVisual();
+		_backgroundBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(38, 246, 248, 252));
+		_background = compositor.CreateSpriteVisual();
+		_background.Brush = _backgroundBrush;
+		_geometry = compositor.CreateRoundedRectangleGeometry();
+		_clip = compositor.CreateGeometricClip(_geometry);
+		_background.Clip = _clip;
+		_strokeBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(150, 40, 46, 59));
+		_upperStroke = CreateStroke(compositor, -45);
+		_lowerStroke = CreateStroke(compositor, 45);
+		_upperStroke.Brush = _strokeBrush;
+		_lowerStroke.Brush = _strokeBrush;
+		Root.Children.InsertAtTop(_background);
+		Root.Children.InsertAtTop(_upperStroke);
+		Root.Children.InsertAtTop(_lowerStroke);
+		SetDpiScale(1f);
+	}
+
+	public ContainerVisual Root { get; }
+	public Vector2 Size { get; private set; }
+
+	public void SetDpiScale(float dpiScale)
+	{
+		var scale = Math.Max(0.75f, dpiScale);
+		Size = new Vector2(42f * scale, 30f * scale);
+		Root.Size = Size;
+		Root.CenterPoint = new Vector3(Size.X / 2f, Size.Y / 2f, 0);
+		_background.Size = Size;
+		_geometry.Size = Size;
+		_geometry.CornerRadius = new Vector2(8f * scale, 8f * scale);
+		_upperStroke.Size = new Vector2(Math.Max(1.6f, 2f * scale), 10f * scale);
+		_lowerStroke.Size = _upperStroke.Size;
+		_upperStroke.CenterPoint = new Vector3(_upperStroke.Size.X / 2f, _upperStroke.Size.Y / 2f, 0);
+		_lowerStroke.CenterPoint = _upperStroke.CenterPoint;
+		var centerX = Size.X / 2f + 2f * scale;
+		_upperStroke.Offset = new Vector3(centerX, Size.Y / 2f - 7f * scale, 0);
+		_lowerStroke.Offset = new Vector3(centerX, Size.Y / 2f, 0);
+		ApplyState();
+	}
+
+	public void SetOffset(Vector3 offset) => Root.Offset = offset;
+
+	public void SetVisible(bool visible) => Root.IsVisible = visible;
+
+	public void SetHovered(bool hovered)
+	{
+		if (_hovered == hovered)
+			return;
+		_hovered = hovered;
+		ApplyState();
+	}
+
+	public void SetPressed(bool pressed)
+	{
+		if (_pressed == pressed)
+			return;
+		_pressed = pressed;
+		ApplyState();
+	}
+
+	public void Dispose()
+	{
+		if (_disposed)
+			return;
+		_disposed = true;
+		Root.Dispose();
+		_upperStroke.Dispose();
+		_lowerStroke.Dispose();
+		_clip.Dispose();
+		_geometry.Dispose();
+		_background.Dispose();
+		_strokeBrush.Dispose();
+		_backgroundBrush.Dispose();
+	}
+
+	private void ApplyState()
+	{
+		if (_disposed)
+			return;
+		var backgroundAlpha = _pressed ? 105 : _hovered ? 74 : 38;
+		var strokeAlpha = _pressed ? 235 : _hovered ? 215 : 150;
+		_backgroundBrush.Color = Windows.UI.Color.FromArgb((byte)backgroundAlpha, 246, 248, 252);
+		_strokeBrush.Color = Windows.UI.Color.FromArgb((byte)strokeAlpha, 40, 46, 59);
+		var visualScale = _pressed ? 0.93f : _hovered ? 1.04f : 1f;
+		Root.Scale = new Vector3(visualScale, visualScale, 1f);
+	}
+
+	private static SpriteVisual CreateStroke(Compositor compositor, float angle)
+	{
+		var stroke = compositor.CreateSpriteVisual();
+		stroke.Size = new Vector2(2, 10);
+		stroke.CenterPoint = new Vector3(1, 5, 0);
+		stroke.RotationAngleInDegrees = angle;
+		return stroke;
+	}
+}
+
+internal sealed class SidebarHintVisual : IDisposable
+{
+	private const int SurfaceWidth = 640;
+	private const int SurfaceHeight = 64;
+	private const string HintText = "1 min 后自动隐藏 · 鼠标在附近时激活";
+	private readonly CardSwapChain _surface;
+	private readonly CompositionSurfaceBrush _surfaceBrush;
+	private readonly SpriteVisual _content;
+	private bool _disposed;
+
+	public SidebarHintVisual(D3DCompositionDevice graphics, Compositor compositor)
+	{
+		Root = compositor.CreateContainerVisual();
+		_surface = graphics.CreateSurface(compositor, SurfaceWidth, SurfaceHeight);
+		_surface.Upload(CreatePixels());
+		_surfaceBrush = compositor.CreateSurfaceBrush(_surface.CompositionSurface);
+		_surfaceBrush.Stretch = CompositionStretch.Fill;
+		_content = compositor.CreateSpriteVisual();
+		_content.Brush = _surfaceBrush;
+		Root.Children.InsertAtTop(_content);
+		SetDpiScale(1f);
+	}
+
+	public ContainerVisual Root { get; }
+	public Vector2 Size { get; private set; }
+
+	public void SetDpiScale(float dpiScale)
+	{
+		var scale = Math.Max(0.75f, dpiScale);
+		Size = new Vector2(280f * scale, 28f * scale);
+		Root.Size = Size;
+		_content.Size = Size;
+	}
+
+	public void SetOffset(Vector3 offset) => Root.Offset = offset;
+
+	public void SetVisible(bool visible) => Root.IsVisible = visible;
+
+	public void Dispose()
+	{
+		if (_disposed)
+			return;
+		_disposed = true;
+		Root.Dispose();
+		_content.Dispose();
+		_surfaceBrush.Dispose();
+		_surface.Dispose();
+	}
+
+	private static byte[] CreatePixels()
+	{
+		using var bitmap = new Bitmap(SurfaceWidth, SurfaceHeight, PixelFormat.Format32bppPArgb);
+		using var graphics = Graphics.FromImage(bitmap);
+		graphics.Clear(Color.Transparent);
+		graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+		using var font = new Font("Microsoft YaHei UI", 22f, FontStyle.Regular, GraphicsUnit.Pixel);
+		using var brush = new SolidBrush(Color.FromArgb(132, 235, 240, 248));
+		graphics.DrawString(HintText, font, brush, new PointF(4, 17));
+
+		var data = bitmap.LockBits(
+			new Rectangle(0, 0, SurfaceWidth, SurfaceHeight),
+			ImageLockMode.ReadOnly,
+			PixelFormat.Format32bppPArgb);
+		try
+		{
+			var pixels = new byte[SurfaceWidth * SurfaceHeight * 4];
+			for (var row = 0; row < SurfaceHeight; row++)
+				Marshal.Copy(data.Scan0 + row * data.Stride, pixels, row * SurfaceWidth * 4, SurfaceWidth * 4);
+			return pixels;
+		}
+		finally
+		{
+			bitmap.UnlockBits(data);
+		}
 	}
 }
 

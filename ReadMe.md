@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.3.3
+# Stage_Manager_Lai v2.3.4
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -76,6 +76,10 @@ An advanced process-name field remains available for applications that are not c
 v2.3.3 keeps the low-frequency snapshot mode but refreshes each visible window card at most once every five minutes.
 The renderer still avoids the former 125/500ms capture loop, so hardware-accelerated applications such as Abaqus are
 not repeatedly captured while their cards remain on screen.
+
+v2.3.4 adds a subtle flat left-arrow button at the bottom of the sidebar. Clicking it collapses the sidebar without
+requiring the global shortcut; the button has a small hover and press response and remains part of the shaped
+click-through region.
 
 ## What v2 adds
 
