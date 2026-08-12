@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.3.7
+# Stage_Manager_Lai v2.3.8
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -91,6 +91,9 @@ reserves footer space, while long lists keep the footer at the bottom of the vis
 
 v2.3.7 corrects the collapse arrow direction and widens its button for easier targeting. Minimized windows and windows
 whose preview cannot be captured now use a soft light-gray placeholder instead of an almost invisible transparent card.
+
+v2.3.8 matches the collapse control width and 3D tilt to the window cards, aligns it with the card column, and changes
+the arrow itself to a deep near-opaque black while retaining subtle hover and press feedback.
 
 ## What v2 adds
 

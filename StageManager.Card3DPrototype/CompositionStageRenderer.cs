@@ -355,7 +355,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		animate &= _animationsEnabled;
 		_hitTargets.Clear();
 		_passivePolygons.Clear();
-		_collapseButton.SetDpiScale(_dpiScale);
+		_collapseButton.SetLayout(_dpiScale, CardSize.X);
 		_sidebarHint.SetDpiScale(_dpiScale);
 		var footerMargin = 10f * _dpiScale;
 		var footerCardGap = 12f * _dpiScale;
@@ -438,16 +438,19 @@ internal sealed class CompositionStageRenderer : IDisposable
 		};
 		_passivePolygons.Add(hintPolygon);
 
-		var x = 10f * _dpiScale;
+		var x = 12f * _dpiScale;
 		_collapseButton.SetOffset(new Vector3(x, y, 0));
 		_collapseButton.SetVisible(true);
-		var polygon = new[]
-		{
-			new Vector2(x, y),
-			new Vector2(x + _collapseButton.Size.X, y),
-			new Vector2(x + _collapseButton.Size.X, y + _collapseButton.Size.Y),
-			new Vector2(x, y + _collapseButton.Size.Y)
-		};
+		var polygon = Card3DGeometry.ProjectCard(
+			new Vector3(x, y, 0),
+			1f,
+			Vector3.Zero,
+			Vector3.One,
+			_collapseButton.Angle,
+			_collapseButton.Size,
+			_collapseButton.Pivot,
+			new Vector2(_viewportWidth / 2f, _viewportHeight / 2f),
+			PerspectiveDistance * _dpiScale);
 		_hitTargets.Add(new CardHitTarget(
 			"__sidebar_collapse__",
 			null,
@@ -1096,18 +1099,23 @@ internal sealed class SidebarCollapseButtonVisual : IDisposable
 		Root.Children.InsertAtTop(_background);
 		Root.Children.InsertAtTop(_upperStroke);
 		Root.Children.InsertAtTop(_lowerStroke);
-		SetDpiScale(1f);
+		SetLayout(1f, 64f);
 	}
 
 	public ContainerVisual Root { get; }
 	public Vector2 Size { get; private set; }
+	public Vector2 Pivot { get; private set; }
+	public float Angle => -7.5f;
 
-	public void SetDpiScale(float dpiScale)
+	public void SetLayout(float dpiScale, float cardWidth)
 	{
 		var scale = Math.Max(0.75f, dpiScale);
-		Size = new Vector2(64f * scale, 30f * scale);
+		Size = new Vector2(Math.Max(64f * scale, cardWidth), 30f * scale);
 		Root.Size = Size;
-		Root.CenterPoint = new Vector3(Size.X / 2f, Size.Y / 2f, 0);
+		Root.CenterPoint = new Vector3(Size.X * 0.88f, Size.Y / 2f, 0);
+		Root.RotationAxis = Vector3.UnitY;
+		Root.RotationAngleInDegrees = Angle;
+		Pivot = new Vector2(Root.CenterPoint.X, Root.CenterPoint.Y);
 		_background.Size = Size;
 		_geometry.Size = Size;
 		_geometry.CornerRadius = new Vector2(8f * scale, 8f * scale);
@@ -1160,10 +1168,10 @@ internal sealed class SidebarCollapseButtonVisual : IDisposable
 	{
 		if (_disposed)
 			return;
-		var backgroundAlpha = _pressed ? 125 : _hovered ? 92 : 58;
-		var strokeAlpha = _pressed ? 255 : _hovered ? 238 : 205;
+		var backgroundAlpha = _pressed ? 145 : _hovered ? 108 : 72;
+		var strokeAlpha = _pressed ? 255 : _hovered ? 255 : 245;
 		_backgroundBrush.Color = Windows.UI.Color.FromArgb((byte)backgroundAlpha, 246, 248, 252);
-		_strokeBrush.Color = Windows.UI.Color.FromArgb((byte)strokeAlpha, 25, 30, 40);
+		_strokeBrush.Color = Windows.UI.Color.FromArgb((byte)strokeAlpha, 0, 0, 0);
 		var visualScale = _pressed ? 0.93f : _hovered ? 1.04f : 1f;
 		Root.Scale = new Vector3(visualScale, visualScale, 1f);
 	}

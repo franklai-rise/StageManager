@@ -63,7 +63,7 @@ internal sealed class PrototypeForm : Form
 		settingsItem.Click += (_, _) => ShowSettings();
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => Close();
-		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.3.7") { Enabled = false });
+		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.3.8") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(settingsItem);
@@ -664,7 +664,7 @@ internal sealed class PrototypeForm : Form
 		var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 		_trayIcon = new NotifyIcon
 		{
-			Text = "Stage_Manager_Lai v2.3.7",
+			Text = "Stage_Manager_Lai v2.3.8",
 			Icon = icon,
 			ContextMenuStrip = _contextMenu,
 			Visible = true
