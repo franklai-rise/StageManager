@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.3.4
+# Stage_Manager_Lai v2.3.5
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -80,6 +80,11 @@ not repeatedly captured while their cards remain on screen.
 v2.3.4 adds a subtle flat left-arrow button at the bottom of the sidebar. Clicking it collapses the sidebar without
 requiring the global shortcut; the button has a small hover and press response and remains part of the shaped
 click-through region.
+
+v2.3.5 pins the bottom arrow and idle hint to the flat foreground plane so perspective projection cannot push them
+outside the visible work area. Double-clicking a concrete window card now checks all active display work areas; only a
+window with no meaningful visible area is restored and centered on the display where the card was clicked. A normal
+on-screen window keeps its position, and double-clicking it does not leave it minimized.
 
 ## What v2 adds
 

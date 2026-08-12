@@ -33,6 +33,7 @@ internal static class TestRunner
 		RunTest("Application group cards render a white logo surface", ApplicationGroupCardRendering);
 		RunTest("Window cards refresh snapshots only every five minutes", InitialCapturePolicy);
 		RunTest("Tray-hidden windows leave the sidebar while taskbar-minimized windows remain", ManagedWindowVisibility);
+		RunTest("Off-screen recovery preserves visible windows and centers only lost windows", OffscreenRecoveryGeometry);
 		RunTest("Idle auto-hide waits one minute and wakes at the left edge", IdleAutoHideBehavior);
 		RunTest("Full-screen or maximized sidebar reveals at the edge and hides after pointer leave", LargeWindowTransientSidebar);
 		Console.WriteLine(_failures == 0 ? "All Stage_Manager_Lai tests passed." : $"{_failures} test(s) failed.");
@@ -348,6 +349,27 @@ internal static class TestRunner
 		Assert(ManagedWindowPresence.ShouldDisplay(true, false), "A visible background window was removed from the sidebar.");
 		Assert(ManagedWindowPresence.ShouldDisplay(false, true), "A taskbar-minimized window was removed from the sidebar.");
 		Assert(!ManagedWindowPresence.ShouldDisplay(false, false), "A tray-hidden background window remained in the sidebar.");
+	}
+
+	private static void OffscreenRecoveryGeometry()
+	{
+		var workAreas = new[]
+		{
+			new Rectangle(0, 0, 1920, 1040),
+			new Rectangle(1920, 0, 1920, 1040)
+		};
+		Assert(OffscreenWindowRecovery.IsMeaningfullyVisible(new Rectangle(2200, 120, 900, 700), workAreas),
+			"A window on the second active display was incorrectly treated as off-screen.");
+		Assert(!OffscreenWindowRecovery.IsMeaningfullyVisible(new Rectangle(3830, 300, 900, 700), workAreas),
+			"A tiny edge sliver incorrectly prevented off-screen recovery.");
+		Assert(!OffscreenWindowRecovery.IsMeaningfullyVisible(new Rectangle(5000, 300, 900, 700), workAreas),
+			"A fully disconnected-display window was incorrectly treated as visible.");
+
+		var centered = OffscreenWindowRecovery.CenterInWorkArea(
+			new Rectangle(5000, 300, 900, 700),
+			workAreas[0]);
+		Assert(centered == new Rectangle(510, 170, 900, 700),
+			"The recovered window was not centered while preserving its normal size.");
 	}
 
 	private static void IdleAutoHideBehavior()

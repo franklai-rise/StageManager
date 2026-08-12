@@ -43,6 +43,7 @@ internal sealed class PrototypeForm : Form
 	private bool _transientOverlayRaised;
 	private bool _demoteOverlayAfterHide;
 	private bool _closing;
+	private CardClickContext? _lastCardClick;
 
 	public PrototypeForm()
 	{
@@ -62,7 +63,7 @@ internal sealed class PrototypeForm : Form
 		settingsItem.Click += (_, _) => ShowSettings();
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => Close();
-		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.3.4") { Enabled = false });
+		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.3.5") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(settingsItem);
@@ -179,6 +180,20 @@ internal sealed class PrototypeForm : Form
 		}
 		if (e.Button != MouseButtons.Left || _renderer is null)
 			return;
+		var clickTarget = _renderer.HitTest(e.Location);
+		if (e.Clicks >= 2)
+		{
+			HandleCardDoubleClick(clickTarget);
+			return;
+		}
+		_lastCardClick = clickTarget?.Window is { } clickedWindow
+			? new CardClickContext(
+				clickedWindow.Handle,
+				OffscreenWindowRecovery.IsOffscreen(clickedWindow),
+				clickedWindow.Handle == NativeMethods.GetForegroundWindow(),
+				NativeMethods.IsIconic(clickedWindow.Handle),
+				clickedWindow.IsMaximized)
+			: null;
 		var wasExpanded = _renderer.HasExpandedStage;
 		var window = _renderer.ActivateAt(e.Location);
 		if (!wasExpanded && _renderer.HasExpandedStage)
@@ -194,6 +209,42 @@ internal sealed class PrototypeForm : Form
 			return;
 		ActivateSelectedWindow(window, allowMinimize: true);
 		BeginInvoke(new Action(RefreshStages));
+	}
+
+	private void HandleCardDoubleClick(CardHitTarget? target)
+	{
+		if (target?.Window is not { } window)
+		{
+			_lastCardClick = null;
+			return;
+		}
+
+		var context = _lastCardClick;
+		_lastCardClick = null;
+		var sameWindow = context is { } previous && previous.Handle == window.Handle;
+		var wasOffscreen = sameWindow ? context!.Value.WasOffscreen : OffscreenWindowRecovery.IsOffscreen(window);
+		if (wasOffscreen)
+		{
+			var targetDisplay = Screen.FromPoint(Cursor.Position);
+			if (OffscreenWindowRecovery.TryCenterIfOffscreen(
+				window,
+				targetDisplay,
+				restoreMaximized: sameWindow && context!.Value.WasMaximized))
+			{
+				ActivateSelectedWindow(window, allowMinimize: false);
+				BeginInvoke(new Action(RefreshStages));
+			}
+			return;
+		}
+
+		if (sameWindow && context!.Value.WasForeground && !context.Value.WasMinimized && NativeMethods.IsIconic(window.Handle))
+		{
+			NativeMethods.ShowWindowAsync(
+				window.Handle,
+				context.Value.WasMaximized ? NativeMethods.SwShowMaximized : NativeMethods.SwRestore);
+			window.Focus();
+			BeginInvoke(new Action(RefreshStages));
+		}
 	}
 
 	protected override void OnMouseWheel(MouseEventArgs e)
@@ -613,10 +664,17 @@ internal sealed class PrototypeForm : Form
 		var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 		_trayIcon = new NotifyIcon
 		{
-			Text = "Stage_Manager_Lai v2.3.4",
+			Text = "Stage_Manager_Lai v2.3.5",
 			Icon = icon,
 			ContextMenuStrip = _contextMenu,
 			Visible = true
 		};
 	}
 }
+
+internal readonly record struct CardClickContext(
+	IntPtr Handle,
+	bool WasOffscreen,
+	bool WasForeground,
+	bool WasMinimized,
+	bool WasMaximized);

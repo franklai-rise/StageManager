@@ -7,6 +7,7 @@ internal static class NativeMethods
 	public const uint PwRenderFullContent = 0x00000002;
 	public const int DibRgbColors = 0;
 	public const uint Srccopy = 0x00CC0020;
+	public const int SwShowMaximized = 3;
 	public const int SwMinimize = 6;
 	public const int SwRestore = 9;
 	public static readonly IntPtr HwndTop = IntPtr.Zero;
@@ -14,7 +15,9 @@ internal static class NativeMethods
 	public static readonly IntPtr HwndNotTopmost = new(-2);
 	public const uint SwpNoSize = 0x0001;
 	public const uint SwpNoMove = 0x0002;
+	public const uint SwpNoZOrder = 0x0004;
 	public const uint SwpNoActivate = 0x0010;
+	public const uint SwpAsyncWindowPos = 0x4000;
 
 	[DllImport("user32.dll")]
 	[return: MarshalAs(UnmanagedType.Bool)]
@@ -23,6 +26,10 @@ internal static class NativeMethods
 	[DllImport("user32.dll")]
 	[return: MarshalAs(UnmanagedType.Bool)]
 	public static extern bool GetWindowRect(IntPtr windowHandle, out NativeRect rectangle);
+
+	[DllImport("user32.dll")]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	public static extern bool GetWindowPlacement(IntPtr windowHandle, ref NativeWindowPlacement placement);
 
 	[DllImport("user32.dll")]
 	[return: MarshalAs(UnmanagedType.Bool)]
@@ -120,6 +127,24 @@ internal struct NativeRect
 	public int Top;
 	public int Right;
 	public int Bottom;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativePoint
+{
+	public int X;
+	public int Y;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeWindowPlacement
+{
+	public int Length;
+	public int Flags;
+	public int ShowCommand;
+	public NativePoint MinimumPosition;
+	public NativePoint MaximumPosition;
+	public NativeRect NormalPosition;
 }
 
 [StructLayout(LayoutKind.Sequential)]

@@ -410,7 +410,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_cameraRoot.Children.InsertAtTop(_collapseButton.Root);
 		var margin = 10f * _dpiScale;
 		var hintY = Math.Max(margin, _viewportHeight - _sidebarHint.Size.Y - margin);
-		_sidebarHint.SetOffset(new Vector3(0, hintY, 118));
+		_sidebarHint.SetOffset(new Vector3(0, hintY, 0));
 		_sidebarHint.SetVisible(true);
 		var hintPolygon = new[]
 		{
@@ -424,7 +424,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var buttonGap = 6f * _dpiScale;
 		var x = 10f * _dpiScale;
 		var y = Math.Max(margin, hintY - _collapseButton.Size.Y - buttonGap);
-		_collapseButton.SetOffset(new Vector3(x, y, 120));
+		_collapseButton.SetOffset(new Vector3(x, y, 0));
 		_collapseButton.SetVisible(true);
 		var polygon = new[]
 		{
