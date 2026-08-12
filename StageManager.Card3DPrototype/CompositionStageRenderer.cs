@@ -355,6 +355,13 @@ internal sealed class CompositionStageRenderer : IDisposable
 		animate &= _animationsEnabled;
 		_hitTargets.Clear();
 		_passivePolygons.Clear();
+		_collapseButton.SetDpiScale(_dpiScale);
+		_sidebarHint.SetDpiScale(_dpiScale);
+		var footerMargin = 10f * _dpiScale;
+		var footerCardGap = 12f * _dpiScale;
+		var footerItemGap = 6f * _dpiScale;
+		var footerHeight = footerCardGap + _collapseButton.Size.Y + footerItemGap + _sidebarHint.Size.Y + footerMargin;
+		var cardViewportHeight = Math.Max(CardSize.Y + 24f * _dpiScale, _viewportHeight - footerHeight);
 		var cardSize = CardSize;
 		var stride = cardSize.Y + Gap;
 		var baseTotalHeight = Math.Max(0, _snapshots.Count * stride - Gap);
@@ -362,14 +369,15 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (_expandedStageKey is not null && _stages.TryGetValue(_expandedStageKey, out var expandedStage))
 			expandedExtraHeight = GetExpandedExtraHeight(expandedStage);
 		var totalHeight = baseTotalHeight + expandedExtraHeight;
-		var naturalStartY = baseTotalHeight <= _viewportHeight - 24 * _dpiScale
-			? (_viewportHeight - baseTotalHeight) / 2f
+		var naturalStartY = baseTotalHeight <= cardViewportHeight - 24 * _dpiScale
+			? (cardViewportHeight - baseTotalHeight) / 2f
 			: 12 * _dpiScale;
-		_maximumScroll = Math.Max(0, naturalStartY + totalHeight - (_viewportHeight - 12 * _dpiScale));
+		_maximumScroll = Math.Max(0, naturalStartY + totalHeight - (cardViewportHeight - 12 * _dpiScale));
 		_scrollOffset = Math.Clamp(_scrollOffset, 0, _maximumScroll);
 		var startY = naturalStartY - _scrollOffset;
 		var cameraCenter = new Vector2(_viewportWidth / 2f, _viewportHeight / 2f);
 		var currentY = startY;
+		var lowestVisibleCardBottom = float.NaN;
 
 		for (var stageIndex = 0; stageIndex < _snapshots.Count; stageIndex++)
 		{
@@ -382,7 +390,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 			stage.Root.Offset = stageOffset;
 			stage.Root.Scale = new Vector3(stageScale, stageScale, 1);
 			var stageVisualHeight = cardSize.Y + (isExpanded ? expandedExtraHeight : 0);
-			stage.Root.IsVisible = stageOffset.Y + stageVisualHeight >= -40 && stageOffset.Y <= _viewportHeight + 40;
+			stage.Root.IsVisible = stageOffset.Y + stageVisualHeight >= -40 && stageOffset.Y <= cardViewportHeight + 40;
 			if (!stage.Root.IsVisible)
 			{
 				stage.HideAll();
@@ -394,22 +402,31 @@ internal sealed class CompositionStageRenderer : IDisposable
 				LayoutExpandedStage(stage, stageOffset, stageScale, cameraCenter, animate);
 			else
 				LayoutCollapsedStage(stage, stageOffset, stageScale, cameraCenter, animate, stageIndex);
+			lowestVisibleCardBottom = float.IsNaN(lowestVisibleCardBottom)
+				? stageOffset.Y + stageVisualHeight * stageScale
+				: Math.Max(lowestVisibleCardBottom, stageOffset.Y + stageVisualHeight * stageScale);
 			currentY += stride + (isExpanded ? expandedExtraHeight : 0);
 		}
 
-		LayoutCollapseButton();
+		LayoutCollapseButton(lowestVisibleCardBottom);
 	}
 
-	private void LayoutCollapseButton()
+	private void LayoutCollapseButton(float lowestVisibleCardBottom)
 	{
-		_collapseButton.SetDpiScale(_dpiScale);
-		_sidebarHint.SetDpiScale(_dpiScale);
 		_cameraRoot.Children.Remove(_sidebarHint.Root);
 		_cameraRoot.Children.InsertAtTop(_sidebarHint.Root);
 		_cameraRoot.Children.Remove(_collapseButton.Root);
 		_cameraRoot.Children.InsertAtTop(_collapseButton.Root);
 		var margin = 10f * _dpiScale;
-		var hintY = Math.Max(margin, _viewportHeight - _sidebarHint.Size.Y - margin);
+		var cardGap = 12f * _dpiScale;
+		var buttonGap = 6f * _dpiScale;
+		var footerHeight = _collapseButton.Size.Y + buttonGap + _sidebarHint.Size.Y;
+		var maximumButtonY = Math.Max(margin, _viewportHeight - footerHeight - margin);
+		var preferredButtonY = float.IsNaN(lowestVisibleCardBottom)
+			? maximumButtonY
+			: lowestVisibleCardBottom + cardGap;
+		var y = Math.Clamp(preferredButtonY, margin, maximumButtonY);
+		var hintY = y + _collapseButton.Size.Y + buttonGap;
 		_sidebarHint.SetOffset(new Vector3(0, hintY, 0));
 		_sidebarHint.SetVisible(true);
 		var hintPolygon = new[]
@@ -421,9 +438,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		};
 		_passivePolygons.Add(hintPolygon);
 
-		var buttonGap = 6f * _dpiScale;
 		var x = 10f * _dpiScale;
-		var y = Math.Max(margin, hintY - _collapseButton.Size.Y - buttonGap);
 		_collapseButton.SetOffset(new Vector3(x, y, 0));
 		_collapseButton.SetVisible(true);
 		var polygon = new[]
@@ -1145,10 +1160,10 @@ internal sealed class SidebarCollapseButtonVisual : IDisposable
 	{
 		if (_disposed)
 			return;
-		var backgroundAlpha = _pressed ? 105 : _hovered ? 74 : 38;
-		var strokeAlpha = _pressed ? 235 : _hovered ? 215 : 150;
+		var backgroundAlpha = _pressed ? 125 : _hovered ? 92 : 58;
+		var strokeAlpha = _pressed ? 255 : _hovered ? 238 : 205;
 		_backgroundBrush.Color = Windows.UI.Color.FromArgb((byte)backgroundAlpha, 246, 248, 252);
-		_strokeBrush.Color = Windows.UI.Color.FromArgb((byte)strokeAlpha, 40, 46, 59);
+		_strokeBrush.Color = Windows.UI.Color.FromArgb((byte)strokeAlpha, 25, 30, 40);
 		var visualScale = _pressed ? 0.93f : _hovered ? 1.04f : 1f;
 		Root.Scale = new Vector3(visualScale, visualScale, 1f);
 	}
