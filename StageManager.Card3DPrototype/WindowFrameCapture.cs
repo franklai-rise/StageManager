@@ -33,11 +33,16 @@ internal sealed class WindowFrameCapture : IDisposable
 		using var clipPath = CreateRoundedRectangle(new Rectangle(1, 1, targetWidth - 2, targetHeight - 2), radius);
 		graphics.SetClip(clipPath);
 
-		var placeholder = source is null;
-		if (source is not null)
+		var placeholder = window.IsMinimized || source is null;
+		if (placeholder)
+		{
+			using var placeholderBackground = new SolidBrush(Color.FromArgb(238, 232, 236, 242));
+			graphics.FillPath(placeholderBackground, clipPath);
+		}
+		else
 		{
 			var target = new Rectangle(1, 1, targetWidth - 2, targetHeight - 2);
-			var crop = AspectFillCrop(source.Size, target.Size);
+			var crop = AspectFillCrop(source!.Size, target.Size);
 			graphics.DrawImage(source, target, crop.X, crop.Y, crop.Width, crop.Height, GraphicsUnit.Pixel);
 		}
 

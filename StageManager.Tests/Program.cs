@@ -25,7 +25,7 @@ internal static class TestRunner
 		RunTest("3D projection recedes toward the left edge", PerspectiveProjection);
 		RunTest("Collapsed cards retain subtle hover feedback without expanding", CollapsedHoverFeedback);
 		RunTest("Expanded multi-window cards form a full vertical child list", SubtleHoverProjection);
-		RunTest("Capture fallback produces a valid transparent card", CaptureFallback);
+		RunTest("Capture fallback produces a light gray placeholder card", CaptureFallback);
 		RunTest("Prototype stage slots do not jump after activation", PrototypeStageSlotsStayStable);
 		RunTest("Prototype card click toggles only the selected foreground window", PrototypeClickToggle);
 		RunTest("Multi-window child selection stays expanded until the primary card is clicked", MultiWindowCardClicking);
@@ -256,8 +256,10 @@ internal static class TestRunner
 		Assert(frame.IsPlaceholder, "Invalid HWND did not use the placeholder renderer.");
 		Assert(frame.Pixels.Length == frame.Width * frame.Height * 4, "Placeholder pixel buffer size is invalid.");
 		Assert(frame.Pixels[3] == 0, "Rounded placeholder corner is not transparent.");
-		var centerAlpha = frame.Pixels[((frame.Height / 2) * frame.Width + frame.Width / 2) * 4 + 3];
-		Assert(centerAlpha < 16, "Placeholder still paints a dark card background.");
+		var centerIndex = ((frame.Height / 2) * frame.Width + frame.Width / 2) * 4;
+		Assert(frame.Pixels[centerIndex] >= 210 && frame.Pixels[centerIndex + 1] >= 210 &&
+			frame.Pixels[centerIndex + 2] >= 210 && frame.Pixels[centerIndex + 3] >= 225,
+			"Placeholder does not paint a visible light gray card background.");
 	}
 
 	private static void PrototypeStageSlotsStayStable()

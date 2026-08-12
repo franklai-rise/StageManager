@@ -1089,8 +1089,8 @@ internal sealed class SidebarCollapseButtonVisual : IDisposable
 		_clip = compositor.CreateGeometricClip(_geometry);
 		_background.Clip = _clip;
 		_strokeBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(150, 40, 46, 59));
-		_upperStroke = CreateStroke(compositor, -45);
-		_lowerStroke = CreateStroke(compositor, 45);
+		_upperStroke = CreateStroke(compositor, 45);
+		_lowerStroke = CreateStroke(compositor, -45);
 		_upperStroke.Brush = _strokeBrush;
 		_lowerStroke.Brush = _strokeBrush;
 		Root.Children.InsertAtTop(_background);
@@ -1105,7 +1105,7 @@ internal sealed class SidebarCollapseButtonVisual : IDisposable
 	public void SetDpiScale(float dpiScale)
 	{
 		var scale = Math.Max(0.75f, dpiScale);
-		Size = new Vector2(42f * scale, 30f * scale);
+		Size = new Vector2(64f * scale, 30f * scale);
 		Root.Size = Size;
 		Root.CenterPoint = new Vector3(Size.X / 2f, Size.Y / 2f, 0);
 		_background.Size = Size;
