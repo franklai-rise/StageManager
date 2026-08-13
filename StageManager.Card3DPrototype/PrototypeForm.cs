@@ -1,5 +1,6 @@
 using StageManager.Services;
 using StageManager.Settings;
+using Microsoft.Win32;
 using System.Drawing.Drawing2D;
 using System.Numerics;
 using System.Windows.Forms;
@@ -23,18 +24,20 @@ internal sealed class PrototypeForm : Form
 	private readonly System.Windows.Forms.Timer _stageTimer = new() { Interval = 500 };
 	private readonly System.Windows.Forms.Timer _pointerTimer = new() { Interval = 50 };
 	private readonly System.Windows.Forms.Timer _regionCollapseTimer = new() { Interval = 260 };
+	private readonly System.Windows.Forms.Timer _displayChangeTimer = new() { Interval = 250 };
 	private readonly ToolTip _toolTip = new() { InitialDelay = 450, ReshowDelay = 100, AutoPopDelay = 3000, ShowAlways = true };
 	private readonly ContextMenuStrip _contextMenu = new();
+	private readonly ContextMenuStrip _cardContextMenu = new();
 	private readonly HashSet<int> _registeredHotkeys = new();
-	private readonly Screen _sidebarDisplay;
-	private readonly Rectangle _sidebarScreenBounds;
+	private Screen _sidebarDisplay;
+	private Rectangle _sidebarScreenBounds;
 	private Compositor? _compositor;
 	private DesktopWindowTarget? _target;
 	private ContainerVisual? _root;
 	private PrototypeStageCatalog? _catalog;
 	private CompositionStageRenderer? _renderer;
 	private NotifyIcon? _trayIcon;
-	private IntPtr _toolTipHandle;
+	private string? _toolTipKey;
 	private DateTime _lastSidebarInteractionUtc = DateTime.UtcNow;
 	private DateTime _transientRevealUtc = DateTime.MinValue;
 	private bool _sidebarVisible = true;
@@ -52,7 +55,7 @@ internal sealed class PrototypeForm : Form
 		ShowInTaskbar = false;
 		StartPosition = FormStartPosition.Manual;
 		TopMost = false;
-		_sidebarDisplay = Screen.AllScreens.OrderBy(item => item.WorkingArea.Left).First();
+		_sidebarDisplay = SidebarDisplayPolicy.SelectLeftmost(Screen.AllScreens, screen => screen.WorkingArea);
 		_sidebarScreenBounds = _sidebarDisplay.WorkingArea;
 		Bounds = new Rectangle(_sidebarDisplay.WorkingArea.Left, _sidebarDisplay.WorkingArea.Top, Math.Min(900, _sidebarDisplay.WorkingArea.Width), _sidebarDisplay.WorkingArea.Height);
 		SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
@@ -61,11 +64,14 @@ internal sealed class PrototypeForm : Form
 		toggleItem.Click += (_, _) => ToggleSidebarVisibility();
 		var settingsItem = new ToolStripMenuItem("Settings...");
 		settingsItem.Click += (_, _) => ShowSettings();
+		var refreshItem = new ToolStripMenuItem("Refresh all previews now");
+		refreshItem.Click += (_, _) => _renderer?.RefreshAllPreviews();
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => Close();
-		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.3.8") { Enabled = false });
+		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.4.0") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
+		_contextMenu.Items.Add(refreshItem);
 		_contextMenu.Items.Add(settingsItem);
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(exitItem);
@@ -82,6 +88,12 @@ internal sealed class PrototypeForm : Form
 				SetTransientOverlayRaised(false);
 			}
 		};
+		_displayChangeTimer.Tick += (_, _) =>
+		{
+			_displayChangeTimer.Stop();
+			UpdateSidebarDisplay();
+		};
+		SystemEvents.DisplaySettingsChanged += SystemEvents_DisplaySettingsChanged;
 	}
 
 	protected override bool ShowWithoutActivation => true;
@@ -162,10 +174,22 @@ internal sealed class PrototypeForm : Form
 		UpdateWindowRegion(true);
 
 		var target = _renderer.HitTest(e.Location) ?? initialTarget;
-		if (target.Window is not null && target.Window.Handle != _toolTipHandle)
+		var toolTipKey = target.Window is { } pointedWindow
+			? $"window:{pointedWindow.Handle}"
+			: target.IsSidebarCollapseButton
+				? "sidebar:collapse"
+				: target.PageDelta != 0
+					? $"page:{target.StageKey}:{target.PageDelta}"
+					: $"stage:{target.StageKey}";
+		if (!string.Equals(toolTipKey, _toolTipKey, StringComparison.Ordinal))
 		{
-			_toolTipHandle = target.Window.Handle;
-			_toolTip.Show(target.Window.Title, this, e.X + 16, e.Y + 14, 2600);
+			_toolTipKey = toolTipKey;
+			_toolTip.Show(
+				GetToolTipText(target),
+				this,
+				e.X + 16,
+				e.Y + 14,
+				3200);
 		}
 	}
 
@@ -175,7 +199,11 @@ internal sealed class PrototypeForm : Form
 		_lastSidebarInteractionUtc = DateTime.UtcNow;
 		if (e.Button == MouseButtons.Right)
 		{
-			_contextMenu.Show(Cursor.Position);
+			var target = _renderer?.HitTest(e.Location);
+			if (target is not null && !target.IsSidebarCollapseButton && target.PageDelta == 0)
+				ShowCardContextMenu(target);
+			else
+				_contextMenu.Show(Cursor.Position);
 			return;
 		}
 		if (e.Button != MouseButtons.Left || _renderer is null)
@@ -302,11 +330,15 @@ internal sealed class PrototypeForm : Form
 		_stageTimer.Stop();
 		_pointerTimer.Stop();
 		_regionCollapseTimer.Stop();
+		_displayChangeTimer.Stop();
 		_stageTimer.Dispose();
 		_pointerTimer.Dispose();
 		_regionCollapseTimer.Dispose();
+		_displayChangeTimer.Dispose();
 		_toolTip.Dispose();
 		_contextMenu.Dispose();
+		_cardContextMenu.Dispose();
+		SystemEvents.DisplaySettingsChanged -= SystemEvents_DisplaySettingsChanged;
 		if (_trayIcon is not null)
 		{
 			_trayIcon.Visible = false;
@@ -337,8 +369,9 @@ internal sealed class PrototypeForm : Form
 	{
 		if (_closing || _catalog is null || _renderer is null)
 			return;
+		var previousRevision = _renderer.LayoutRevision;
 		_renderer.Synchronize(_catalog.GetStages());
-		if (_sidebarVisible)
+		if (_sidebarVisible && previousRevision != _renderer.LayoutRevision)
 			UpdateWindowRegion(true);
 	}
 
@@ -355,6 +388,8 @@ internal sealed class PrototypeForm : Form
 		var settings = _catalog.Settings.Current;
 		_renderer.SetAnimationsEnabled(settings.AnimationsEnabled);
 		_renderer.SetCardScale(settings.CardScale);
+		_renderer.SetPreviewPolicy(settings.PreviewRefreshMinutes, settings.PausePreviewRefreshWhenHidden);
+		_renderer.SetIdleHint(settings.IdleAutoHideEnabled, settings.IdleAutoHideSeconds);
 		RegisterHotkeys();
 		if (!settings.IdleAutoHideEnabled && !_sidebarVisible)
 			SetSidebarVisible(true);
@@ -380,6 +415,81 @@ internal sealed class PrototypeForm : Form
 		using var dialog = new SettingsForm(_catalog.Settings.CloneCurrent(), _catalog.GetApplicationChoices());
 		if (dialog.ShowDialog() == DialogResult.OK)
 			_catalog.Settings.Apply(dialog.Draft);
+	}
+
+	private void ShowCardContextMenu(CardHitTarget target)
+	{
+		if (_catalog is null || _renderer is null)
+			return;
+		while (_cardContextMenu.Items.Count > 0)
+		{
+			var item = _cardContextMenu.Items[0];
+			_cardContextMenu.Items.RemoveAt(0);
+			item.Dispose();
+		}
+		var stage = _catalog.GetStages().FirstOrDefault(snapshot =>
+			string.Equals(snapshot.Key, target.StageKey, StringComparison.OrdinalIgnoreCase));
+		var title = target.Window?.Title ?? stage?.Title ?? "Application";
+		_cardContextMenu.Items.Add(new ToolStripMenuItem(title) { Enabled = false });
+		_cardContextMenu.Items.Add(new ToolStripSeparator());
+		if (target.Window is { } window)
+		{
+			var activateItem = new ToolStripMenuItem("Bring this window to front");
+			activateItem.Click += (_, _) => ActivateSelectedWindow(window, allowMinimize: false);
+			_cardContextMenu.Items.Add(activateItem);
+
+			var recoverItem = new ToolStripMenuItem("Recover to this display")
+			{
+				Enabled = OffscreenWindowRecovery.IsOffscreen(window)
+			};
+			recoverItem.Click += (_, _) =>
+			{
+				var display = Screen.FromPoint(Cursor.Position);
+				if (OffscreenWindowRecovery.TryCenterIfOffscreen(window, display, window.IsMaximized))
+					ActivateSelectedWindow(window, allowMinimize: false);
+			};
+			_cardContextMenu.Items.Add(recoverItem);
+		}
+
+		var refreshItem = new ToolStripMenuItem("Refresh preview now");
+		refreshItem.Click += (_, _) => _renderer.RefreshStagePreviews(target.StageKey);
+		_cardContextMenu.Items.Add(refreshItem);
+		var processNames = (stage?.Windows ?? Array.Empty<StageManager.Native.Window.IWindow>())
+			.Select(window => window.ProcessName)
+			.Where(name => !string.IsNullOrWhiteSpace(name))
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.ToArray();
+		if (processNames.Length > 0)
+		{
+			_cardContextMenu.Items.Add(new ToolStripSeparator());
+			var ignoreItem = new ToolStripMenuItem(processNames.Length == 1
+				? $"Ignore {processNames[0]}"
+				: "Ignore applications in this card");
+			ignoreItem.Click += (_, _) => _catalog.Settings.AddIgnoredProcesses(processNames);
+			_cardContextMenu.Items.Add(ignoreItem);
+		}
+		_cardContextMenu.Show(Cursor.Position);
+	}
+
+	private string GetToolTipText(CardHitTarget target)
+	{
+		if (target.IsSidebarCollapseButton)
+			return "Hide sidebar";
+		if (target.PageDelta < 0)
+			return "Previous windows";
+		if (target.PageDelta > 0)
+			return "Next windows";
+		if (target.Window is { } window)
+		{
+			var state = window.IsMinimized ? " (minimized)" : string.Empty;
+			return $"{window.Title}{state}\nDouble-click to recover an off-screen window · Right-click for options";
+		}
+
+		var stage = _catalog?.GetStages().FirstOrDefault(snapshot =>
+			string.Equals(snapshot.Key, target.StageKey, StringComparison.OrdinalIgnoreCase));
+		return stage is null
+			? "Application group"
+			: $"{stage.Title} · {stage.Windows.Count} windows\nClick to expand or collapse · Right-click for options";
 	}
 
 	private void RegisterHotkeys()
@@ -549,7 +659,7 @@ internal sealed class PrototypeForm : Form
 			_lastSidebarInteractionUtc = nowUtc;
 		else
 		{
-			_toolTipHandle = IntPtr.Zero;
+			_toolTipKey = null;
 			_toolTip.Hide(this);
 		}
 		if (wasExpanded != _renderer.HasExpandedStage)
@@ -629,6 +739,42 @@ internal sealed class PrototypeForm : Form
 		return SidebarIdleBehavior.IsNearLeftEdge(screenPoint, _sidebarScreenBounds, EdgeActivationWidth);
 	}
 
+	private void SystemEvents_DisplaySettingsChanged(object? sender, EventArgs e)
+	{
+		if (_closing || !IsHandleCreated)
+			return;
+		try
+		{
+			BeginInvoke(new Action(() =>
+			{
+				_displayChangeTimer.Stop();
+				_displayChangeTimer.Start();
+			}));
+		}
+		catch (InvalidOperationException)
+		{
+		}
+	}
+
+	private void UpdateSidebarDisplay()
+	{
+		if (_closing || Screen.AllScreens.Length == 0)
+			return;
+		var selected = SidebarDisplayPolicy.SelectLeftmost(Screen.AllScreens, screen => screen.WorkingArea);
+		if (string.Equals(selected.DeviceName, _sidebarDisplay.DeviceName, StringComparison.OrdinalIgnoreCase) &&
+			selected.WorkingArea == _sidebarScreenBounds)
+			return;
+
+		_sidebarDisplay = selected;
+		_sidebarScreenBounds = selected.WorkingArea;
+		Bounds = new Rectangle(
+			selected.WorkingArea.Left,
+			selected.WorkingArea.Top,
+			Math.Min(900, selected.WorkingArea.Width),
+			selected.WorkingArea.Height);
+		UpdateWindowRegion(_sidebarVisible);
+	}
+
 	private void UpdateWindowRegion(bool includeCards)
 	{
 		if (!IsHandleCreated)
@@ -664,10 +810,15 @@ internal sealed class PrototypeForm : Form
 		var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 		_trayIcon = new NotifyIcon
 		{
-			Text = "Stage_Manager_Lai v2.3.8",
+			Text = "Stage_Manager_Lai v2.4.0",
 			Icon = icon,
 			ContextMenuStrip = _contextMenu,
 			Visible = true
+		};
+		_trayIcon.MouseClick += (_, eventArgs) =>
+		{
+			if (eventArgs.Button == MouseButtons.Left)
+				ToggleSidebarVisibility();
 		};
 	}
 }

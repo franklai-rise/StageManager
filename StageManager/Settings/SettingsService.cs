@@ -10,7 +10,7 @@ namespace StageManager.Settings;
 
 public sealed class SettingsService
 {
-	private const int CurrentSchemaVersion = 5;
+	private const int CurrentSchemaVersion = 6;
 	private readonly JsonSerializerOptions _jsonOptions = new()
 	{
 		WriteIndented = true,
@@ -105,6 +105,7 @@ public sealed class SettingsService
 		settings.SchemaVersion = CurrentSchemaVersion;
 		settings.CardScale = Math.Clamp(settings.CardScale, 0.55, 1.25);
 		settings.IdleAutoHideSeconds = Math.Clamp(settings.IdleAutoHideSeconds, 15, 600);
+		settings.PreviewRefreshMinutes = Math.Clamp(settings.PreviewRefreshMinutes, 1, 60);
 		settings.SidebarOpacity = Math.Clamp(settings.SidebarOpacity, 0.65, 1.0);
 		settings.IgnoredProcesses ??= new List<string>();
 		settings.IgnoredProcesses = settings.IgnoredProcesses

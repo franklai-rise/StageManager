@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.3.8
+# Stage_Manager_Lai v2.4.0
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -95,21 +95,26 @@ whose preview cannot be captured now use a soft light-gray placeholder instead o
 v2.3.8 matches the collapse control width and 3D tilt to the window cards, aligns it with the card column, and changes
 the arrow itself to a deep near-opaque black while retaining subtle hover and press feedback.
 
-## What v2 adds
+v2.4.0 introduces a quieter smart-preview engine and display-aware sidebar behavior. Preview captures now run one at a
+time, skip `PrintWindow` entirely for minimized applications, can pause while the sidebar is hidden, and use a
+user-configurable 1–60 minute refresh interval. The tray and each card provide an immediate manual refresh action.
 
-- Runtime task stages can contain windows from several applications.
-- **Coexist mode** is the default: selecting a stage brings its windows forward without hiding other apps.
-- **Focus mode** minimizes only managed inactive stages and restores their exact position and state later.
-- A stage can span multiple displays; the sidebar stays on the physical left edge of the leftmost display.
-- Up to three live DWM previews form a stacked stage card, with an overflow badge for additional windows.
-- Cards use a macOS-inspired perspective stack by default, with a flat-card fallback in Settings.
-- Cards shrink automatically down to 55%; larger lists scroll without overlapping.
-- Public Windows virtual-desktop APIs keep recent stages separate per virtual desktop.
-- Full-screen detection suppresses the sidebar over games and videos.
+The sidebar now follows the physical leftmost display when monitor topology changes without restarting the application.
+Card right-click actions expose bring-to-front, off-screen recovery, preview refresh, and application ignore controls.
+The footer hint reflects the actual configured idle delay, and left-clicking the tray icon toggles the sidebar.
+
+## What the current 3D build includes
+
+- One stable application group per app, with a synthetic logo card when that app has multiple windows.
+- Click-expanded vertical child cards for selecting an exact window; larger groups support paging.
+- macOS-inspired native Composition perspective, shadows, hover feedback, and card-shaped click-through.
+- Cards scale from 55% to 125%; long lists scroll without overlap.
+- Static window snapshots refresh on a configurable low-frequency schedule rather than continuously.
+- The sidebar follows the physical leftmost display and supports edge reveal over maximized or full-screen apps.
+- Current-public-virtual-desktop filtering prevents windows from other desktops appearing in the sidebar.
 - Settings, ignored applications, appearance, startup behavior, and shortcuts persist in
   `%LocalAppData%\Stage_Manager_Lai\settings.json`.
-- Window events are serialized and coalesced; DWM thumbnails and WinEvent hooks are released deterministically.
-- Three unclean starts activate safe mode, which leaves only the tray controls active.
+- Explorer folder windows are supported while the desktop, taskbar, notification area, and shell remain protected.
 
 ## Safety rules
 
@@ -119,12 +124,12 @@ overlay is distracting, select Yuanbao in Settings > Ignored applications to hid
 
 ## Controls
 
-- Click a card to select its complete stage.
-- Drag an application window onto a card to add it to that stage.
-- Drag a card from the sidebar into the active area to merge it into the current stage.
-- Right-click a card to split it, move it to the next display, arrange two or three windows, rebuild its
-  previews, ignore its applications, or close its most recent window.
-- Use the tray icon to switch modes, toggle auto-hide, open settings, inspect logs, or quit safely.
+- Click a single-window card to bring it forward; click that foreground card again to minimize it.
+- Click a multi-window application card to expand or collapse its vertical list, then click an exact child window.
+- Double-click an off-screen window card to recover that window to the display under the pointer.
+- Right-click a card to bring it forward, recover it, refresh its preview, or ignore its application.
+- Click the bottom arrow or use the tray icon/global shortcut to hide or show the sidebar.
+- Left-click the tray icon to toggle the sidebar; its menu also refreshes all previews and opens Settings.
 
 Default shortcuts:
 
@@ -133,7 +138,6 @@ Default shortcuts:
 | Show or hide sidebar | `Win+Alt+S` |
 | Previous stage | `Win+Alt+[` |
 | Next stage | `Win+Alt+]` |
-| Add/remove active window | `Win+Alt+G` |
 
 Windows Game Bar can reserve `Win+Alt+G`. When that happens, Stage_Manager_Lai automatically registers
 `Ctrl+Alt+Shift+G` for the current run; shortcuts can be changed in Settings.

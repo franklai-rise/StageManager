@@ -19,7 +19,9 @@ internal sealed class WindowFrameCapture : IDisposable
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		targetWidth = Math.Max(32, targetWidth);
 		targetHeight = Math.Max(24, targetHeight);
-		using var source = TryCaptureWindow(window.Handle);
+		// Minimized windows are rendered as lightweight placeholders. Calling PrintWindow on
+		// them can wake or flash GPU-heavy applications without producing a useful frame.
+		using var source = window.IsMinimized ? null : TryCaptureWindow(window.Handle);
 		using var card = new Bitmap(targetWidth, targetHeight, PixelFormat.Format32bppArgb);
 		using var graphics = Graphics.FromImage(card);
 		graphics.Clear(Color.Transparent);
@@ -48,6 +50,11 @@ internal sealed class WindowFrameCapture : IDisposable
 
 		graphics.ResetClip();
 		DrawIconBadge(graphics, window, targetWidth, targetHeight);
+		DrawStatusBadge(
+			graphics,
+			window.IsMinimized ? "MINIMIZED" : source is null ? "NO PREVIEW" : null,
+			targetWidth,
+			targetHeight);
 		if (!string.IsNullOrWhiteSpace(countBadge))
 			DrawCountBadge(graphics, countBadge!, targetWidth);
 		using var border = new Pen(Color.FromArgb(118, 225, 232, 246), Math.Max(1, targetWidth / 220f));
@@ -252,6 +259,24 @@ internal sealed class WindowFrameCapture : IDisposable
 		using var foreground = new SolidBrush(Color.White);
 		graphics.FillPath(background, path);
 		graphics.DrawString(text, font, foreground, badge.Left + 4, badge.Top + 1);
+	}
+
+	private static void DrawStatusBadge(Graphics graphics, string? text, int width, int height)
+	{
+		if (string.IsNullOrWhiteSpace(text))
+			return;
+		using var font = new Font("Segoe UI", Math.Max(9, height * 0.075f), FontStyle.Bold, GraphicsUnit.Pixel);
+		var measured = graphics.MeasureString(text, font);
+		var badge = new RectangleF(
+			width - measured.Width - 18,
+			8,
+			measured.Width + 10,
+			measured.Height + 4);
+		using var path = CreateRoundedRectangle(Rectangle.Round(badge), Math.Max(5, (int)Math.Round(badge.Height / 2)));
+		using var background = new SolidBrush(Color.FromArgb(205, 105, 112, 126));
+		using var foreground = new SolidBrush(Color.FromArgb(245, 255, 255, 255));
+		graphics.FillPath(background, path);
+		graphics.DrawString(text, font, foreground, badge.Left + 5, badge.Top + 2);
 	}
 
 	private static Bitmap? ExtractIcon(IWindow window)

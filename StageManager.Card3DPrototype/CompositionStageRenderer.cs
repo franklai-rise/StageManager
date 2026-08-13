@@ -45,6 +45,9 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private bool _collapseButtonHovered;
 	private bool _collapseRequested;
 	private float _preferenceScale;
+	private int _previewRefreshMinutes = WindowCapturePolicy.DefaultRefreshMinutes;
+	private bool _pausePreviewRefreshWhenHidden = true;
+	private bool _manualRefreshPending;
 
 	public CompositionStageRenderer(Control owner, Compositor compositor, ContainerVisual cameraRoot, double cardScale, bool animationsEnabled)
 	{
@@ -58,7 +61,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_sidebarHint = new SidebarHintVisual(_graphics, _compositor);
 		_cameraRoot.Children.InsertAtTop(_collapseButton.Root);
 		_cameraRoot.Children.InsertAtTop(_sidebarHint.Root);
-		_captureTimer = new System.Windows.Forms.Timer { Interval = 125 };
+		_captureTimer = new System.Windows.Forms.Timer { Interval = 350 };
 		_captureTimer.Tick += (_, _) => ScheduleCaptures();
 		_captureTimer.Start();
 	}
@@ -66,6 +69,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	public bool HasExpandedStage => _expandedStageKey is not null;
 	public double CardScale => _preferenceScale;
 	public bool SidebarVisible => _sidebarVisible;
+	public long LayoutRevision { get; private set; }
 	public float SidebarInteractionWidth => CardSize.X + 48f * _dpiScale;
 	public TimeSpan SidebarAnimationDuration => TimeSpan.FromMilliseconds(220);
 
@@ -86,6 +90,35 @@ internal sealed class CompositionStageRenderer : IDisposable
 	}
 
 	public void SetAnimationsEnabled(bool enabled) => _animationsEnabled = enabled;
+
+	public void SetPreviewPolicy(int refreshMinutes, bool pauseWhenHidden)
+	{
+		_previewRefreshMinutes = Math.Clamp(refreshMinutes, 1, 60);
+		_pausePreviewRefreshWhenHidden = pauseWhenHidden;
+		if (_sidebarVisible)
+			ScheduleCaptures();
+	}
+
+	public void SetIdleHint(bool autoHideEnabled, int idleSeconds) =>
+		_sidebarHint.SetIdleBehavior(autoHideEnabled, idleSeconds);
+
+	public void RefreshAllPreviews()
+	{
+		foreach (var card in _stages.Values.SelectMany(stage => stage.Windows))
+			card.InvalidateCapture();
+		_manualRefreshPending = true;
+		ScheduleCaptures();
+	}
+
+	public void RefreshStagePreviews(string stageKey)
+	{
+		if (!_stages.TryGetValue(stageKey, out var stage))
+			return;
+		foreach (var card in stage.Windows)
+			card.InvalidateCapture();
+		_manualRefreshPending = true;
+		ScheduleCaptures();
+	}
 
 	public void SetSidebarVisible(bool visible, bool animate)
 	{
@@ -146,10 +179,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		if (_disposed)
 			return;
+		var layoutChanged = !HasSameLayout(_snapshots, snapshots);
 		_snapshots = snapshots;
 		var liveKeys = snapshots.Select(stage => stage.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
 		foreach (var stale in _stages.Keys.Where(key => !liveKeys.Contains(key)).ToArray())
 		{
+			layoutChanged = true;
 			var stage = _stages[stale];
 			_cameraRoot.Children.Remove(stage.Root);
 			stage.Dispose();
@@ -160,6 +195,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		{
 			if (!_stages.TryGetValue(snapshot.Key, out var stage))
 			{
+				layoutChanged = true;
 				stage = new StageCardVisual(snapshot.Key, _compositor, _graphics, CardPixelWidth, CardPixelHeight, CardSize);
 				_stages[snapshot.Key] = stage;
 				_cameraRoot.Children.InsertAtTop(stage.Root);
@@ -172,6 +208,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 		if (_expandedStageKey is not null && !liveKeys.Contains(_expandedStageKey))
 		{
+			layoutChanged = true;
 			_expandedStageKey = null;
 			_hoveredWindowHandle = IntPtr.Zero;
 			_hoveredGroupCard = false;
@@ -181,6 +218,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 			_stages.TryGetValue(_expandedStageKey, out var expandedStage) &&
 			expandedStage.Windows.Count <= 1)
 		{
+			layoutChanged = true;
 			_expandedStageKey = null;
 			_hoveredWindowHandle = IntPtr.Zero;
 			_hoveredGroupCard = false;
@@ -188,7 +226,30 @@ internal sealed class CompositionStageRenderer : IDisposable
 		}
 		if (_hoveredStageKey is not null && !liveKeys.Contains(_hoveredStageKey))
 			_hoveredStageKey = null;
-		LayoutStages(true);
+		if (layoutChanged)
+			LayoutStages(true);
+	}
+
+	private static bool HasSameLayout(
+		IReadOnlyList<PrototypeStageSnapshot> previous,
+		IReadOnlyList<PrototypeStageSnapshot> current)
+	{
+		if (previous.Count != current.Count)
+			return false;
+		for (var stageIndex = 0; stageIndex < previous.Count; stageIndex++)
+		{
+			var oldStage = previous[stageIndex];
+			var newStage = current[stageIndex];
+			if (!string.Equals(oldStage.Key, newStage.Key, StringComparison.OrdinalIgnoreCase) ||
+				oldStage.Windows.Count != newStage.Windows.Count)
+				return false;
+			for (var windowIndex = 0; windowIndex < oldStage.Windows.Count; windowIndex++)
+			{
+				if (oldStage.Windows[windowIndex].Handle != newStage.Windows[windowIndex].Handle)
+					return false;
+			}
+		}
+		return true;
 	}
 
 	public CardHitTarget? HitTest(Point clientPoint)
@@ -409,6 +470,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		}
 
 		LayoutCollapseButton(lowestVisibleCardBottom);
+		LayoutRevision++;
 	}
 
 	private void LayoutCollapseButton(float lowestVisibleCardBottom)
@@ -679,16 +741,23 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	private void ScheduleCaptures()
 	{
-		if (_disposed)
+		if (_disposed || (_pausePreviewRefreshWhenHidden && !_sidebarVisible && !_manualRefreshPending))
 			return;
+		lock (_captureGate)
+		{
+			if (_capturesInFlight.Count > 0)
+				return;
+		}
 		var nowUtc = DateTime.UtcNow;
 		var due = _stages.Values
 			.SelectMany(stage => stage.Windows.Select(card => (stage, card)))
 			.Where(tuple => tuple.card.IsVisible)
-			.Where(tuple => tuple.card.NeedsCapture(nowUtc))
+			.Where(tuple => tuple.card.NeedsCapture(nowUtc, _previewRefreshMinutes))
 			.OrderByDescending(tuple => tuple.card.Window.Handle == _hoveredWindowHandle)
-			.Take(2)
+			.Take(1)
 			.ToArray();
+		if (due.Length == 0)
+			_manualRefreshPending = false;
 		foreach (var item in due)
 			StartCapture(item.card);
 	}
@@ -800,7 +869,7 @@ internal sealed class StageCardVisual : IDisposable
 			}
 			else
 			{
-				existing.Window = window;
+				existing.UpdateWindow(window);
 				var oldIndex = Windows.IndexOf(existing);
 				if (oldIndex != index)
 				{
@@ -835,7 +904,7 @@ internal sealed class StageCardVisual : IDisposable
 		}
 		else
 		{
-			GroupCard.Window = representative;
+			GroupCard.UpdateWindow(representative);
 		}
 
 		if (string.Equals(_groupCardIdentity, identity, StringComparison.OrdinalIgnoreCase))
@@ -1190,17 +1259,18 @@ internal sealed class SidebarHintVisual : IDisposable
 {
 	private const int SurfaceWidth = 640;
 	private const int SurfaceHeight = 64;
-	private const string HintText = "1 min 后自动隐藏 · 鼠标在附近时激活";
 	private readonly CardSwapChain _surface;
 	private readonly CompositionSurfaceBrush _surfaceBrush;
 	private readonly SpriteVisual _content;
+	private string _text;
 	private bool _disposed;
 
 	public SidebarHintVisual(D3DCompositionDevice graphics, Compositor compositor)
 	{
 		Root = compositor.CreateContainerVisual();
 		_surface = graphics.CreateSurface(compositor, SurfaceWidth, SurfaceHeight);
-		_surface.Upload(CreatePixels());
+		_text = SidebarHintFormatter.Format(true, 60);
+		_surface.Upload(CreatePixels(_text));
 		_surfaceBrush = compositor.CreateSurfaceBrush(_surface.CompositionSurface);
 		_surfaceBrush.Stretch = CompositionStretch.Fill;
 		_content = compositor.CreateSpriteVisual();
@@ -1224,6 +1294,15 @@ internal sealed class SidebarHintVisual : IDisposable
 
 	public void SetVisible(bool visible) => Root.IsVisible = visible;
 
+	public void SetIdleBehavior(bool autoHideEnabled, int idleSeconds)
+	{
+		var text = SidebarHintFormatter.Format(autoHideEnabled, idleSeconds);
+		if (string.Equals(_text, text, StringComparison.Ordinal))
+			return;
+		_text = text;
+		_surface.Upload(CreatePixels(_text));
+	}
+
 	public void Dispose()
 	{
 		if (_disposed)
@@ -1235,7 +1314,7 @@ internal sealed class SidebarHintVisual : IDisposable
 		_surface.Dispose();
 	}
 
-	private static byte[] CreatePixels()
+	private static byte[] CreatePixels(string text)
 	{
 		using var bitmap = new Bitmap(SurfaceWidth, SurfaceHeight, PixelFormat.Format32bppPArgb);
 		using var graphics = Graphics.FromImage(bitmap);
@@ -1243,7 +1322,7 @@ internal sealed class SidebarHintVisual : IDisposable
 		graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
 		using var font = new Font("Microsoft YaHei UI", 22f, FontStyle.Regular, GraphicsUnit.Pixel);
 		using var brush = new SolidBrush(Color.FromArgb(132, 235, 240, 248));
-		graphics.DrawString(HintText, font, brush, new PointF(4, 17));
+		graphics.DrawString(text, font, brush, new PointF(4, 17));
 
 		var data = bitmap.LockBits(
 			new Rectangle(0, 0, SurfaceWidth, SurfaceHeight),
@@ -1272,9 +1351,14 @@ internal sealed class WindowCardVisual : IDisposable
 	private readonly CompositionRoundedRectangleGeometry _clipGeometry;
 	private readonly CompositionGeometricClip _clip;
 	private readonly DropShadow _shadow;
+	private readonly SpriteVisual _focusIndicator;
+	private readonly CompositionColorBrush _focusIndicatorBrush;
+	private readonly CompositionRoundedRectangleGeometry _focusIndicatorGeometry;
+	private readonly CompositionGeometricClip _focusIndicatorClip;
 	private Vector3 _lastOffset;
 	private Vector3 _lastScale;
 	private float _lastAngle;
+	private bool _lastKnownMinimized;
 	private bool _hasTransform;
 	private bool _disposed;
 
@@ -1282,6 +1366,7 @@ internal sealed class WindowCardVisual : IDisposable
 	{
 		_compositor = compositor;
 		Window = window;
+		_lastKnownMinimized = window.IsMinimized;
 		SurfaceWidth = surfaceWidth;
 		SurfaceHeight = surfaceHeight;
 		_surface = graphics.CreateSurface(compositor, surfaceWidth, surfaceHeight);
@@ -1303,29 +1388,61 @@ internal sealed class WindowCardVisual : IDisposable
 		_shadow.Color = Windows.UI.Color.FromArgb(220, 2, 4, 8);
 		_shadow.Mask = _surfaceBrush;
 		_content.Shadow = _shadow;
+		var indicatorSize = Math.Max(7f, cardSize.Y * 0.065f);
+		_focusIndicatorBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(245, 69, 133, 255));
+		_focusIndicator = compositor.CreateSpriteVisual();
+		_focusIndicator.Size = new Vector2(indicatorSize, indicatorSize);
+		_focusIndicator.Offset = new Vector3(
+			cardSize.X - indicatorSize - Math.Max(8f, cardSize.Y * 0.08f),
+			Math.Max(8f, cardSize.Y * 0.08f),
+			2f);
+		_focusIndicator.Brush = _focusIndicatorBrush;
+		_focusIndicatorGeometry = compositor.CreateRoundedRectangleGeometry();
+		_focusIndicatorGeometry.Size = _focusIndicator.Size;
+		_focusIndicatorGeometry.CornerRadius = new Vector2(indicatorSize / 2f);
+		_focusIndicatorClip = compositor.CreateGeometricClip(_focusIndicatorGeometry);
+		_focusIndicator.Clip = _focusIndicatorClip;
 		Root = compositor.CreateContainerVisual();
 		Root.Size = cardSize;
 		Root.CenterPoint = new Vector3(cardSize.X * 0.88f, cardSize.Y * 0.5f, 0);
 		Root.RotationAxis = Vector3.UnitY;
 		Root.Children.InsertAtTop(_content);
+		Root.Children.InsertAtTop(_focusIndicator);
 		Pivot = new Vector2(Root.CenterPoint.X, Root.CenterPoint.Y);
+		UpdateFocusIndicator();
 	}
 
 	public ContainerVisual Root { get; }
-	public IWindow Window { get; set; }
+	public IWindow Window { get; private set; }
 	public Vector2 Pivot { get; }
 	public int SurfaceWidth { get; }
 	public int SurfaceHeight { get; }
 	public bool IsVisible { get; private set; }
 	public string? DesiredBadge { get; set; }
 	public DateTime LastCaptureUtc { get; private set; } = DateTime.MinValue;
-	public bool NeedsCapture(DateTime nowUtc) => WindowCapturePolicy.NeedsCapture(LastCaptureUtc, nowUtc);
+	public bool NeedsCapture(DateTime nowUtc, int refreshMinutes) =>
+		WindowCapturePolicy.NeedsCapture(LastCaptureUtc, nowUtc, refreshMinutes);
+
+	public void InvalidateCapture() => LastCaptureUtc = DateTime.MinValue;
 
 	public void SetVisible(bool visible)
 	{
 		IsVisible = visible;
 		Root.IsVisible = visible;
 	}
+
+	public void UpdateWindow(IWindow window)
+	{
+		var minimized = window.IsMinimized;
+		Window = window;
+		if (minimized != _lastKnownMinimized)
+			InvalidateCapture();
+		_lastKnownMinimized = minimized;
+		UpdateFocusIndicator();
+	}
+
+	private void UpdateFocusIndicator() =>
+		_focusIndicator.IsVisible = Window.IsFocused && !Window.IsMinimized;
 
 	public void SetTransform(Vector3 offset, Vector3 scale, float angle, bool animate)
 	{
@@ -1379,6 +1496,10 @@ internal sealed class WindowCardVisual : IDisposable
 		_disposed = true;
 		Root.Dispose();
 		_shadow.Dispose();
+		_focusIndicatorClip.Dispose();
+		_focusIndicatorGeometry.Dispose();
+		_focusIndicator.Dispose();
+		_focusIndicatorBrush.Dispose();
 		_clip.Dispose();
 		_clipGeometry.Dispose();
 		_content.Dispose();

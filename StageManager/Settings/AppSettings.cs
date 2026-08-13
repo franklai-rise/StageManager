@@ -26,6 +26,8 @@ public sealed class AppSettings
 	public bool StartWithWindows { get; set; } = true;
 	public bool IdleAutoHideEnabled { get; set; } = true;
 	public int IdleAutoHideSeconds { get; set; } = 60;
+	public int PreviewRefreshMinutes { get; set; } = 5;
+	public bool PausePreviewRefreshWhenHidden { get; set; } = true;
 	public double CardScale { get; set; } = 0.60;
 	public double SidebarOpacity { get; set; } = 0.94;
 	public string ToggleSidebarHotkey { get; set; } = "Win+Alt+S";

@@ -31,7 +31,9 @@ internal static class TestRunner
 		RunTest("Multi-window child selection stays expanded until the primary card is clicked", MultiWindowCardClicking);
 		RunTest("Expanded application groups keep every real window available", ExpandedApplicationGroupPaging);
 		RunTest("Application group cards render a white logo surface", ApplicationGroupCardRendering);
-		RunTest("Window cards refresh snapshots only every five minutes", InitialCapturePolicy);
+		RunTest("Window cards respect the configured preview schedule", InitialCapturePolicy);
+		RunTest("Sidebar hint reflects the configured idle behavior", SidebarHintFormatting);
+		RunTest("Sidebar display selection follows the physical left edge", SidebarDisplaySelection);
 		RunTest("Tray-hidden windows leave the sidebar while taskbar-minimized windows remain", ManagedWindowVisibility);
 		RunTest("Off-screen recovery preserves visible windows and centers only lost windows", OffscreenRecoveryGeometry);
 		RunTest("Idle auto-hide waits one minute and wakes at the left edge", IdleAutoHideBehavior);
@@ -114,7 +116,7 @@ internal static class TestRunner
 				}
 				""");
 			var service = new SettingsService(path);
-			Assert(service.Current.SchemaVersion == 5, "Settings schema was not upgraded for selectable application ignores.");
+			Assert(service.Current.SchemaVersion == 6, "Settings schema was not upgraded for smart preview controls.");
 			Assert(!service.Current.IgnoredProcesses.Contains("explorer", StringComparer.OrdinalIgnoreCase),
 				"The legacy default Explorer ignore entry was not migrated.");
 			Assert(!service.Current.IgnoredProcesses.Contains("yuanbao", StringComparer.OrdinalIgnoreCase),
@@ -122,7 +124,7 @@ internal static class TestRunner
 			Assert(service.Current.IgnoredProcesses.Contains("custom-app", StringComparer.OrdinalIgnoreCase),
 				"A user-selected ignored process was lost during migration.");
 			var migratedJson = File.ReadAllText(path);
-			Assert(migratedJson.Contains("\"SchemaVersion\": 5", StringComparison.Ordinal),
+			Assert(migratedJson.Contains("\"SchemaVersion\": 6", StringComparison.Ordinal),
 				"The migrated schema was not written back to disk.");
 			Assert(!migratedJson.Contains("explorer", StringComparison.OrdinalIgnoreCase),
 				"The legacy Explorer ignore entry remained in the persisted settings.");
@@ -131,12 +133,15 @@ internal static class TestRunner
 			Assert(!service.Current.AutoHideSidebar, "Sidebar auto-hide should be disabled by default.");
 			Assert(service.Current.IdleAutoHideEnabled && service.Current.IdleAutoHideSeconds == 60,
 				"3D sidebar idle auto-hide should default to one minute.");
+			Assert(service.Current.PreviewRefreshMinutes == 5 && service.Current.PausePreviewRefreshWhenHidden,
+				"Smart preview defaults were not preserved during migration.");
 			Assert(service.Current.UsePerspectiveCards, "macOS-style cards should be enabled by default.");
 			Assert(Math.Abs(service.Current.CardScale - 0.60) < 0.001, "Default card scale should be 60%.");
 			var settings = service.CloneCurrent();
 			settings.CardScale = 99;
 			settings.SidebarOpacity = 0;
 			settings.IdleAutoHideSeconds = 1;
+			settings.PreviewRefreshMinutes = 0;
 			settings.StageMode = StageMode.Focus;
 			settings.UsePerspectiveCards = false;
 			settings.IgnoredProcesses = new List<string> { "yuanbao", "YuanBao", "  explorer  " };
@@ -148,6 +153,7 @@ internal static class TestRunner
 			Assert(service.Current.CardScale == 0.55, "Minimum card scale was not clamped.");
 			Assert(service.Current.SidebarOpacity == 0.65, "Opacity was not clamped.");
 			Assert(service.Current.IdleAutoHideSeconds == 15, "Idle auto-hide minimum was not clamped.");
+			Assert(service.Current.PreviewRefreshMinutes == 1, "Preview refresh minimum was not clamped.");
 			Assert(service.Current.IgnoredProcesses.Count == 2, "Ignored process names were not normalized.");
 			var reloaded = new SettingsService(path);
 			Assert(reloaded.Current.StageMode == StageMode.Focus, "Enum setting did not persist.");
@@ -344,6 +350,32 @@ internal static class TestRunner
 			"A window card refreshed before the five-minute interval elapsed.");
 		Assert(WindowCapturePolicy.NeedsCapture(capturedAt, capturedAt.AddMinutes(5)),
 			"A window card did not request a five-minute snapshot refresh.");
+		Assert(!WindowCapturePolicy.NeedsCapture(capturedAt, capturedAt.AddMinutes(14).AddSeconds(59), 15),
+			"A custom preview interval refreshed too early.");
+		Assert(WindowCapturePolicy.NeedsCapture(capturedAt, capturedAt.AddMinutes(15), 15),
+			"A custom preview interval did not refresh on time.");
+	}
+
+	private static void SidebarHintFormatting()
+	{
+		Assert(SidebarHintFormatter.Format(true, 60).Contains("1 min", StringComparison.Ordinal),
+			"One-minute idle behavior is not reflected in the sidebar hint.");
+		Assert(SidebarHintFormatter.Format(true, 45).Contains("45 sec", StringComparison.Ordinal),
+			"Sub-minute idle behavior is not reflected in the sidebar hint.");
+		Assert(SidebarHintFormatter.Format(false, 60).Contains("Always visible", StringComparison.Ordinal),
+			"Disabled idle auto-hide still advertises a timeout.");
+	}
+
+	private static void SidebarDisplaySelection()
+	{
+		var displays = new[]
+		{
+			new Rectangle(0, 0, 1920, 1040),
+			new Rectangle(-2560, 100, 2560, 1400),
+			new Rectangle(1920, -200, 1600, 900)
+		};
+		var selected = SidebarDisplayPolicy.SelectLeftmost(displays, area => area);
+		Assert(selected.Left == -2560, "The sidebar did not select the physical leftmost display.");
 	}
 
 	private static void ManagedWindowVisibility()

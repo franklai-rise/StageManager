@@ -10,6 +10,8 @@ internal sealed class SettingsForm : Form
 	private readonly CheckBox _animationsEnabled;
 	private readonly CheckBox _idleAutoHideEnabled;
 	private readonly NumericUpDown _idleSeconds;
+	private readonly NumericUpDown _previewRefreshMinutes;
+	private readonly CheckBox _pausePreviewRefreshWhenHidden;
 	private readonly CheckBox _startWithWindows;
 	private readonly CheckBox _hotkeysEnabled;
 	private readonly TextBox _toggleSidebarHotkey;
@@ -28,14 +30,16 @@ internal sealed class SettingsForm : Form
 		MaximizeBox = false;
 		MinimizeBox = false;
 		AutoScaleMode = AutoScaleMode.Dpi;
-		ClientSize = new Size(620, 805);
+		AutoScroll = true;
+		var workingArea = Screen.FromPoint(Cursor.Position).WorkingArea;
+		ClientSize = new Size(620, Math.Min(855, Math.Max(620, workingArea.Height - 80)));
 		BackColor = Color.FromArgb(24, 26, 31);
 		ForeColor = Color.FromArgb(244, 246, 250);
 		Font = new Font("Segoe UI", 10f);
 
 		Controls.Add(new Label
 		{
-			Text = "Stage_Manager_Lai v2.3.8",
+			Text = "Stage_Manager_Lai v2.4.0",
 			Font = new Font("Segoe UI", 17f, FontStyle.Bold),
 			AutoSize = true,
 			Location = new Point(22, 18)
@@ -61,7 +65,7 @@ internal sealed class SettingsForm : Form
 		_animationsEnabled = CreateCheckBox("Use animations", draft.AnimationsEnabled, 18, 82, 220);
 		appearanceGroup.Controls.AddRange(new Control[] { _cardSizeSlider, _cardSizeValue, _animationsEnabled });
 
-		var behaviorGroup = CreateGroup("Behavior", new Rectangle(20, 203, 580, 122));
+		var behaviorGroup = CreateGroup("Behavior", new Rectangle(20, 203, 580, 166));
 		_idleAutoHideEnabled = CreateCheckBox("Auto-hide after no pointer activity", draft.IdleAutoHideEnabled, 18, 31, 300);
 		behaviorGroup.Controls.Add(_idleAutoHideEnabled);
 		behaviorGroup.Controls.Add(CreateLabel("Idle delay", 325, 33, 78));
@@ -75,11 +79,32 @@ internal sealed class SettingsForm : Form
 			Size = new Size(75, 30)
 		};
 		behaviorGroup.Controls.Add(_idleSeconds);
+		_idleSeconds.Enabled = _idleAutoHideEnabled.Checked;
+		_idleAutoHideEnabled.CheckedChanged += (_, _) => _idleSeconds.Enabled = _idleAutoHideEnabled.Checked;
 		behaviorGroup.Controls.Add(CreateLabel("seconds", 490, 33, 65));
 		_startWithWindows = CreateCheckBox("Start with Windows", draft.StartWithWindows, 18, 76, 220);
 		behaviorGroup.Controls.Add(_startWithWindows);
+		behaviorGroup.Controls.Add(CreateLabel("Preview refresh", 325, 78, 112));
+		_previewRefreshMinutes = new NumericUpDown
+		{
+			Minimum = 1,
+			Maximum = 60,
+			Value = Math.Clamp(draft.PreviewRefreshMinutes, 1, 60),
+			Increment = 1,
+			Location = new Point(440, 74),
+			Size = new Size(65, 30)
+		};
+		behaviorGroup.Controls.Add(_previewRefreshMinutes);
+		behaviorGroup.Controls.Add(CreateLabel("min", 510, 78, 45));
+		_pausePreviewRefreshWhenHidden = CreateCheckBox(
+			"Pause preview refresh while the sidebar is hidden",
+			draft.PausePreviewRefreshWhenHidden,
+			18,
+			116,
+			430);
+		behaviorGroup.Controls.Add(_pausePreviewRefreshWhenHidden);
 
-		var shortcutsGroup = CreateGroup("Keyboard shortcuts", new Rectangle(20, 335, 580, 190));
+		var shortcutsGroup = CreateGroup("Keyboard shortcuts", new Rectangle(20, 379, 580, 190));
 		_hotkeysEnabled = CreateCheckBox("Enable global shortcuts", draft.HotkeysEnabled, 18, 28, 260);
 		shortcutsGroup.Controls.Add(_hotkeysEnabled);
 		shortcutsGroup.Controls.Add(CreateLabel("Show / hide sidebar", 18, 70, 180));
@@ -90,8 +115,7 @@ internal sealed class SettingsForm : Form
 		_nextStageHotkey = CreateTextBox(draft.NextStageHotkey, 205, 142, 330);
 		shortcutsGroup.Controls.AddRange(new Control[] { _toggleSidebarHotkey, _previousStageHotkey, _nextStageHotkey });
 
-		var ignoredGroup = CreateGroup("Ignored applications", new Rectangle(20, 535, 580, 112));
-		ignoredGroup.Bounds = new Rectangle(20, 535, 580, 192);
+		var ignoredGroup = CreateGroup("Ignored applications", new Rectangle(20, 579, 580, 192));
 		ignoredGroup.Controls.Add(CreateLabel("Check a running app to hide it; no .exe name is required.", 18, 25, 540));
 		_ignoredApplications = new CheckedListBox
 		{
@@ -128,17 +152,24 @@ internal sealed class SettingsForm : Form
 		{
 			Text = "Cancel",
 			DialogResult = DialogResult.Cancel,
-			Location = new Point(412, 755),
+			Location = new Point(412, 805),
 			Size = new Size(88, 34)
 		};
+		var resetButton = new Button
+		{
+			Text = "Reset defaults",
+			Location = new Point(20, 805),
+			Size = new Size(120, 34)
+		};
+		resetButton.Click += (_, _) => ResetDefaults();
 		var saveButton = new Button
 		{
 			Text = "Save",
-			Location = new Point(510, 755),
+			Location = new Point(510, 805),
 			Size = new Size(88, 34)
 		};
 		saveButton.Click += SaveButton_Click;
-		Controls.AddRange(new Control[] { appearanceGroup, behaviorGroup, shortcutsGroup, ignoredGroup, cancelButton, saveButton });
+		Controls.AddRange(new Control[] { appearanceGroup, behaviorGroup, shortcutsGroup, ignoredGroup, resetButton, cancelButton, saveButton });
 		AcceptButton = saveButton;
 		CancelButton = cancelButton;
 		UpdateCardSizeLabel();
@@ -168,6 +199,8 @@ internal sealed class SettingsForm : Form
 		Draft.AnimationsEnabled = _animationsEnabled.Checked;
 		Draft.IdleAutoHideEnabled = _idleAutoHideEnabled.Checked;
 		Draft.IdleAutoHideSeconds = (int)_idleSeconds.Value;
+		Draft.PreviewRefreshMinutes = (int)_previewRefreshMinutes.Value;
+		Draft.PausePreviewRefreshWhenHidden = _pausePreviewRefreshWhenHidden.Checked;
 		Draft.StartWithWindows = _startWithWindows.Checked;
 		Draft.HotkeysEnabled = _hotkeysEnabled.Checked;
 		Draft.ToggleSidebarHotkey = _toggleSidebarHotkey.Text.Trim();
@@ -225,4 +258,22 @@ internal sealed class SettingsForm : Form
 	};
 
 	private void UpdateCardSizeLabel() => _cardSizeValue.Text = $"{_cardSizeSlider.Value}%";
+
+	private void ResetDefaults()
+	{
+		_cardSizeSlider.Value = 60;
+		_animationsEnabled.Checked = true;
+		_idleAutoHideEnabled.Checked = true;
+		_idleSeconds.Value = 60;
+		_previewRefreshMinutes.Value = 5;
+		_pausePreviewRefreshWhenHidden.Checked = true;
+		_startWithWindows.Checked = true;
+		_hotkeysEnabled.Checked = true;
+		_toggleSidebarHotkey.Text = "Win+Alt+S";
+		_previousStageHotkey.Text = "Win+Alt+[";
+		_nextStageHotkey.Text = "Win+Alt+]";
+		for (var index = 0; index < _ignoredApplications.Items.Count; index++)
+			_ignoredApplications.SetItemChecked(index, false);
+		_ignoredProcesses.Clear();
+	}
 }
