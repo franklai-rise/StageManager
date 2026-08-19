@@ -17,6 +17,7 @@ namespace StageManager.Native.PInvoke
         public enum GW : uint
         {
             GW_OWNER = 4,
+			GW_ENABLEDPOPUP = 6,
         }
 
         public enum GA : uint
@@ -41,6 +42,10 @@ namespace StageManager.Native.PInvoke
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool IsWindowVisible(IntPtr hWnd);
+
+		[DllImport("user32.dll")]
+		[return: MarshalAs(UnmanagedType.Bool)]
+		public static extern bool IsWindowEnabled(IntPtr hWnd);
 
         [DllImport("user32.dll")]
         public static extern bool GetWindowRect(IntPtr hwnd, ref Rect rectangle);
@@ -222,9 +227,6 @@ namespace StageManager.Native.PInvoke
 		public static extern IntPtr SetActiveWindow(IntPtr hWnd);
 
         [DllImport("user32.dll")]
-        public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
-
-        [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool AllowSetForegroundWindow(int processId);
 
@@ -237,6 +239,31 @@ namespace StageManager.Native.PInvoke
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern IntPtr SetFocus(IntPtr hWnd);
+
+		[Flags]
+		public enum FlashWindowFlags : uint
+		{
+			Stop = 0,
+			Caption = 0x00000001,
+			Tray = 0x00000002,
+			All = Caption | Tray,
+			Timer = 0x00000004,
+			TimerNoForeground = 0x0000000C,
+		}
+
+		[StructLayout(LayoutKind.Sequential)]
+		public struct FLASHWINFO
+		{
+			public uint cbSize;
+			public IntPtr hwnd;
+			public FlashWindowFlags dwFlags;
+			public uint uCount;
+			public uint dwTimeout;
+		}
+
+		[DllImport("user32.dll")]
+		[return: MarshalAs(UnmanagedType.Bool)]
+		public static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
 
 
         [DllImport("user32.dll")]

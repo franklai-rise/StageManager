@@ -116,7 +116,7 @@ public sealed class WindowsWindow : IWindow
 	{
 		if (!IsFocused && Win32.IsWindow(_handle))
 		{
-			if (Win32Helper.ForceForegroundWindow(_handle))
+			if (FocusStealer.Steal(_handle))
 				WindowFocused?.Invoke(this);
 			else
 				AppLogger.Warn($"Foreground activation was rejected for {ProcessName} window {_handle} ({Title}).");
