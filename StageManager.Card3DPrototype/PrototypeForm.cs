@@ -1,5 +1,6 @@
 using StageManager.Services;
 using StageManager.Settings;
+using StageManager.Card3DPrototype.Commands;
 using Microsoft.Win32;
 using System.Drawing.Drawing2D;
 using System.Numerics;
@@ -29,6 +30,7 @@ internal sealed class PrototypeForm : Form
 	private readonly ToolTip _toolTip = new() { InitialDelay = 450, ReshowDelay = 100, AutoPopDelay = 3000, ShowAlways = true };
 	private readonly ContextMenuStrip _contextMenu = new();
 	private readonly ContextMenuStrip _cardContextMenu = new();
+	private readonly AppCommandDispatcher _commands;
 	private readonly HashSet<int> _registeredHotkeys = new();
 	private Screen _sidebarDisplay;
 	private Rectangle _sidebarScreenBounds;
@@ -51,6 +53,8 @@ internal sealed class PrototypeForm : Form
 
 	public PrototypeForm()
 	{
+		_commands = new AppCommandDispatcher(this);
+		RegisterCommands();
 		Text = "Stage_Manager_Lai";
 		FormBorderStyle = FormBorderStyle.None;
 		ShowInTaskbar = false;
@@ -62,13 +66,13 @@ internal sealed class PrototypeForm : Form
 		SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
 
 		var toggleItem = new ToolStripMenuItem("Show / Hide sidebar");
-		toggleItem.Click += (_, _) => ToggleSidebarVisibility();
+		toggleItem.Click += (_, _) => _commands.Execute(new(AppCommandKind.ToggleSidebar));
 		var settingsItem = new ToolStripMenuItem("Settings...");
-		settingsItem.Click += (_, _) => ShowSettings();
+		settingsItem.Click += (_, _) => _commands.Execute(new(AppCommandKind.OpenSettings));
 		var refreshItem = new ToolStripMenuItem("Refresh all previews now");
-		refreshItem.Click += (_, _) => _renderer?.RefreshAllPreviews();
+		refreshItem.Click += (_, _) => _commands.Execute(new(AppCommandKind.RefreshAllPreviews));
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
-		exitItem.Click += (_, _) => Close();
+		exitItem.Click += (_, _) => _commands.Execute(new(AppCommandKind.Exit));
 		_contextMenu.Items.Add(new ToolStripMenuItem(AppVersionInfo.DisplayName) { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
@@ -240,12 +244,12 @@ internal sealed class PrototypeForm : Form
 			UpdateWindowRegion(true);
 		if (_renderer.ConsumeSidebarCollapseRequest())
 		{
-			SetSidebarVisible(false);
+			_commands.Execute(new(AppCommandKind.HideSidebar));
 			return;
 		}
 		if (window is null)
 			return;
-		ActivateSelectedWindow(window, allowMinimize: true);
+		_commands.Execute(new(AppCommandKind.ActivateWindow, Window: window, AllowMinimize: true));
 		BeginInvoke(new Action(RefreshStages));
 	}
 
@@ -305,13 +309,13 @@ internal sealed class PrototypeForm : Form
 			switch (message.WParam.ToInt32())
 			{
 				case ToggleSidebarHotkeyId:
-					ToggleSidebarVisibility();
+					_commands.Execute(new(AppCommandKind.ToggleSidebar));
 					break;
 				case PreviousStageHotkeyId:
-					ActivateRelativeStage(-1);
+					_commands.Execute(new(AppCommandKind.PreviousStage));
 					break;
 				case NextStageHotkeyId:
-					ActivateRelativeStage(1);
+					_commands.Execute(new(AppCommandKind.NextStage));
 					break;
 			}
 			message.Result = IntPtr.Zero;
@@ -347,6 +351,7 @@ internal sealed class PrototypeForm : Form
 		_regionCollapseTimer.Dispose();
 		_displayChangeTimer.Dispose();
 		_previewReleaseTimer.Dispose();
+		_commands.Dispose();
 		_toolTip.Dispose();
 		_contextMenu.Dispose();
 		_cardContextMenu.Dispose();
@@ -447,7 +452,7 @@ internal sealed class PrototypeForm : Form
 		if (target.Window is { } window)
 		{
 			var activateItem = new ToolStripMenuItem("Bring this window to front");
-			activateItem.Click += (_, _) => ActivateSelectedWindow(window, allowMinimize: false);
+			activateItem.Click += (_, _) => _commands.Execute(new(AppCommandKind.ActivateWindow, Window: window));
 			_cardContextMenu.Items.Add(activateItem);
 
 			var recoverItem = new ToolStripMenuItem("Recover to this display")
@@ -464,7 +469,7 @@ internal sealed class PrototypeForm : Form
 		}
 
 		var refreshItem = new ToolStripMenuItem("Refresh preview now");
-		refreshItem.Click += (_, _) => _renderer.RefreshStagePreviews(target.StageKey);
+		refreshItem.Click += (_, _) => _commands.Execute(new(AppCommandKind.RefreshStagePreviews, StageKey: target.StageKey));
 		_cardContextMenu.Items.Add(refreshItem);
 		var processNames = (stage?.Windows ?? Array.Empty<StageManager.Native.Window.IWindow>())
 			.Select(window => window.ProcessName)
@@ -513,6 +518,28 @@ internal sealed class PrototypeForm : Form
 		RegisterHotkey(ToggleSidebarHotkeyId, settings.ToggleSidebarHotkey);
 		RegisterHotkey(PreviousStageHotkeyId, settings.PreviousStageHotkey);
 		RegisterHotkey(NextStageHotkeyId, settings.NextStageHotkey);
+	}
+
+	private void RegisterCommands()
+	{
+		_commands.Register(AppCommandKind.ToggleSidebar, _ => ToggleSidebarVisibility());
+		_commands.Register(AppCommandKind.ShowSidebar, _ => SetSidebarVisible(true));
+		_commands.Register(AppCommandKind.HideSidebar, _ => SetSidebarVisible(false));
+		_commands.Register(AppCommandKind.OpenSettings, _ => ShowSettings());
+		_commands.Register(AppCommandKind.RefreshAllPreviews, _ => _renderer?.RefreshAllPreviews());
+		_commands.Register(AppCommandKind.RefreshStagePreviews, request =>
+		{
+			if (!string.IsNullOrWhiteSpace(request.StageKey))
+				_renderer?.RefreshStagePreviews(request.StageKey);
+		});
+		_commands.Register(AppCommandKind.ActivateWindow, request =>
+		{
+			if (request.Window is not null)
+				ActivateSelectedWindow(request.Window, request.AllowMinimize);
+		});
+		_commands.Register(AppCommandKind.PreviousStage, _ => ActivateRelativeStage(-1));
+		_commands.Register(AppCommandKind.NextStage, _ => ActivateRelativeStage(1));
+		_commands.Register(AppCommandKind.Exit, _ => Close());
 	}
 
 	private void RegisterHotkey(int id, string gesture)
@@ -833,7 +860,7 @@ internal sealed class PrototypeForm : Form
 		_trayIcon.MouseClick += (_, eventArgs) =>
 		{
 			if (eventArgs.Button == MouseButtons.Left)
-				ToggleSidebarVisibility();
+				_commands.Execute(new(AppCommandKind.ToggleSidebar));
 		};
 	}
 }
