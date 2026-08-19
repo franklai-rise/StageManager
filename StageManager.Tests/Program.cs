@@ -1,3 +1,4 @@
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 using StageManager;
 using StageManager.Card3DPrototype;
 using StageManager.Model;
@@ -8,41 +9,11 @@ using System.Drawing;
 using System.IO;
 using System.Numerics;
 
-return TestRunner.Run();
-
-internal static class TestRunner
+[TestClass]
+public sealed class StageManagerTests
 {
-	private static int _failures;
-
-	public static int Run()
-	{
-		RunTest("Stage groups multiple applications and rejects duplicate handles", StageGrouping);
-		RunTest("Stage window cycling is deterministic", StageCycling);
-		RunTest("Composite preview exposes three thumbnails and overflow count", CompositePreview);
-		RunTest("Adaptive cards fit or scroll at 2, 6, 10, and 20 stages", AdaptiveCards);
-		RunTest("Settings are normalized and persisted atomically", SettingsPersistence);
-		RunTest("Default and custom hotkeys parse", HotkeyParsing);
-		RunTest("3D projection recedes toward the left edge", PerspectiveProjection);
-		RunTest("Collapsed cards retain subtle hover feedback without expanding", CollapsedHoverFeedback);
-		RunTest("Expanded multi-window cards form a full vertical child list", SubtleHoverProjection);
-		RunTest("Capture fallback produces a light gray placeholder card", CaptureFallback);
-		RunTest("Prototype stage slots do not jump after activation", PrototypeStageSlotsStayStable);
-		RunTest("Prototype card click toggles only the selected foreground window", PrototypeClickToggle);
-		RunTest("Multi-window child selection stays expanded until the primary card is clicked", MultiWindowCardClicking);
-		RunTest("Expanded application groups keep every real window available", ExpandedApplicationGroupPaging);
-		RunTest("Application group cards render a white logo surface", ApplicationGroupCardRendering);
-		RunTest("Window cards respect the configured preview schedule", InitialCapturePolicy);
-		RunTest("Sidebar hint reflects the configured idle behavior", SidebarHintFormatting);
-		RunTest("Sidebar display selection follows the physical left edge", SidebarDisplaySelection);
-		RunTest("Tray-hidden windows leave the sidebar while taskbar-minimized windows remain", ManagedWindowVisibility);
-		RunTest("Off-screen recovery preserves visible windows and centers only lost windows", OffscreenRecoveryGeometry);
-		RunTest("Idle auto-hide waits one minute and wakes at the left edge", IdleAutoHideBehavior);
-		RunTest("Full-screen or maximized sidebar reveals at the edge and hides after pointer leave", LargeWindowTransientSidebar);
-		Console.WriteLine(_failures == 0 ? "All Stage_Manager_Lai tests passed." : $"{_failures} test(s) failed.");
-		return _failures == 0 ? 0 : 1;
-	}
-
-	private static void StageGrouping()
+	[TestMethod]
+	public void StageGrouping()
 	{
 		var wechat = new FakeWindow(1, "WeChat", "wechat.exe");
 		var codex = new FakeWindow(2, "Codex", "Codex.exe");
@@ -56,7 +27,8 @@ internal static class TestRunner
 		Assert(stage.WindowCount == 1 && stage.Windows[0].Handle == codex.Handle, "Removing a window damaged the stage.");
 	}
 
-	private static void StageCycling()
+	[TestMethod]
+	public void StageCycling()
 	{
 		var first = new FakeWindow(10, "A", "a.exe");
 		var second = new FakeWindow(11, "B", "b.exe");
@@ -66,7 +38,8 @@ internal static class TestRunner
 		Assert(stage.GetNextWindow()?.Handle == first.Handle, "Cycle did not wrap.");
 	}
 
-	private static void CompositePreview()
+	[TestMethod]
+	public void CompositePreview()
 	{
 		var windows = Enumerable.Range(1, 5).Select(index => (IWindow)new FakeWindow(index, $"App{index}", $"app{index}.exe")).ToArray();
 		var model = SceneModel.FromStage(new Stage("preview", windows));
@@ -81,7 +54,8 @@ internal static class TestRunner
 			"Flat-card metadata was not restored.");
 	}
 
-	private static void AdaptiveCards()
+	[TestMethod]
+	public void AdaptiveCards()
 	{
 		foreach (var count in new[] { 2, 6, 10, 20 })
 		{
@@ -102,7 +76,8 @@ internal static class TestRunner
 		Assert(CardLayoutCalculator.Calculate(900, 20, 1).RequiresScrolling, "Twenty stages should scroll after reaching minimum size.");
 	}
 
-	private static void SettingsPersistence()
+	[TestMethod]
+	public void SettingsPersistence()
 	{
 		var directory = Path.Combine(Path.GetTempPath(), "StageManagerTests", Guid.NewGuid().ToString("N"));
 		var path = Path.Combine(directory, "settings.json");
@@ -168,7 +143,8 @@ internal static class TestRunner
 		}
 	}
 
-	private static void HotkeyParsing()
+	[TestMethod]
+	public void HotkeyParsing()
 	{
 		foreach (var gesture in new[] { "Win+Alt+S", "Win+Alt+[", "Win+Alt+]", "Ctrl+Shift+F12" })
 			Assert(HotkeyManager.TryParse(gesture, out _, out _), $"Valid hotkey '{gesture}' was rejected.");
@@ -176,7 +152,8 @@ internal static class TestRunner
 		Assert(!HotkeyManager.TryParse("Win+Magic+S", out _, out _), "Unknown modifier should be rejected.");
 	}
 
-	private static void PerspectiveProjection()
+	[TestMethod]
+	public void PerspectiveProjection()
 	{
 		var cardSize = new Vector2(196 * 0.65f, 122 * 0.65f);
 		var pivot = new Vector2(cardSize.X * 0.88f, cardSize.Y * 0.5f);
@@ -198,7 +175,8 @@ internal static class TestRunner
 		Assert(!Card3DGeometry.Contains(polygon, new Vector2(-1000, -1000)), "Projected-card hit testing accepted an outside point.");
 	}
 
-	private static void SubtleHoverProjection()
+	[TestMethod]
+	public void SubtleHoverProjection()
 	{
 		var cardSize = new Vector2(196 * 0.65f, 122 * 0.65f);
 		var pivot = new Vector2(cardSize.X * 0.88f, cardSize.Y * 0.5f);
@@ -246,7 +224,8 @@ internal static class TestRunner
 		Assert(hoveredTransform.Offset.Z >= 20f, "Hovered card does not rise clearly above the stack.");
 	}
 
-	private static void CollapsedHoverFeedback()
+	[TestMethod]
+	public void CollapsedHoverFeedback()
 	{
 		var normal = Card3DGeometry.CreateCollapsedStackTransform(0, false, 1f);
 		var hovered = Card3DGeometry.CreateCollapsedStackTransform(0, true, 1f);
@@ -256,7 +235,8 @@ internal static class TestRunner
 			"Collapsed hover scaling is missing or too aggressive.");
 	}
 
-	private static void CaptureFallback()
+	[TestMethod]
+	public void CaptureFallback()
 	{
 		using var capture = new WindowFrameCapture();
 		using var frame = capture.Capture(new FakeWindow(0, "Missing", "missing.exe"), 254, 158, "+2");
@@ -269,7 +249,8 @@ internal static class TestRunner
 			"Placeholder does not paint a visible light gray card background.");
 	}
 
-	private static void PrototypeStageSlotsStayStable()
+	[TestMethod]
+	public void PrototypeStageSlotsStayStable()
 	{
 		var slots = new StableStageOrder();
 		var baseline = new[]
@@ -291,7 +272,8 @@ internal static class TestRunner
 		Assert(string.Concat(stable.Select(stage => stage.Key)) == "ABC", "Activation reordered card slots under the pointer.");
 	}
 
-	private static void PrototypeClickToggle()
+	[TestMethod]
+	public void PrototypeClickToggle()
 	{
 		var selected = new IntPtr(101);
 		Assert(WindowClickBehavior.Decide(selected, selected, false, true) == WindowClickAction.Minimize,
@@ -304,7 +286,8 @@ internal static class TestRunner
 			"A destroyed window should not trigger another application.");
 	}
 
-	private static void MultiWindowCardClicking()
+	[TestMethod]
+	public void MultiWindowCardClicking()
 	{
 		Assert(MultiWindowCardInteraction.Decide(1, false, true) == MultiWindowCardClickAction.SelectWindow,
 			"A single-window card did not remain a direct selection.");
@@ -316,7 +299,8 @@ internal static class TestRunner
 			"Clicking the expanded primary card did not collapse the child list.");
 	}
 
-	private static void ExpandedApplicationGroupPaging()
+	[TestMethod]
+	public void ExpandedApplicationGroupPaging()
 	{
 		var windows = Enumerable.Range(101, 8).Select(value => new IntPtr(value)).ToArray();
 		var firstPage = MultiWindowCardInteraction.CreateExpandedChildPage(windows, 0, 5);
@@ -330,7 +314,8 @@ internal static class TestRunner
 			"The synthetic application card displaced a real window from the expanded group.");
 	}
 
-	private static void ApplicationGroupCardRendering()
+	[TestMethod]
+	public void ApplicationGroupCardRendering()
 	{
 		using var capture = new WindowFrameCapture();
 		using var frame = capture.CaptureApplicationCard(new FakeWindow(0, "Example", "missing.exe"), 254, 158);
@@ -342,7 +327,8 @@ internal static class TestRunner
 			"The synthetic application card does not have a white background.");
 	}
 
-	private static void InitialCapturePolicy()
+	[TestMethod]
+	public void InitialCapturePolicy()
 	{
 		var capturedAt = new DateTime(2026, 8, 11, 12, 0, 0, DateTimeKind.Utc);
 		Assert(WindowCapturePolicy.NeedsCapture(DateTime.MinValue, capturedAt),
@@ -357,7 +343,8 @@ internal static class TestRunner
 			"A custom preview interval did not refresh on time.");
 	}
 
-	private static void SidebarHintFormatting()
+	[TestMethod]
+	public void SidebarHintFormatting()
 	{
 		Assert(SidebarHintFormatter.Format(true, 60).Contains("1 min", StringComparison.Ordinal),
 			"One-minute idle behavior is not reflected in the sidebar hint.");
@@ -367,7 +354,8 @@ internal static class TestRunner
 			"Disabled idle auto-hide still advertises a timeout.");
 	}
 
-	private static void SidebarDisplaySelection()
+	[TestMethod]
+	public void SidebarDisplaySelection()
 	{
 		var displays = new[]
 		{
@@ -379,14 +367,16 @@ internal static class TestRunner
 		Assert(selected.Left == -2560, "The sidebar did not select the physical leftmost display.");
 	}
 
-	private static void ManagedWindowVisibility()
+	[TestMethod]
+	public void ManagedWindowVisibility()
 	{
 		Assert(ManagedWindowPresence.ShouldDisplay(true, false), "A visible background window was removed from the sidebar.");
 		Assert(ManagedWindowPresence.ShouldDisplay(false, true), "A taskbar-minimized window was removed from the sidebar.");
 		Assert(!ManagedWindowPresence.ShouldDisplay(false, false), "A tray-hidden background window remained in the sidebar.");
 	}
 
-	private static void OffscreenRecoveryGeometry()
+	[TestMethod]
+	public void OffscreenRecoveryGeometry()
 	{
 		var workAreas = new[]
 		{
@@ -407,7 +397,8 @@ internal static class TestRunner
 			"The recovered window was not centered while preserving its normal size.");
 	}
 
-	private static void IdleAutoHideBehavior()
+	[TestMethod]
+	public void IdleAutoHideBehavior()
 	{
 		var now = new DateTime(2026, 8, 10, 12, 0, 0, DateTimeKind.Utc);
 		Assert(!SidebarIdleBehavior.ShouldHide(true, 60, now.AddSeconds(-59), now), "Sidebar hid before one idle minute elapsed.");
@@ -418,7 +409,8 @@ internal static class TestRunner
 		Assert(!SidebarIdleBehavior.IsNearLeftEdge(new Point(20, 500), screen, 8), "Left-edge activation zone is wider than requested.");
 	}
 
-	private static void LargeWindowTransientSidebar()
+	[TestMethod]
+	public void LargeWindowTransientSidebar()
 	{
 		var now = new DateTime(2026, 8, 10, 12, 0, 0, DateTimeKind.Utc);
 		Assert(TransientSidebarBehavior.Decide(true, false, true, false, DateTime.MinValue, now) == TransientSidebarAction.Reveal,
@@ -433,24 +425,9 @@ internal static class TestRunner
 			"Large-window behavior changed the normal sidebar edge policy.");
 	}
 
-	private static void RunTest(string name, Action test)
-	{
-		try
-		{
-			test();
-			Console.WriteLine($"PASS: {name}");
-		}
-		catch (Exception ex)
-		{
-			_failures++;
-			Console.WriteLine($"FAIL: {name}{Environment.NewLine}{ex}");
-		}
-	}
-
 	private static void Assert(bool condition, string message)
 	{
-		if (!condition)
-			throw new InvalidOperationException(message);
+		Microsoft.VisualStudio.TestTools.UnitTesting.Assert.IsTrue(condition, message);
 	}
 }
 
