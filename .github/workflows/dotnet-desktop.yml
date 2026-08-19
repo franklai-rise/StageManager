@@ -1,109 +1,134 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
-# This workflow will build, test, sign and package a WPF or Windows Forms desktop application
-# built on .NET Core.
-# To learn how to migrate your existing application to .NET Core,
-# refer to https://docs.microsoft.com/en-us/dotnet/desktop-wpf/migration/convert-project-from-net-framework
-#
-# To configure this workflow:
-#
-# 1. Configure environment variables
-# GitHub sets default environment variables for every workflow run.
-# Replace the variables relative to your project in the "env" section below.
-#
-# 2. Signing
-# Generate a signing certificate in the Windows Application
-# Packaging Project or add an existing signing certificate to the project.
-# Next, use PowerShell to encode the .pfx file using Base64 encoding
-# by running the following Powershell script to generate the output string:
-#
-# $pfx_cert = Get-Content '.\SigningCertificate.pfx' -Encoding Byte
-# [System.Convert]::ToBase64String($pfx_cert) | Out-File 'SigningCertificate_Encoded.txt'
-#
-# Open the output file, SigningCertificate_Encoded.txt, and copy the
-# string inside. Then, add the string to the repo as a GitHub secret
-# and name it "Base64_Encoded_Pfx."
-# For more information on how to configure your signing certificate for
-# this workflow, refer to https://github.com/microsoft/github-actions-for-desktop-apps#signing
-#
-# Finally, add the signing certificate password to the repo as a secret and name it "Pfx_Key".
-# See "Build the Windows Application Packaging project" below to see how the secret is used.
-#
-# For more information on GitHub Actions, refer to https://github.com/features/actions
-# For a complete CI/CD sample to get started with GitHub Action workflows for Desktop Applications,
-# refer to https://github.com/microsoft/github-actions-for-desktop-apps
-
-name: .NET Core Desktop
+name: Stage_Manager_Lai CI and Release
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - "**"
+    tags:
+      - "Stage_Manager_Lai_v*"
   pull_request:
-    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+env:
+  SOLUTION_PATH: StageManager.sln
+  APP_PROJECT: StageManager.Card3DPrototype/StageManager.Card3DPrototype.csproj
+  TEST_PROJECT: StageManager.Tests/StageManager.Tests.csproj
+  PUBLISH_DIR: artifacts/publish
 
 jobs:
-
-  build:
-
-    strategy:
-      matrix:
-        configuration: [Release]
-
-    runs-on: windows-latest  # For a list of available runner types, refer to
-                             # https://help.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idruns-on
-
-    env:
-      Solution_Name: StageManager.sln
+  build-test:
+    name: Restore, build, and test
+    runs-on: windows-latest
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v3
-      with:
-        fetch-depth: 0
+      - name: Checkout
+        uses: actions/checkout@v7
 
-    # Semantic Versioning
-    - name: Bump version and push tag
-      id: tag_version
-      uses: mathieudutour/github-tag-action@v5.6
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        default_bump: patch
-        tag_prefix: "" # prefer 0.1 and 0.2 etc over v0.1 and v0.2
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
 
-    # Install the .NET Core workload
-    - name: Install .NET Core
-      uses: actions/setup-dotnet@v3
-      with:
-        dotnet-version: 7.0.x
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore "$env:SOLUTION_PATH"
 
-    # Restore the application to populate the obj folder with RuntimeIdentifiers
-    - name: Restore the solution
-      run: dotnet restore $env:Solution_Name
+      - name: Build
+        shell: pwsh
+        run: dotnet build "$env:SOLUTION_PATH" --configuration Release --no-restore
 
-    # Create the app package by building and packaging the Windows Application Packaging project
-    - name: Build and publish
-      run: dotnet publish --configuration ${{ matrix.configuration }} --output ${{ env.OutputDir }} --self-contained -p:PublishReadyToRun=true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
-      env:
-        OutputDir: ./Artifacts
-        Configuration: ${{ matrix.configuration }}
+      # StageManager.Tests is the repository's executable regression-test harness.
+      - name: Test
+        shell: pwsh
+        run: >-
+          dotnet run
+          --project "$env:TEST_PROJECT"
+          --configuration Release
+          --no-build
+          --no-restore
 
-    # Upload the MSIX package: https://github.com/marketplace/actions/upload-a-build-artifact
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v3
-      with:
-        name: StageManager
-        path: ./Artifacts/StageManager.exe
+  release:
+    name: Publish tagged release
+    if: startsWith(github.ref, 'refs/tags/Stage_Manager_Lai_v')
+    needs: build-test
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_NAME: ${{ github.ref_name }}
 
-    # Create the release:  https://github.com/actions/create-release
-    - name: Create release
-      id: create_release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ steps.tag_version.outputs.new_tag }}
-        name: Release ${{ steps.tag_version.outputs.new_version }}
-        files: ./Artifacts/StageManager.exe
-        draft: false
-        prerelease: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore formal application
+        shell: pwsh
+        run: dotnet restore "$env:APP_PROJECT" --runtime win-x64
+
+      - name: Publish formal application
+        shell: pwsh
+        run: >-
+          dotnet publish "$env:APP_PROJECT"
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --no-restore
+          --output "$env:PUBLISH_DIR"
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=false
+          -p:DebugType=None
+          -p:DebugSymbols=false
+
+      - name: Name release asset and generate SHA256
+        shell: pwsh
+        run: |
+          $assemblyName = (& dotnet msbuild "$env:APP_PROJECT" --nologo -getProperty:AssemblyName).Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($assemblyName)) {
+            throw "Could not resolve the formal application's AssemblyName."
+          }
+
+          $publishedPath = Join-Path $env:PUBLISH_DIR "$assemblyName.exe"
+          $assetName = "$env:RELEASE_NAME.exe"
+          $assetPath = Join-Path $env:PUBLISH_DIR $assetName
+          $checksumPath = "$assetPath.sha256"
+
+          if (-not (Test-Path -LiteralPath $publishedPath -PathType Leaf)) {
+            throw "Published executable was not found: $publishedPath"
+          }
+
+          Move-Item -LiteralPath $publishedPath -Destination $assetPath -Force
+          $hash = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $assetName" | Set-Content -LiteralPath $checksumPath -Encoding ascii
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ github.ref_name }}-win-x64
+          path: |
+            ${{ env.PUBLISH_DIR }}/${{ github.ref_name }}.exe
+            ${{ env.PUBLISH_DIR }}/${{ github.ref_name }}.exe.sha256
+          if-no-files-found: error
+
+      - name: Create GitHub Release and upload assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assetPath = Join-Path $env:PUBLISH_DIR "$env:RELEASE_NAME.exe"
+          $checksumPath = "$assetPath.sha256"
+
+          gh release create "$env:RELEASE_NAME" `
+            "$assetPath" `
+            "$checksumPath" `
+            --repo "${{ github.repository }}" `
+            --verify-tag `
+            --title "$env:RELEASE_NAME" `
+            --generate-notes
