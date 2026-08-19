@@ -3,7 +3,7 @@ using WinRT;
 using Windows.UI.Composition;
 using Windows.UI.Composition.Desktop;
 
-namespace StageManager.Card3DPrototype;
+namespace StageManager.Desktop;
 
 internal static class CompositionInterop
 {

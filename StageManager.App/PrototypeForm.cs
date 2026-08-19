@@ -1,7 +1,7 @@
 using StageManager.Services;
 using StageManager.Settings;
-using StageManager.Card3DPrototype.Commands;
-using StageManager.Card3DPrototype.Lifecycle;
+using StageManager.Desktop.Commands;
+using StageManager.Desktop.Lifecycle;
 using StageManager.Infrastructure;
 using Microsoft.Win32;
 using System.Drawing.Drawing2D;
@@ -10,7 +10,7 @@ using System.Windows.Forms;
 using Windows.UI.Composition;
 using Windows.UI.Composition.Desktop;
 
-namespace StageManager.Card3DPrototype;
+namespace StageManager.Desktop;
 
 internal sealed class PrototypeForm : Form
 {

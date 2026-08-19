@@ -3,7 +3,7 @@ using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
-namespace StageManager.Card3DPrototype;
+namespace StageManager.Desktop;
 
 internal static class OffscreenWindowRecovery
 {

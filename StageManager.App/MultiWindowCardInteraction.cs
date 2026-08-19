@@ -1,4 +1,4 @@
-namespace StageManager.Card3DPrototype;
+namespace StageManager.Desktop;
 
 internal enum MultiWindowCardClickAction
 {

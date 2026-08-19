@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 
-namespace StageManager.Card3DPrototype.Lifecycle;
+namespace StageManager.Desktop.Lifecycle;
 
 public enum SingleInstanceCommand : byte
 {

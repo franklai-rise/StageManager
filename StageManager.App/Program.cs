@@ -1,8 +1,8 @@
-using StageManager.Card3DPrototype.Lifecycle;
+using StageManager.Desktop.Lifecycle;
 using StageManager.Infrastructure;
 using System.Runtime.Versioning;
 
-namespace StageManager.Card3DPrototype;
+namespace StageManager.Desktop;
 
 internal static class Program
 {

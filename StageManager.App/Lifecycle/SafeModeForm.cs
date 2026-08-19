@@ -2,7 +2,7 @@ using StageManager.Infrastructure;
 using StageManager.Settings;
 using System.Diagnostics;
 
-namespace StageManager.Card3DPrototype.Lifecycle;
+namespace StageManager.Desktop.Lifecycle;
 
 /// <summary>
 /// Minimal recovery shell. It deliberately creates no window catalog, capture,

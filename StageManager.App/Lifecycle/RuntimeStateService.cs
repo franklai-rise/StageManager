@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace StageManager.Card3DPrototype.Lifecycle;
+namespace StageManager.Desktop.Lifecycle;
 
 /// <summary>
 /// Describes the persisted outcome of the most recent application session.

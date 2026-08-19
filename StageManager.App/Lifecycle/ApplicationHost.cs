@@ -1,7 +1,7 @@
 using StageManager.Infrastructure;
 using System.Diagnostics;
 
-namespace StageManager.Card3DPrototype.Lifecycle;
+namespace StageManager.Desktop.Lifecycle;
 
 /// <summary>
 /// Owns application-wide startup and shutdown. The visible shell owns its UI

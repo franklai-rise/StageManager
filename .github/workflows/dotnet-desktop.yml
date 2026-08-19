@@ -13,7 +13,7 @@ permissions:
 
 env:
   SOLUTION_PATH: StageManager.sln
-  APP_PROJECT: StageManager.Card3DPrototype/StageManager.Card3DPrototype.csproj
+  APP_PROJECT: StageManager.App/StageManager.App.csproj
   TEST_PROJECT: StageManager.Tests/StageManager.Tests.csproj
   PUBLISH_DIR: artifacts/publish
 

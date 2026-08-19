@@ -1,7 +1,7 @@
 using StageManager.Services;
 using StageManager.Settings;
 
-namespace StageManager.Card3DPrototype;
+namespace StageManager.Desktop;
 
 internal sealed class SettingsForm : Form
 {

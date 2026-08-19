@@ -6,9 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWindowsForms>true</UseWindowsForms>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-	<ApplicationIcon>..\StageManager\StageManager.ico</ApplicationIcon>
-		<AssemblyName>Stage_Manager_Lai</AssemblyName>
-    <RootNamespace>StageManager.Card3DPrototype</RootNamespace>
+	<ApplicationIcon>..\StageManager.Legacy\StageManager.ico</ApplicationIcon>
+	<AssemblyName>Stage_Manager_Lai</AssemblyName>
+    <RootNamespace>StageManager.Desktop</RootNamespace>
 		<Product>Stage_Manager_Lai</Product>
 	<Authors>Andreas Wäscher; Frank Lai (modified fork)</Authors>
 	<Description>Stage Manager for Windows with low-memory 3D window cards, stable click targeting, click-through transparency, and adjustable card sizing.</Description>

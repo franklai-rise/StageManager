@@ -5,7 +5,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using Windows.UI.Composition;
 
-namespace StageManager.Card3DPrototype;
+namespace StageManager.Desktop;
 
 internal sealed class CompositionStageRenderer : IDisposable
 {

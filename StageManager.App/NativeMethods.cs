@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace StageManager.Card3DPrototype;
+namespace StageManager.Desktop;
 
 internal static class NativeMethods
 {

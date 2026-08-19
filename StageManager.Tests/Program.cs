@@ -1,6 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using StageManager;
-using StageManager.Card3DPrototype;
+using StageManager.Desktop;
 using StageManager.Model;
 using StageManager.Native.Window;
 using StageManager.Services;

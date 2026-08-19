@@ -1,6 +1,6 @@
 using System.Reflection;
 
-namespace StageManager.Card3DPrototype;
+namespace StageManager.Desktop;
 
 internal static class AppVersionInfo
 {

@@ -6,7 +6,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 
-namespace StageManager.Card3DPrototype;
+namespace StageManager.Desktop;
 
 internal sealed class CapturedCardFrame : IDisposable
 {

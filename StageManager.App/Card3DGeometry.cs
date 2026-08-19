@@ -1,6 +1,6 @@
 using System.Numerics;
 
-namespace StageManager.Card3DPrototype;
+namespace StageManager.Desktop;
 
 internal readonly record struct CardHoverTransform(Vector3 Offset, Vector3 Scale, float Angle);
 

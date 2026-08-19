@@ -1,7 +1,7 @@
 using StageManager.Infrastructure;
 using StageManager.Native.Window;
 
-namespace StageManager.Card3DPrototype.Commands;
+namespace StageManager.Desktop.Commands;
 
 internal enum AppCommandKind
 {

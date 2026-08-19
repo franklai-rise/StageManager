@@ -8,7 +8,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
-namespace StageManager.Card3DPrototype.Lifecycle;
+namespace StageManager.Desktop.Lifecycle;
 
 public sealed class DiagnosticBundleOptions
 {

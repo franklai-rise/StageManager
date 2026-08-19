@@ -13,7 +13,7 @@
     <PackageReference Include="MSTest.TestFramework" Version="3.6.4" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\StageManager\StageManager.csproj" />
-    <ProjectReference Include="..\StageManager.Card3DPrototype\StageManager.Card3DPrototype.csproj" />
+    <ProjectReference Include="..\StageManager.Legacy\StageManager.Legacy.csproj" />
+    <ProjectReference Include="..\StageManager.App\StageManager.App.csproj" />
   </ItemGroup>
 </Project>

@@ -6,7 +6,7 @@ using Windows.UI.Composition;
 using static Vortice.Direct3D11.D3D11;
 using static Vortice.DXGI.DXGI;
 
-namespace StageManager.Card3DPrototype;
+namespace StageManager.Desktop;
 
 internal sealed class D3DCompositionDevice : IDisposable
 {
