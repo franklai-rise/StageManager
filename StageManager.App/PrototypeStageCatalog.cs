@@ -1,7 +1,9 @@
 using StageManager.Native;
+using StageManager.Native.PInvoke;
 using StageManager.Native.Window;
 using StageManager.Services;
 using StageManager.Settings;
+using StageManager.Threading;
 
 namespace StageManager.Desktop;
 
@@ -9,7 +11,11 @@ internal sealed record PrototypeStageSnapshot(
 	string Key,
 	string Title,
 	IReadOnlyList<IWindow> Windows,
-	DateTime LastActivatedUtc);
+	DateTime LastActivatedUtc,
+	bool IsApplicationGroup,
+	bool IsCurrent,
+	bool IsPinned = false,
+	IReadOnlySet<IntPtr>? PinnedWindowHandles = null);
 
 internal sealed record PrototypeApplicationChoice(
 	string ProcessName,
@@ -25,44 +31,80 @@ internal sealed record PrototypeApplicationChoice(
 	}
 }
 
-internal sealed class PrototypeStageCatalog : IDisposable
+internal interface IWindowCatalog
+{
+	event EventHandler? Changed;
+	SettingsService Settings { get; }
+	Guid CurrentDesktopId { get; }
+	Task StartAsync();
+	void ReevaluateWindows();
+	void CalibrateWindows();
+	IReadOnlyList<PrototypeApplicationChoice> GetApplicationChoices();
+	IReadOnlyList<PrototypeStageSnapshot> GetStages();
+}
+
+internal interface IStageSession
+{
+	bool CanUndo { get; }
+	bool IsPinned(IntPtr handle);
+	Task SwitchToAsync(string stageKey);
+	Task ActivateWindowAsync(string stageKey, IntPtr handle);
+	Task SwitchRelativeAsync(int direction);
+	Task ToggleForegroundWindowAsync();
+	Task MergeStagesAsync(string sourceStageKey, string targetStageKey);
+	Task MoveWindowAsync(IntPtr handle, string targetStageKey);
+	Task ExtractWindowAsync(IntPtr handle);
+	Task UndoAsync();
+	Task TogglePinAsync(IntPtr handle);
+}
+
+/// <summary>
+/// Adapts the event-driven core Stage session to the Composition sidebar. The
+/// historical class name is retained for binary/source compatibility with the
+/// v2.x renderer while its implementation now represents real cross-app stages.
+/// </summary>
+internal sealed class PrototypeStageCatalog : IWindowCatalog, IStageSession, IDisposable
 {
 	private readonly SettingsService _settings;
 	private readonly VirtualDesktopService _virtualDesktops;
 	private readonly WindowsManager _windows;
-	private readonly Dictionary<Guid, Dictionary<string, DateTime>> _lastActivatedByDesktop = new();
-	private readonly Dictionary<Guid, StableStageOrder> _stableStageOrderByDesktop = new();
-	private IntPtr _lastForeground;
+	private readonly SceneManager _sceneManager;
 	private bool _started;
 	private bool _disposed;
 
 	public PrototypeStageCatalog()
 	{
+		var synchronizationContext = SynchronizationContext.Current
+			?? throw new InvalidOperationException("The stage catalog must be created on the Windows Forms UI thread.");
 		_settings = new SettingsService();
 		_virtualDesktops = new VirtualDesktopService();
 		_windows = new WindowsManager(new WindowClassifier(_settings, _virtualDesktops), _virtualDesktops);
-		_windows.WindowCreated += Windows_Changed;
-		_windows.WindowDestroyed += Windows_Changed;
-		_windows.WindowUpdated += Windows_Updated;
-		_windows.WindowFocused += Windows_Focused;
-		_windows.DesktopChanged += Windows_DesktopChanged;
-		_windows.ExternalWindowUpdate += Windows_Changed;
-		_windows.ExternalWindowClosed += Windows_Changed;
+		_sceneManager = new SceneManager(
+			_windows,
+			_settings,
+			_virtualDesktops,
+			new DisplayTopologyService(),
+			new SynchronizationContextUiDispatcher(synchronizationContext));
+		_sceneManager.StageChanged += SceneManager_Changed;
+		_sceneManager.CurrentStageSelectionChanged += SceneManager_Changed;
+		_sceneManager.StagesReset += SceneManager_Changed;
 	}
 
 	public event EventHandler? Changed;
+
+	public SettingsService Settings => _settings;
+	public Guid CurrentDesktopId { get; private set; }
+	public bool CanUndo => _sceneManager.CanUndo;
 
 	public async Task StartAsync()
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		if (_started)
 			return;
-		await _windows.Start().ConfigureAwait(false);
+		await _sceneManager.Start().ConfigureAwait(true);
 		_started = true;
+		UpdateCurrentDesktopId();
 	}
-
-	public SettingsService Settings => _settings;
-	public Guid CurrentDesktopId { get; private set; }
 
 	public void ReevaluateWindows()
 	{
@@ -70,14 +112,20 @@ internal sealed class PrototypeStageCatalog : IDisposable
 		_windows.ReevaluateWindows();
 	}
 
+	public void CalibrateWindows()
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		_windows.CalibrateWindows();
+	}
+
 	public IReadOnlyList<PrototypeApplicationChoice> GetApplicationChoices()
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		var choices = _windows.Windows
-			.Where(window => NativeMethods.IsWindow(window.Handle) &&
+			.Where(window => Win32.IsWindow(window.Handle) &&
 				ManagedWindowPresence.ShouldDisplay(
-					NativeMethods.IsWindowVisible(window.Handle),
-					NativeMethods.IsIconic(window.Handle)) &&
+					Win32.IsWindowVisible(window.Handle),
+					Win32.IsIconic(window.Handle)) &&
 				_virtualDesktops.IsWindowOnCurrentDesktop(window.Handle) &&
 				!string.IsNullOrWhiteSpace(window.ProcessName))
 			.GroupBy(window => window.ProcessName, StringComparer.OrdinalIgnoreCase)
@@ -86,10 +134,10 @@ internal sealed class PrototypeStageCatalog : IDisposable
 				group => new PrototypeApplicationChoice(group.First().ProcessName, group.Count()),
 				StringComparer.OrdinalIgnoreCase);
 
-		foreach (var ignoredProcess in _settings.Current.IgnoredProcesses)
+		foreach (var rule in _settings.Current.ApplicationRules)
 		{
-			if (!choices.ContainsKey(ignoredProcess))
-				choices[ignoredProcess] = new PrototypeApplicationChoice(ignoredProcess, 0);
+			if (!choices.ContainsKey(rule.ApplicationId))
+				choices[rule.ApplicationId] = new PrototypeApplicationChoice(rule.ApplicationId, 0);
 		}
 
 		return choices.Values
@@ -100,68 +148,102 @@ internal sealed class PrototypeStageCatalog : IDisposable
 	public IReadOnlyList<PrototypeStageSnapshot> GetStages()
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
-		var foreground = NativeMethods.GetForegroundWindow();
-		var allWindows = _windows.Windows.ToArray();
-		CurrentDesktopId = _virtualDesktops.GetCurrentDesktopId(allWindows, foreground);
-		if (!_lastActivatedByDesktop.TryGetValue(CurrentDesktopId, out var lastActivatedByApp))
-		{
-			lastActivatedByApp = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
-			_lastActivatedByDesktop.Add(CurrentDesktopId, lastActivatedByApp);
-		}
-		if (!_stableStageOrderByDesktop.TryGetValue(CurrentDesktopId, out var stableStageOrder))
-		{
-			stableStageOrder = new StableStageOrder();
-			_stableStageOrderByDesktop.Add(CurrentDesktopId, stableStageOrder);
-		}
-		var ignoredProcesses = _settings.Current.IgnoredProcesses.ToHashSet(StringComparer.OrdinalIgnoreCase);
-		var candidates = allWindows
-			.Where(window => NativeMethods.IsWindow(window.Handle) &&
-				ManagedWindowPresence.ShouldDisplay(
-					NativeMethods.IsWindowVisible(window.Handle),
-					NativeMethods.IsIconic(window.Handle)) &&
-				_virtualDesktops.IsWindowOnCurrentDesktop(window.Handle) &&
-				!ignoredProcesses.Contains(window.ProcessName))
-			.ToArray();
-		var foregroundWindow = candidates.FirstOrDefault(window => window.Handle == foreground);
-		var foregroundKey = foregroundWindow is null ? null : Stage.GetAppKey(foregroundWindow);
-
-		if (foreground != IntPtr.Zero && foreground != _lastForeground && foregroundKey is not null)
-		{
-			_lastForeground = foreground;
-			lastActivatedByApp[foregroundKey] = DateTime.UtcNow;
-		}
-
-		var now = DateTime.UtcNow;
-		var snapshots = candidates
-			.GroupBy(Stage.GetAppKey, StringComparer.OrdinalIgnoreCase)
-			.Select(group =>
+		UpdateCurrentDesktopId();
+		var currentStageId = _sceneManager.GetCurrentStage()?.Id;
+		return _sceneManager.GetStages()
+			.Select(stage =>
 			{
-				if (!lastActivatedByApp.TryGetValue(group.Key, out var lastActivated))
-				{
-					lastActivated = now.AddSeconds(-lastActivatedByApp.Count - 1);
-					lastActivatedByApp[group.Key] = lastActivated;
-				}
-				var windows = group
+				var windows = stage.Windows
 					.OrderByDescending(window => window.IsFocused)
 					.ThenBy(window => window.IsMinimized)
 					.ThenBy(window => window.Title, StringComparer.CurrentCultureIgnoreCase)
 					.ToArray();
+				var distinctApps = windows.Select(Stage.GetAppKey)
+					.Distinct(StringComparer.OrdinalIgnoreCase)
+					.Count();
+				var pinnedHandles = windows
+					.Where(window => _sceneManager.IsPinnedToAllStages(window.Handle))
+					.Select(window => window.Handle)
+					.ToHashSet();
 				return new PrototypeStageSnapshot(
-					group.Key,
-					string.Join(" + ", windows.Select(window => window.ProcessName).Distinct(StringComparer.OrdinalIgnoreCase)),
+					stage.Id.ToString("N"),
+					stage.Title,
 					windows,
-					lastActivated);
+					stage.LastActivatedUtc,
+					windows.Length > 1 && distinctApps == 1,
+					stage.Id == currentStageId,
+					pinnedHandles.Count > 0,
+					pinnedHandles);
 			})
 			.ToArray();
+	}
 
-		snapshots = stableStageOrder
-			.Apply(snapshots, stage => stage.Key, stage => stage.LastActivatedUtc)
-			.ToArray();
+	public Task SwitchToAsync(string stageKey)
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		return FindStage(stageKey) is { } stage ? _sceneManager.SwitchTo(stage) : Task.CompletedTask;
+	}
 
-		var liveKeys = snapshots.Select(stage => stage.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
-		foreach (var staleKey in lastActivatedByApp.Keys.Where(key => !liveKeys.Contains(key)).ToArray())
-			lastActivatedByApp.Remove(staleKey);
-		return snapshots;
+	public Task ActivateWindowAsync(string stageKey, IntPtr handle)
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		return FindStage(stageKey) is { } stage
+			? _sceneManager.ActivateWindowInStage(stage, handle)
+			: Task.CompletedTask;
+	}
+
+	public Task SwitchRelativeAsync(int direction)
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		return _sceneManager.SwitchRelative(direction);
+	}
+
+	public Task ToggleForegroundWindowAsync()
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		return _sceneManager.ToggleForegroundWindowInCurrentStage();
+	}
+
+	public Task MergeStagesAsync(string sourceStageKey, string targetStageKey)
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		var source = FindStage(sourceStageKey);
+		var target = FindStage(targetStageKey);
+		return source is not null && target is not null
+			? _sceneManager.MergeStages(source, target)
+			: Task.CompletedTask;
+	}
+
+	public Task MoveWindowAsync(IntPtr handle, string targetStageKey)
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		return FindStage(targetStageKey) is { } target
+			? _sceneManager.MoveWindow(handle, target)
+			: Task.CompletedTask;
+	}
+
+	public Task ExtractWindowAsync(IntPtr handle)
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		return _sceneManager.ExtractWindow(handle);
+	}
+
+	public Task UndoAsync()
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		return _sceneManager.UndoLastStageAdjustment();
+	}
+
+	public bool IsPinned(IntPtr handle)
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		return _sceneManager.IsPinnedToAllStages(handle);
+	}
+
+	public Task TogglePinAsync(IntPtr handle)
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		return _sceneManager.TogglePinToAllStages(handle);
 	}
 
 	public void Dispose()
@@ -169,23 +251,25 @@ internal sealed class PrototypeStageCatalog : IDisposable
 		if (_disposed)
 			return;
 		_disposed = true;
-		_windows.WindowCreated -= Windows_Changed;
-		_windows.WindowDestroyed -= Windows_Changed;
-		_windows.WindowUpdated -= Windows_Updated;
-		_windows.WindowFocused -= Windows_Focused;
-		_windows.DesktopChanged -= Windows_DesktopChanged;
-		_windows.ExternalWindowUpdate -= Windows_Changed;
-		_windows.ExternalWindowClosed -= Windows_Changed;
-		_windows.Dispose();
+		_sceneManager.StageChanged -= SceneManager_Changed;
+		_sceneManager.CurrentStageSelectionChanged -= SceneManager_Changed;
+		_sceneManager.StagesReset -= SceneManager_Changed;
+		_sceneManager.Dispose();
+		_virtualDesktops.Dispose();
 	}
 
-	private void Windows_Changed(IWindow window) => Changed?.Invoke(this, EventArgs.Empty);
+	private Stage? FindStage(string stageKey)
+	{
+		if (!Guid.TryParseExact(stageKey, "N", out var id))
+			return null;
+		return _sceneManager.GetStages().FirstOrDefault(stage => stage.Id == id);
+	}
 
-	private void Windows_Changed(IWindow window, bool firstCreate) => Changed?.Invoke(this, EventArgs.Empty);
+	private void UpdateCurrentDesktopId()
+	{
+		var allWindows = _windows.Windows.ToArray();
+		CurrentDesktopId = _virtualDesktops.GetCurrentDesktopId(allWindows, Win32.GetForegroundWindow());
+	}
 
-	private void Windows_Updated(IWindow window, WindowUpdateType updateType) => Changed?.Invoke(this, EventArgs.Empty);
-
-	private void Windows_Focused(IWindow window) => Changed?.Invoke(this, EventArgs.Empty);
-
-	private void Windows_DesktopChanged(object? sender, EventArgs e) => Changed?.Invoke(this, EventArgs.Empty);
+	private void SceneManager_Changed(object? sender, EventArgs e) => Changed?.Invoke(this, EventArgs.Empty);
 }

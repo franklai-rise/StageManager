@@ -4,12 +4,14 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace StageManager.Services;
 
-public sealed class VirtualDesktopService
+public sealed class VirtualDesktopService : IDisposable
 {
-	private readonly IVirtualDesktopManager? _manager;
+	private IVirtualDesktopManager? _manager;
+	private bool _disposed;
 
 	public VirtualDesktopService()
 	{
@@ -68,6 +70,24 @@ public sealed class VirtualDesktopService
 
 		var currentWindow = windows.FirstOrDefault(window => IsWindowOnCurrentDesktop(window.Handle));
 		return currentWindow is null ? Guid.Empty : GetDesktopId(currentWindow.Handle);
+	}
+
+	public void Dispose()
+	{
+		if (_disposed)
+			return;
+		_disposed = true;
+		var manager = Interlocked.Exchange(ref _manager, null);
+		if (manager is null || !Marshal.IsComObject(manager))
+			return;
+		try
+		{
+			Marshal.FinalReleaseComObject(manager);
+		}
+		catch (Exception exception)
+		{
+			AppLogger.Warn($"Virtual desktop COM resources could not be released cleanly: {exception.Message}");
+		}
 	}
 
 	[ComImport]

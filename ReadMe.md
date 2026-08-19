@@ -1,11 +1,11 @@
-# Stage_Manager_Lai v2.5.0
+# Stage_Manager_Lai v3.1.0
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
 [Andreas Wäscher](https://github.com/awaescher). It remains a derivative work under the upstream MIT
 license and is not presented as an original project by the fork maintainer.
 
-`Stage_Manager_Lai_v1.1` remains tagged as the stable pre-v2 baseline.
+`Stage_Manager_Lai_v2.5.0` remains the unchanged stable rollback build while v3.1 completes its burn-in gate.
 
 v2.0.1 makes the sidebar canvas fully transparent while retaining the individual live-preview cards.
 
@@ -110,9 +110,39 @@ on the managed large-object heap. The low-memory renderer uses Windows' software
 large vendor GPU driver into this small utility; it can be disabled in Settings if a particular machine prefers GPU
 rendering. On the development machine, steady private memory fell from roughly 84–104 MB to about 37–40 MB.
 
+v2.6 separates the event-driven core, the formal WinForms/Composition product, and the legacy WPF test shell. It adds
+single-instance activation, crash-loop safe mode, privacy-redacted local diagnostics, deterministic shutdown, .NET 8
+build/test automation, and a self-contained release size below 190 MB.
+
+v2.7 replaces the frequent full-window scan with a bounded WinEvent queue, 33 ms event coalescing, and a 15-second
+repair pass. Window identity now includes process lifetime and handle generation; foreground activation resolves modal
+popups, verifies the result, and flashes the intended taskbar button when Windows refuses focus. Display selection uses
+stable display identities, mixed-DPI changes rebuild card geometry, and each public Windows virtual desktop keeps its
+own ordering and expansion state.
+
+v2.8 isolates `PrintWindow` in a recyclable capture-worker mode of the same executable. Captures have a two-second
+limit, a bounded/coalesced priority queue, a 16-megapixel source guard, and per-application Auto, Snapshot, or IconOnly
+rules. A 16-surface/16-MB rendering pool replaces unbounded per-card resources; LowMemory, Balanced, and Performance
+profiles choose WARP, the low-power adapter, or the high-performance adapter. Device-loss recovery rebuilds card
+resources and falls back to placeholder cards after three consecutive failures.
+
+v3.0 connects the formal 3D interface to real runtime stages. Different applications can share one stage, cards can be
+dragged together, a child window can be dragged out, `Win+Alt+G` adds or removes the foreground window, and the last ten
+stage changes can be undone. Coexist/Focus and AllAtOnce/OneAtATime now affect the formal build, including monitor-aware
+layout restoration and per-virtual-desktop sessions.
+
+v3.1 adds a searchable application/window switcher, runtime-only pinning to every stage, minimized/off-screen/other-
+display/capture-failure card markers, high-contrast colors, system reduced-motion handling, and UI Automation names,
+roles, states, window counts, and actions for the Composition sidebar. Preview scheduling is deadline-driven rather
+than a 350 ms polling loop, rejected shell windows are cached between 15-second calibration passes, mixed-DPI moves
+recreate card surfaces, and display-topology changes recover only genuinely off-screen windows without moving them
+back when a monitor reconnects.
+
 ## What the current 3D build includes
 
-- One stable application group per app, with a synthetic logo card when that app has multiple windows.
+- Runtime task stages that may contain windows from several different applications.
+- Same-application groups retain the synthetic logo card and click-expanded vertical child list.
+- Cross-application stages show up to three real window previews plus an overflow count.
 - Click-expanded vertical child cards for selecting an exact window; larger groups support paging.
 - macOS-inspired native Composition perspective, shadows, hover feedback, and card-shaped click-through.
 - Cards scale from 55% to 125%; long lists scroll without overlap.
@@ -122,10 +152,14 @@ rendering. On the development machine, steady private memory fell from roughly 8
 - Settings, ignored applications, appearance, startup behavior, and shortcuts persist in
   `%LocalAppData%\Stage_Manager_Lai\settings.json`.
 - Explorer folder windows are supported while the desktop, taskbar, notification area, and shell remain protected.
+- A searchable keyboard switcher selects a concrete window by application, title, stage, display, or state.
+- Focus/Coexist and AllAtOnce/OneAtATime modes, drag-to-merge, drag-to-extract, ten-step undo, and runtime pinning.
+- High contrast, reduced motion, card state markers, and screen-reader metadata.
 
 ## Safety rules
 
-Windows Explorer, the taskbar, desktop surfaces, and other Windows shell processes are permanently excluded.
+Windows Explorer's desktop/taskbar shell surfaces and other Windows shell processes are permanently excluded; normal
+File Explorer folder windows remain supported as cards.
 Desktop icons are never hidden or toggled. Tencent Yuanbao is shown normally by default; if its selection-translation
 overlay is distracting, select Yuanbao in Settings > Ignored applications to hide it.
 
@@ -135,6 +169,8 @@ overlay is distracting, select Yuanbao in Settings > Ignored applications to hid
 - Click a multi-window application card to expand or collapse its vertical list, then click an exact child window.
 - Double-click an off-screen window card to recover that window to the display under the pointer.
 - Right-click a card to bring it forward, recover it, refresh its preview, or ignore its application.
+- Drag a stage card onto another stage to merge them; drag a child card out of the sidebar to split it into a new stage.
+- Right-click a concrete window to pin it to all stages for the current run or to move it into its own stage.
 - Click the bottom arrow or use the tray icon/global shortcut to hide or show the sidebar.
 - Left-click the tray icon to toggle the sidebar; its menu also refreshes all previews and opens Settings.
 
@@ -145,9 +181,11 @@ Default shortcuts:
 | Show or hide sidebar | `Win+Alt+S` |
 | Previous stage | `Win+Alt+[` |
 | Next stage | `Win+Alt+]` |
+| Add/remove foreground window from current stage | `Win+Alt+G` |
+| Search applications and windows | `Win+Alt+Space` |
 
-Windows Game Bar can reserve `Win+Alt+G`. When that happens, Stage_Manager_Lai automatically registers
-`Ctrl+Alt+Shift+G` for the current run; shortcuts can be changed in Settings.
+Windows or another application can reserve a shortcut. Stage_Manager_Lai reports that conflict without simulating
+keyboard input; every shortcut can be changed or disabled in Settings.
 
 ## Build and verification
 
@@ -156,7 +194,7 @@ Requirements: Windows 10 version 2004 or newer and the .NET 8 SDK.
 ```powershell
 dotnet restore StageManager.sln
 dotnet build StageManager.sln -c Release
-dotnet run --project StageManager.Tests\StageManager.Tests.csproj -c Release
+dotnet test StageManager.Tests\StageManager.Tests.csproj -c Release
 ```
 
 `RuntimeProbe` is the local integration harness used for rapid window creation and multi-display restoration

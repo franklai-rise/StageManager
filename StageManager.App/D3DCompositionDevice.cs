@@ -63,10 +63,10 @@ internal sealed class D3DCompositionDevice : IDisposable
 	{
 		if (_disposed)
 			return;
-		_context.ClearState();
-		_context.Flush();
 		try
 		{
+			_context.ClearState();
+			_context.Flush();
 			using var dxgiDevice = _device.QueryInterfaceOrNull<IDXGIDevice3>();
 			dxgiDevice?.Trim();
 		}

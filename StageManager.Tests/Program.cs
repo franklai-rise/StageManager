@@ -94,6 +94,7 @@ public sealed class StageManagerTests
 			Assert(service.Current.SchemaVersion == 9, "Settings schema was not upgraded to the render-policy schema.");
 			Assert(service.Current.LowMemoryRendering, "Low-memory rendering should be enabled by default.");
 			Assert(service.Current.RenderProfile == RenderProfile.LowMemory, "Legacy low-memory rendering was not migrated.");
+			Assert(service.Current.WindowSwitcherHotkey == "Win+Alt+Space", "The searchable switcher shortcut default was not migrated.");
 			Assert(!service.Current.IgnoredProcesses.Contains("explorer", StringComparer.OrdinalIgnoreCase),
 				"The legacy default Explorer ignore entry was not migrated.");
 			Assert(!service.Current.IgnoredProcesses.Contains("yuanbao", StringComparer.OrdinalIgnoreCase),
@@ -147,7 +148,7 @@ public sealed class StageManagerTests
 	[TestMethod]
 	public void HotkeyParsing()
 	{
-		foreach (var gesture in new[] { "Win+Alt+S", "Win+Alt+[", "Win+Alt+]", "Ctrl+Shift+F12" })
+		foreach (var gesture in new[] { "Win+Alt+S", "Win+Alt+[", "Win+Alt+]", "Win+Alt+Space", "Ctrl+Shift+F12" })
 			Assert(HotkeyManager.TryParse(gesture, out _, out _), $"Valid hotkey '{gesture}' was rejected.");
 		Assert(!HotkeyManager.TryParse("S", out _, out _), "Modifier-free hotkey should be rejected.");
 		Assert(!HotkeyManager.TryParse("Win+Magic+S", out _, out _), "Unknown modifier should be rejected.");
@@ -479,7 +480,8 @@ internal sealed class FakeWindow : IWindow
 	public bool IsMinimized { get; private set; }
 	public bool IsMaximized => false;
 	public bool IsMouseMoving => false;
-	public void Focus() { IsFocused = true; WindowFocused?.Invoke(this); }
+	public int FocusCount { get; private set; }
+	public void Focus() { FocusCount++; IsFocused = true; WindowFocused?.Invoke(this); }
 	public void ShowNormal() { IsMinimized = false; WindowUpdated?.Invoke(this); }
 	public void ShowMaximized() { IsMinimized = false; WindowUpdated?.Invoke(this); }
 	public void ShowMinimized() { IsMinimized = true; WindowUpdated?.Invoke(this); }

@@ -161,8 +161,8 @@ public sealed class SettingsService
 			normalizedRules[applicationId] = new ApplicationRule
 			{
 				ApplicationId = applicationId,
-				// IgnoredProcesses remains the authoritative compatibility list until
-				// the v3.1 application-rules UI replaces it completely.
+				// IgnoredProcesses remains the compatibility source for the Ignore flag;
+				// the v3.1 rules UI writes both representations atomically.
 				Ignore = false,
 				PreviewMode = Enum.IsDefined(rule.PreviewMode) ? rule.PreviewMode : PreviewMode.Auto
 			};

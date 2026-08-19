@@ -49,6 +49,21 @@ public sealed class DisplayTopologyService
 			zOrder);
 	}
 
+	public IReadOnlyDictionary<IntPtr, int> CaptureZOrder(IEnumerable<IWindow> windows)
+	{
+		var wanted = windows.Select(window => window.Handle).ToHashSet();
+		var result = new Dictionary<IntPtr, int>();
+		var zOrder = 0;
+		Win32.EnumWindows((handle, _) =>
+		{
+			if (wanted.Contains(handle))
+				result[handle] = zOrder;
+			zOrder++;
+			return true;
+		}, IntPtr.Zero);
+		return result;
+	}
+
 	public void Restore(IWindow window, WindowLayoutSnapshot snapshot)
 	{
 		if (!Win32.IsWindow(window.Handle))

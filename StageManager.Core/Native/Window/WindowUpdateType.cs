@@ -9,7 +9,8 @@
         Foreground,
         MoveStart,
         MoveEnd,
-        Move,
+		Move,
 		NameChanged,
+		StyleChanged,
     }
 }

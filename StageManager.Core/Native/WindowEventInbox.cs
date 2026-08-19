@@ -16,6 +16,7 @@ internal sealed class WindowEventInbox
 	public const int DefaultCapacity = 2048;
 
 	private readonly Channel<WindowEventEnvelope> _channel;
+	private readonly SemaphoreSlim _workSignal = new(0, 1);
 	private int _reconcileRequested;
 
 	public WindowEventInbox(int capacity = DefaultCapacity)
@@ -35,13 +36,38 @@ internal sealed class WindowEventInbox
 	public bool TryWrite(WindowEventEnvelope item)
 	{
 		if (_channel.Writer.TryWrite(item))
+		{
+			SignalWork();
 			return true;
+		}
 
 		RequestReconcile();
 		return false;
 	}
 
-	public void RequestReconcile() => Interlocked.Exchange(ref _reconcileRequested, 1);
+	public void RequestReconcile()
+	{
+		Interlocked.Exchange(ref _reconcileRequested, 1);
+		SignalWork();
+	}
+
+	public async Task<bool> WaitForWorkAsync(TimeSpan? timeout, CancellationToken cancellationToken)
+	{
+		if (timeout is null)
+		{
+			await _workSignal.WaitAsync(cancellationToken).ConfigureAwait(false);
+			return true;
+		}
+
+		return await _workSignal.WaitAsync(timeout.Value, cancellationToken).ConfigureAwait(false);
+	}
+
+	public void ClearPendingSignals()
+	{
+		while (_workSignal.Wait(0))
+		{
+		}
+	}
 
 	public WindowEventBatch DrainBatch()
 	{
@@ -53,5 +79,21 @@ internal sealed class WindowEventInbox
 		return WindowEventBatch.Create(events, requiresReconcile);
 	}
 
-	public void Complete() => _channel.Writer.TryComplete();
+	public void Complete()
+	{
+		_channel.Writer.TryComplete();
+		SignalWork();
+	}
+
+	private void SignalWork()
+	{
+		try
+		{
+			_workSignal.Release();
+		}
+		catch (SemaphoreFullException)
+		{
+			// One pending wake-up is enough; the bounded channel retains the work.
+		}
+	}
 }

@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <StageManagerVersion>2.6.0</StageManagerVersion>
+    <StageManagerVersion>3.1.0</StageManagerVersion>
     <Version>$(StageManagerVersion)</Version>
     <AssemblyVersion>$(StageManagerVersion).0</AssemblyVersion>
     <FileVersion>$(StageManagerVersion).0</FileVersion>

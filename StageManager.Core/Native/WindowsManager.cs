@@ -17,15 +17,17 @@ public delegate void WindowDelegate(IWindow window);
 public delegate void WindowCreateDelegate(IWindow window, bool firstCreate);
 public delegate void WindowUpdateDelegate(IWindow window, WindowUpdateType type);
 
-public sealed class WindowsManager : IWindowsManager, IDisposable
+public sealed class WindowsManager : IWindowsManager, IWindowCatalog, IDisposable
 {
 	private const int EventPumpIntervalMilliseconds = 33;
 	private const int DesktopSwitchDelayMilliseconds = 180;
+	private const int RejectedWindowCalibrationDelayMilliseconds = 15 * 60 * 1000;
 	private static readonly int[] RegistrationRetryDelaysMilliseconds = [140, 360, 900, 1800];
 
 	private readonly ConcurrentDictionary<IntPtr, WindowsWindow> _windows = new();
 	private readonly ConcurrentDictionary<IntPtr, WindowInstanceId> _windowInstances = new();
 	private readonly ConcurrentDictionary<IntPtr, WindowGenerationState> _windowGenerations = new();
+	private readonly ConcurrentDictionary<IntPtr, long> _rejectedWindowRetryDue = new();
 	private readonly ConcurrentDictionary<WindowsWindow, bool> _floating = new();
 	private readonly Dictionary<WindowInstanceKey, PendingRegistration> _pendingRegistrations = new();
 	private readonly Dictionary<IntPtr, long> _processedGenerations = new();
@@ -91,6 +93,7 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 				RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_OBJECT_CREATE, Win32.EVENT_CONSTANTS.EVENT_OBJECT_HIDE);
 				RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_OBJECT_CLOAKED, Win32.EVENT_CONSTANTS.EVENT_OBJECT_UNCLOAKED);
 				RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_OBJECT_NAMECHANGE, Win32.EVENT_CONSTANTS.EVENT_OBJECT_NAMECHANGE);
+				RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_OBJECT_STATECHANGE, Win32.EVENT_CONSTANTS.EVENT_OBJECT_STATECHANGE);
 				RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZESTART, Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZEEND);
 				RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MOVESIZESTART, Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MOVESIZEEND);
 				RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_SYSTEM_FOREGROUND, Win32.EVENT_CONSTANTS.EVENT_SYSTEM_FOREGROUND);
@@ -136,6 +139,20 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 		lock (_stateLock)
 		{
 			if (_active)
+			{
+				_rejectedWindowRetryDue.Clear();
+				ReconcileWindowsCore(emitEvent: true);
+			}
+		}
+	}
+
+	public void CalibrateWindows()
+	{
+		if (!_active)
+			return;
+		lock (_stateLock)
+		{
+			if (_active)
 				ReconcileWindowsCore(emitEvent: true);
 		}
 	}
@@ -151,6 +168,19 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 		window = null;
 		return false;
 	}
+
+	public bool TryGetWindowInstanceId(IntPtr handle, out WindowInstanceId instanceId) =>
+		_windowInstances.TryGetValue(handle, out instanceId);
+
+	public Guid GetDesktopId(IWindow window) => window is WindowsWindow concrete
+		? concrete.Identity.VirtualDesktopId
+		: _virtualDesktops.GetDesktopId(window.Handle);
+
+	public bool IsWindowOnCurrentDesktop(IWindow window) =>
+		_virtualDesktops.IsWindowOnCurrentDesktop(window.Handle);
+
+	public Guid GetCurrentDesktopId(IntPtr foregroundHandle) =>
+		_virtualDesktops.GetCurrentDesktopId(Windows, foregroundHandle);
 
 	public IWindowsDeferPosHandle DeferWindowsPos(int count) => new WindowsDeferPosHandle(Win32.BeginDeferWindowPos(count));
 
@@ -218,11 +248,18 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 
 	private async Task RunEventPumpAsync(WindowEventInbox inbox, CancellationToken cancellationToken)
 	{
-		using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(EventPumpIntervalMilliseconds));
 		try
 		{
-			while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+			while (!cancellationToken.IsCancellationRequested)
 			{
+				var deferredDelay = GetNextDeferredOperationDelay();
+				var eventArrived = await inbox.WaitForWorkAsync(deferredDelay, cancellationToken).ConfigureAwait(false);
+				if (eventArrived)
+				{
+					await Task.Delay(EventPumpIntervalMilliseconds, cancellationToken).ConfigureAwait(false);
+					inbox.ClearPendingSignals();
+				}
+
 				var batch = inbox.DrainBatch();
 				try
 				{
@@ -243,6 +280,28 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 		}
 		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{
+		}
+	}
+
+	private TimeSpan? GetNextDeferredOperationDelay()
+	{
+		lock (_stateLock)
+		{
+			if (!_active)
+				return null;
+
+			var nextTimestamp = _desktopSwitchDueTimestamp > 0
+				? _desktopSwitchDueTimestamp
+				: long.MaxValue;
+			foreach (var registration in _pendingRegistrations.Values)
+				nextTimestamp = Math.Min(nextTimestamp, registration.NextAttemptTimestamp);
+			if (nextTimestamp == long.MaxValue)
+				return null;
+
+			var remainingTicks = nextTimestamp - Stopwatch.GetTimestamp();
+			return remainingTicks <= 0
+				? TimeSpan.Zero
+				: TimeSpan.FromSeconds(remainingTicks / (double)Stopwatch.Frequency);
 		}
 	}
 
@@ -288,6 +347,7 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 				ScheduleRegistration(item.InstanceId);
 				break;
 			case WindowEventKind.Destroy:
+				_rejectedWindowRetryDue.TryRemove(item.InstanceId.Handle, out _);
 				CancelRegistrations(item.InstanceId.Handle, item.InstanceId.Generation);
 				UnregisterWindow(item.InstanceId.Handle, item.InstanceId.Generation);
 				ReleaseDestroyedGeneration(item.InstanceId);
@@ -322,6 +382,9 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 				break;
 			case WindowEventKind.NameChanged:
 				UpdateWindow(item.InstanceId, WindowUpdateType.NameChanged);
+				break;
+			case WindowEventKind.StyleChanged:
+				UpdateWindow(item.InstanceId, WindowUpdateType.StyleChanged);
 				break;
 		}
 
@@ -421,6 +484,7 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 			Win32.EVENT_CONSTANTS.EVENT_OBJECT_CLOAKED => WindowEventKind.Cloaked,
 			Win32.EVENT_CONSTANTS.EVENT_OBJECT_UNCLOAKED => WindowEventKind.Uncloaked,
 			Win32.EVENT_CONSTANTS.EVENT_OBJECT_NAMECHANGE => WindowEventKind.NameChanged,
+			Win32.EVENT_CONSTANTS.EVENT_OBJECT_STATECHANGE => WindowEventKind.StyleChanged,
 			Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZESTART => WindowEventKind.MinimizeStart,
 			Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZEEND => WindowEventKind.MinimizeEnd,
 			Win32.EVENT_CONSTANTS.EVENT_SYSTEM_FOREGROUND => WindowEventKind.Foreground,
@@ -439,6 +503,7 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 			Win32.EVENT_CONSTANTS.EVENT_OBJECT_CLOAKED or
 			Win32.EVENT_CONSTANTS.EVENT_OBJECT_UNCLOAKED or
 			Win32.EVENT_CONSTANTS.EVENT_OBJECT_NAMECHANGE or
+			Win32.EVENT_CONSTANTS.EVENT_OBJECT_STATECHANGE or
 			Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZESTART or
 			Win32.EVENT_CONSTANTS.EVENT_SYSTEM_MINIMIZEEND or
 			Win32.EVENT_CONSTANTS.EVENT_SYSTEM_FOREGROUND or
@@ -497,7 +562,8 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 	private void ReconcileWindowsCore(bool emitEvent)
 	{
 		var observed = new HashSet<IntPtr>();
-		Win32.EnumWindows((handle, _) =>
+		var now = Stopwatch.GetTimestamp();
+		Win32.EnumWindows((handle, state) =>
 		{
 			observed.Add(handle);
 			var generation = MarkWindowAlive(handle).Generation;
@@ -508,9 +574,20 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 				_processedGenerations[handle] = generation;
 			}
 
+			if (!_windows.ContainsKey(handle) &&
+				_rejectedWindowRetryDue.TryGetValue(handle, out var retryDue) &&
+				retryDue > now)
+				return true;
+
 			RegisterWindow(CreateUnresolvedInstance(handle, generation), emitEvent);
+			if (_windows.ContainsKey(handle))
+				_rejectedWindowRetryDue.TryRemove(handle, out _);
+			else
+				_rejectedWindowRetryDue[handle] = AddMilliseconds(now, RejectedWindowCalibrationDelayMilliseconds);
 			return true;
 		}, IntPtr.Zero);
+		foreach (var rejectedHandle in _rejectedWindowRetryDue.Keys.Where(handle => !observed.Contains(handle)).ToArray())
+			_rejectedWindowRetryDue.TryRemove(rejectedHandle, out _);
 
 		foreach (var pair in _windows.ToArray())
 		{
@@ -585,6 +662,7 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 			return;
 		if (_windowInstances.TryGetValue(instance.Handle, out var existing) && existing.Generation == instance.Generation)
 			return;
+		_rejectedWindowRetryDue.TryRemove(instance.Handle, out _);
 
 		CancelRegistrations(instance.Handle, instance.Generation - 1);
 		var key = new WindowInstanceKey(instance.Handle, instance.Generation);
@@ -664,10 +742,18 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 		{
 			if (type == WindowUpdateType.Hide && !Win32.IsWindow(instance.Handle))
 				UnregisterWindow(instance.Handle, instance.Generation);
+			else if (type is WindowUpdateType.NameChanged or WindowUpdateType.StyleChanged &&
+				!_classifier.IsCandidate(window, out _))
+			{
+				_rejectedWindowRetryDue[instance.Handle] = AddMilliseconds(
+					Stopwatch.GetTimestamp(),
+					RejectedWindowCalibrationDelayMilliseconds);
+				UnregisterWindow(instance.Handle, instance.Generation);
+			}
 			else
 				WindowUpdated?.Invoke(window, type);
 		}
-		else if (type is WindowUpdateType.Show or WindowUpdateType.NameChanged)
+		else if (type is WindowUpdateType.Show or WindowUpdateType.NameChanged or WindowUpdateType.StyleChanged)
 			ScheduleRegistration(instance);
 		else if (type == WindowUpdateType.Foreground)
 		{
@@ -823,6 +909,7 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 		_windows.Clear();
 		_windowInstances.Clear();
 		_windowGenerations.Clear();
+		_rejectedWindowRetryDue.Clear();
 		_processedGenerations.Clear();
 		_pendingRegistrations.Clear();
 		_floating.Clear();

@@ -1,5 +1,6 @@
 using StageManager.Native.Window;
 using StageManager.Settings;
+using StageManager.Infrastructure;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Numerics;
@@ -17,11 +18,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private readonly Control _owner;
 	private readonly Compositor _compositor;
 	private readonly ContainerVisual _cameraRoot;
-	private readonly D3DCompositionDevice _graphics;
-	private readonly IRenderSurfacePool _surfacePool;
+	private D3DCompositionDevice _graphics;
+	private IRenderSurfacePool _surfacePool;
+	private RenderProfile _renderProfile;
 	private readonly IPreviewService _previews = new PreviewService();
 	private readonly SidebarCollapseButtonVisual _collapseButton;
-	private readonly SidebarHintVisual _sidebarHint;
+	private SidebarHintVisual _sidebarHint;
 	private readonly Dictionary<string, StageCardVisual> _stages = new(StringComparer.OrdinalIgnoreCase);
 	private readonly System.Windows.Forms.Timer _captureTimer;
 	private readonly object _captureGate = new();
@@ -53,6 +55,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private bool _manualRefreshPending;
 	private Func<IWindow, PreviewMode> _previewModeResolver = _ => PreviewMode.Auto;
 	private Guid _desktopSessionId;
+	private string? _sidebarDisplayDeviceName;
+	private bool _highContrast = SystemInformation.HighContrast;
+	private int _consecutiveGraphicsFailures;
+	private bool _iconOnlyGraphicsFallback;
+	private bool _idleAutoHideEnabled = true;
+	private int _idleAutoHideSeconds = 60;
 
 	public CompositionStageRenderer(Control owner, Compositor compositor, ContainerVisual cameraRoot, double cardScale, bool animationsEnabled, RenderProfile renderProfile)
 	{
@@ -61,19 +69,24 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_cameraRoot = cameraRoot;
 		_preferenceScale = NormalizeCardScale(cardScale);
 		_animationsEnabled = animationsEnabled;
+		_renderProfile = renderProfile;
 		_graphics = new D3DCompositionDevice(renderProfile);
 		_surfacePool = new RenderSurfacePool(_graphics, _compositor);
 		_collapseButton = new SidebarCollapseButtonVisual(_compositor);
 		_sidebarHint = new SidebarHintVisual(_graphics, _compositor);
 		_cameraRoot.Children.InsertAtTop(_collapseButton.Root);
 		_cameraRoot.Children.InsertAtTop(_sidebarHint.Root);
-		_captureTimer = new System.Windows.Forms.Timer { Interval = 350 };
-		_captureTimer.Tick += (_, _) => ScheduleCaptures();
-		_captureTimer.Start();
+		_captureTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+		_captureTimer.Tick += (_, _) =>
+		{
+			_captureTimer.Stop();
+			ScheduleCaptures();
+		};
 	}
 
 	public bool HasExpandedStage => _expandedStageKey is not null;
 	public double CardScale => _preferenceScale;
+	public RenderProfile RenderProfile => _renderProfile;
 	public bool SidebarVisible => _sidebarVisible;
 	public long LayoutRevision { get; private set; }
 	public float SidebarInteractionWidth => CardSize.X + 48f * _dpiScale;
@@ -120,6 +133,38 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	public void SetAnimationsEnabled(bool enabled) => _animationsEnabled = enabled;
 
+	public void SetRenderProfile(RenderProfile renderProfile)
+	{
+		if (_renderProfile == renderProfile)
+			return;
+		RebuildGraphicsResources(renderProfile);
+		_consecutiveGraphicsFailures = 0;
+		_iconOnlyGraphicsFallback = false;
+		ScheduleCaptures();
+	}
+
+	public void SetHighContrast(bool enabled)
+	{
+		if (_highContrast == enabled)
+			return;
+		_highContrast = enabled;
+		foreach (var stage in _stages.Values)
+			stage.SetHighContrast(enabled);
+	}
+
+	public void SetSidebarDisplay(string? deviceName)
+	{
+		_sidebarDisplayDeviceName = deviceName;
+		UpdateWindowStatuses();
+	}
+
+	public WindowCardState GetWindowStatus(IntPtr handle)
+	{
+		return _stages.Values
+			.SelectMany(stage => stage.Windows)
+			.FirstOrDefault(card => card.Window.Handle == handle)?.Status ?? WindowCardState.None;
+	}
+
 	public void SetPreviewPolicy(
 		int refreshMinutes,
 		bool pauseWhenHidden,
@@ -132,8 +177,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 			ScheduleCaptures();
 	}
 
-	public void SetIdleHint(bool autoHideEnabled, int idleSeconds) =>
+	public void SetIdleHint(bool autoHideEnabled, int idleSeconds)
+	{
+		_idleAutoHideEnabled = autoHideEnabled;
+		_idleAutoHideSeconds = idleSeconds;
 		_sidebarHint.SetIdleBehavior(autoHideEnabled, idleSeconds);
+	}
 
 	public void RefreshAllPreviews()
 	{
@@ -177,6 +226,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 		SetCollapseButtonHovered(false);
 		_cameraRoot.StopAnimation(nameof(Visual.Offset));
 		_cameraRoot.Offset = target;
+		if (visible)
+			ScheduleCaptures();
+		else if (_pausePreviewRefreshWhenHidden)
+			_captureTimer.Stop();
 		if (!animate || !_animationsEnabled)
 			return;
 
@@ -210,13 +263,26 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		_viewportWidth = Math.Max(1, width);
 		_viewportHeight = Math.Max(1, height);
-		_dpiScale = Math.Max(0.75f, dpiScale);
+		var normalizedDpiScale = Math.Max(0.75f, dpiScale);
+		var dpiChanged = Math.Abs(_dpiScale - normalizedDpiScale) >= 0.01f;
+		_dpiScale = normalizedDpiScale;
 		_cameraRoot.Size = new Vector2(_viewportWidth, _viewportHeight);
 		_cameraRoot.CenterPoint = new Vector3(_viewportWidth / 2f, _viewportHeight / 2f, 0);
 		var perspective = Matrix4x4.Identity;
 		perspective.M34 = -1f / (PerspectiveDistance * _dpiScale);
 		_cameraRoot.TransformMatrix = perspective;
-		LayoutStages(false);
+		if (dpiChanged && _stages.Count > 0)
+		{
+			foreach (var stage in _stages.Values)
+			{
+				_cameraRoot.Children.Remove(stage.Root);
+				stage.Dispose();
+			}
+			_stages.Clear();
+			Synchronize(_snapshots);
+		}
+		else
+			LayoutStages(false);
 		if (!_sidebarVisible)
 			_cameraRoot.Offset = new Vector3(HiddenOffsetX, 0, 0);
 	}
@@ -247,7 +313,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 				_cameraRoot.Children.InsertAtTop(stage.Root);
 			}
 			stage.Synchronize(snapshot);
-			stage.SynchronizeGroupCard(snapshot.Windows.Count > 1 ? snapshot.Windows[0] : null);
+			stage.SynchronizeGroupCard(snapshot.IsApplicationGroup && snapshot.Windows.Count > 1 ? snapshot.Windows[0] : null);
+			stage.SetHighContrast(_highContrast);
+			foreach (var card in stage.Windows)
+				card.SetStatus(GetWindowStatus(snapshot, card));
 		}
 
 		if (_expandedStageKey is not null && !liveKeys.Contains(_expandedStageKey))
@@ -272,6 +341,44 @@ internal sealed class CompositionStageRenderer : IDisposable
 			_hoveredStageKey = null;
 		if (layoutChanged)
 			LayoutStages(true);
+		ScheduleCaptures();
+	}
+
+	private void UpdateWindowStatuses()
+	{
+		foreach (var snapshot in _snapshots)
+		{
+			if (!_stages.TryGetValue(snapshot.Key, out var stage))
+				continue;
+			foreach (var card in stage.Windows)
+				card.SetStatus(GetWindowStatus(snapshot, card));
+		}
+	}
+
+	private WindowCardState GetWindowStatus(PrototypeStageSnapshot snapshot, WindowCardVisual card)
+	{
+		var state = WindowCardState.None;
+		var window = card.Window;
+		if (window.IsMinimized)
+			state |= WindowCardState.Minimized;
+		if (OffscreenWindowRecovery.IsOffscreen(window))
+			state |= WindowCardState.Offscreen;
+		else if (!string.IsNullOrWhiteSpace(_sidebarDisplayDeviceName))
+		{
+			var location = window.Location;
+			var display = Screen.FromRectangle(new Rectangle(
+				location.X,
+				location.Y,
+				Math.Max(1, location.Width),
+				Math.Max(1, location.Height)));
+			if (!string.Equals(display.DeviceName, _sidebarDisplayDeviceName, StringComparison.OrdinalIgnoreCase))
+				state |= WindowCardState.OtherDisplay;
+		}
+		if (card.CaptureFailed)
+			state |= WindowCardState.CaptureFailed;
+		if (snapshot.PinnedWindowHandles?.Contains(window.Handle) == true)
+			state |= WindowCardState.Pinned;
+		return state;
 	}
 
 	private static bool HasSameLayout(
@@ -285,7 +392,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 			var oldStage = previous[stageIndex];
 			var newStage = current[stageIndex];
 			if (!string.Equals(oldStage.Key, newStage.Key, StringComparison.OrdinalIgnoreCase) ||
-				oldStage.Windows.Count != newStage.Windows.Count)
+				oldStage.Windows.Count != newStage.Windows.Count ||
+				oldStage.IsApplicationGroup != newStage.IsApplicationGroup)
 				return false;
 			for (var windowIndex = 0; windowIndex < oldStage.Windows.Count; windowIndex++)
 			{
@@ -305,6 +413,26 @@ internal sealed class CompositionStageRenderer : IDisposable
 				return target;
 		}
 		return null;
+	}
+
+	public Rectangle GetStageClientBounds(string stageKey) => GetClientBounds(_hitTargets.Where(target =>
+		string.Equals(target.StageKey, stageKey, StringComparison.OrdinalIgnoreCase) &&
+		!target.IsSidebarCollapseButton &&
+		target.PageDelta == 0));
+
+	public Rectangle GetWindowClientBounds(IntPtr handle) => GetClientBounds(_hitTargets.Where(target =>
+		target.Window?.Handle == handle && target.PageDelta == 0));
+
+	private static Rectangle GetClientBounds(IEnumerable<CardHitTarget> targets)
+	{
+		var points = targets.SelectMany(target => target.Polygon).ToArray();
+		if (points.Length == 0)
+			return Rectangle.Empty;
+		var left = (int)Math.Floor(points.Min(point => point.X));
+		var top = (int)Math.Floor(points.Min(point => point.Y));
+		var right = (int)Math.Ceiling(points.Max(point => point.X));
+		var bottom = (int)Math.Ceiling(points.Max(point => point.Y));
+		return Rectangle.FromLTRB(left, top, right, bottom);
 	}
 
 	public void UpdatePointer(Point clientPoint)
@@ -384,6 +512,27 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var isExpandedStage = string.Equals(_expandedStageKey, hit.StageKey, StringComparison.OrdinalIgnoreCase);
 		if (!_stages.TryGetValue(hit.StageKey, out var stage))
 			return null;
+		if (hit.IsStageDragHandle)
+		{
+			if (isExpandedStage)
+				CollapseExpandedStage();
+			else
+			{
+				_expandedStageKey = hit.StageKey;
+				_hoveredStageKey = hit.StageKey;
+				_expandedPage = 0;
+				_hoveredWindowHandle = IntPtr.Zero;
+				_hoveredGroupCard = false;
+				_lastPointerInsideUtc = DateTime.UtcNow;
+				LayoutStages(true);
+			}
+			return null;
+		}
+		// Cross-application stages use their three real window previews as the
+		// stage card. Only same-application groups use the logo card + vertical
+		// child expansion interaction.
+		if (stage.GroupCard is null)
+			return hit.Window;
 		var action = MultiWindowCardInteraction.Decide(stage.Windows.Count, isExpandedStage, hit.IsPrimaryCard);
 		if (action == MultiWindowCardClickAction.Expand)
 		{
@@ -578,12 +727,14 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	private float GetExpandedExtraHeight(StageCardVisual stage)
 	{
-		var visibleCount = 1 + Math.Min(PageSize - 1, stage.Windows.Count);
+		var hasGroupCard = stage.GroupCard is not null;
+		var maximumChildren = hasGroupCard ? PageSize - 1 : PageSize;
+		var visibleCount = (hasGroupCard ? 1 : 0) + Math.Min(maximumChildren, stage.Windows.Count);
 		if (visibleCount <= 1)
 			return 0;
 		var cardSize = CardSize;
 		var stride = Card3DGeometry.CalculateExpandedListStride(cardSize.Y, _dpiScale);
-		var paginationHeight = stage.Windows.Count > PageSize - 1
+		var paginationHeight = stage.Windows.Count > maximumChildren
 			? Math.Max(32f, cardSize.Y * 0.46f) + 12f * _dpiScale
 			: 0;
 		return (visibleCount - 1) * stride + paginationHeight;
@@ -667,58 +818,64 @@ internal sealed class CompositionStageRenderer : IDisposable
 				polygon,
 				stageIndex * 20 + (3 - index) + (hovered ? 10 : 0),
 				IsPrimaryCard: index == 0));
+			if (index == 0 && stage.Windows.Count > 1)
+				AddStageDragHandle(stage.Key, polygon, stageIndex * 20 + 19);
 		}
 	}
 
 	private void LayoutExpandedStage(StageCardVisual stage, Vector3 stageOffset, float stageScale, Vector2 cameraCenter, bool animate)
 	{
 		var cardSize = CardSize;
+		var hasGroupCard = stage.GroupCard is not null;
+		var maximumChildren = hasGroupCard ? PageSize - 1 : PageSize;
 		var expandedPage = MultiWindowCardInteraction.CreateExpandedChildPage(
 			stage.Windows,
 			_expandedPage,
-			PageSize - 1);
+			maximumChildren);
 		_expandedPage = expandedPage.PageIndex;
 		var pageCount = expandedPage.PageCount;
 		var page = expandedPage.VisibleChildren.ToArray();
 		var pageHandles = page.Select(card => card.Window.Handle).ToHashSet();
 		foreach (var card in stage.Windows)
 			card.SetVisible(pageHandles.Contains(card.Window.Handle));
-		if (stage.GroupCard is null)
-			return;
-		stage.GroupCard.SetVisible(true);
+		stage.GroupCard?.SetVisible(true);
 
 		var stride = Card3DGeometry.CalculateExpandedListStride(cardSize.Y, _dpiScale);
 		var childIndent = 18f * _dpiScale;
 		var hoveredChildIndex = Array.FindIndex(page, card => card.Window.Handle == _hoveredWindowHandle);
-		var hoveredIndex = hoveredChildIndex < 0 ? -1 : hoveredChildIndex + 1;
-		stage.SetExpandedConnectorLayout(page.Length + 1, cardSize.Y, stride, childIndent, _dpiScale);
+		var childIndexOffset = hasGroupCard ? 1 : 0;
+		var hoveredIndex = hoveredChildIndex < 0 ? -1 : hoveredChildIndex + childIndexOffset;
+		stage.SetExpandedConnectorLayout(page.Length + childIndexOffset, cardSize.Y, stride, childIndent, _dpiScale);
 		stage.ArrangeExpandedZOrder(page, _hoveredWindowHandle);
 
-		var groupTransform = Card3DGeometry.CreateExpandedListTransform(
-			0,
-			_hoveredGroupCard ? 0 : -1,
-			_dpiScale,
-			stride,
-			childIndent);
-		stage.GroupCard.SetTransform(groupTransform.Offset, groupTransform.Scale, groupTransform.Angle, animate);
-		var groupPolygon = Card3DGeometry.ProjectCard(
-			stageOffset,
-			stageScale,
-			groupTransform.Offset,
-			groupTransform.Scale,
-			groupTransform.Angle,
-			cardSize,
-			stage.GroupCard.Pivot,
-			cameraCenter,
-			PerspectiveDistance * _dpiScale);
-		_hitTargets.Add(new CardHitTarget(stage.Key, null, groupPolygon, 10100, IsPrimaryCard: true));
+		if (stage.GroupCard is { } groupCard)
+		{
+			var groupTransform = Card3DGeometry.CreateExpandedListTransform(
+				0,
+				_hoveredGroupCard ? 0 : -1,
+				_dpiScale,
+				stride,
+				childIndent);
+			groupCard.SetTransform(groupTransform.Offset, groupTransform.Scale, groupTransform.Angle, animate);
+			var groupPolygon = Card3DGeometry.ProjectCard(
+				stageOffset,
+				stageScale,
+				groupTransform.Offset,
+				groupTransform.Scale,
+				groupTransform.Angle,
+				cardSize,
+				groupCard.Pivot,
+				cameraCenter,
+				PerspectiveDistance * _dpiScale);
+			_hitTargets.Add(new CardHitTarget(stage.Key, null, groupPolygon, 10100, IsPrimaryCard: true));
+		}
 
 		for (var index = 0; index < page.Length; index++)
 		{
 			var card = page[index];
 			var hovered = card.Window.Handle == _hoveredWindowHandle;
 			var transform = Card3DGeometry.CreateExpandedListTransform(
-				index + 1,
+				index + childIndexOffset,
 				hoveredIndex,
 				_dpiScale,
 				stride,
@@ -740,15 +897,32 @@ internal sealed class CompositionStageRenderer : IDisposable
 				card.Window,
 				polygon,
 				10000 + index + (hovered ? 100 : 0)));
+			if (!hasGroupCard && index == 0)
+				AddStageDragHandle(stage.Key, polygon, 10200);
 		}
 
 		stage.SetPaginationVisible(pageCount > 1);
 		if (pageCount > 1)
 		{
-			var buttonsY = cardSize.Y + page.Length * stride + 7 * _dpiScale;
+			var buttonsY = cardSize.Y + Math.Max(0, page.Length + childIndexOffset - 1) * stride + 7 * _dpiScale;
 			AddPaginationButton(stage, stage.PreviousButton, stageOffset, stageScale, cameraCenter, new Vector3(12 * _dpiScale, buttonsY, 80 * _dpiScale), -1);
 			AddPaginationButton(stage, stage.NextButton, stageOffset, stageScale, cameraCenter, new Vector3(46 * _dpiScale, buttonsY, 80 * _dpiScale), 1);
 		}
+	}
+
+	private void AddStageDragHandle(string stageKey, IReadOnlyList<Vector2> cardPolygon, int zOrder)
+	{
+		if (cardPolygon.Count != 4)
+			return;
+		const float widthRatio = 0.13f;
+		var topInner = Vector2.Lerp(cardPolygon[0], cardPolygon[1], widthRatio);
+		var bottomInner = Vector2.Lerp(cardPolygon[3], cardPolygon[2], widthRatio);
+		_hitTargets.Add(new CardHitTarget(
+			stageKey,
+			null,
+			new[] { cardPolygon[0], topInner, bottomInner, cardPolygon[3] },
+			zOrder,
+			IsStageDragHandle: true));
 	}
 
 	private void AddPaginationButton(
@@ -778,7 +952,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		if (_expandedStageKey is null || !_stages.TryGetValue(_expandedStageKey, out var expanded))
 			return;
-		var pageCount = Math.Max(1, (int)Math.Ceiling(expanded.Windows.Count / (double)(PageSize - 1)));
+		var maximumChildren = expanded.GroupCard is null ? PageSize : PageSize - 1;
+		var pageCount = Math.Max(1, (int)Math.Ceiling(expanded.Windows.Count / (double)maximumChildren));
 		if (pageCount <= 1)
 			return;
 		_expandedPage = (_expandedPage + delta + pageCount) % pageCount;
@@ -788,8 +963,9 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	private void ScheduleCaptures()
 	{
+		_captureTimer.Stop();
 		_surfacePool.TrimExpired();
-		if (_disposed || (_pausePreviewRefreshWhenHidden && !_sidebarVisible && !_manualRefreshPending))
+		if (_disposed || _iconOnlyGraphicsFallback || (_pausePreviewRefreshWhenHidden && !_sidebarVisible && !_manualRefreshPending))
 			return;
 		lock (_captureGate)
 		{
@@ -797,22 +973,60 @@ internal sealed class CompositionStageRenderer : IDisposable
 				return;
 		}
 		var nowUtc = DateTime.UtcNow;
-		var due = _stages.Values
+		var candidates = _stages.Values
 			.SelectMany(stage => stage.Windows
 				.Concat(stage.GroupCard is { } groupCard ? new[] { groupCard } : Array.Empty<WindowCardVisual>())
-				.Select(card => (stage, card)))
-			.Where(tuple => tuple.card.IsVisible)
-			.Where(tuple => tuple.card.NeedsCapture(nowUtc, _previewRefreshMinutes))
-			.OrderByDescending(tuple => tuple.card.Window.Handle == _hoveredWindowHandle)
-			.Take(1)
+				.Select(card => card))
+			.Where(card => card.IsVisible)
+			.Select(card => new
+			{
+				Card = card,
+				Mode = card.IsApplicationGroupCard ? PreviewMode.IconOnly : _previewModeResolver(card.Window),
+				Priority = GetCapturePriority(card)
+			})
 			.ToArray();
-		if (due.Length == 0)
+		var due = candidates
+			.Where(item => item.Card.NeedsCapture(nowUtc, _previewRefreshMinutes))
+			.Where(item => item.Mode != PreviewMode.IconOnly || item.Card.LastCaptureUtc == DateTime.MinValue)
+			.OrderBy(item => item.Priority)
+			.ThenByDescending(item => item.Card.Window.Handle == _hoveredWindowHandle)
+			.FirstOrDefault();
+		if (due is null)
+		{
 			_manualRefreshPending = false;
-		foreach (var item in due)
-			StartCapture(item.card);
+			if (candidates.Length == 0)
+				return;
+			var nextPeriodicCapture = candidates
+				.Where(item => item.Mode != PreviewMode.IconOnly && item.Card.LastCaptureUtc != DateTime.MinValue)
+				.Select(item => item.Card.NextCaptureDueUtc(_previewRefreshMinutes))
+				.DefaultIfEmpty(nowUtc + RenderSurfacePoolPolicy.IdleLifetime)
+				.Min();
+			var delay = nextPeriodicCapture - nowUtc;
+			ArmCaptureTimer(delay < RenderSurfacePoolPolicy.IdleLifetime ? delay : RenderSurfacePoolPolicy.IdleLifetime);
+			return;
+		}
+
+		StartCapture(due.Card, due.Mode, due.Priority);
 	}
 
-	private void StartCapture(WindowCardVisual card)
+	private PreviewCapturePriority GetCapturePriority(WindowCardVisual card) => _manualRefreshPending
+		? PreviewCapturePriority.Manual
+		: card.Window.IsFocused
+			? PreviewCapturePriority.Current
+			: card.Window.Handle == _hoveredWindowHandle
+				? PreviewCapturePriority.Hovered
+				: PreviewCapturePriority.Periodic;
+
+	private void ArmCaptureTimer(TimeSpan delay)
+	{
+		if (_disposed)
+			return;
+		var milliseconds = (int)Math.Clamp(Math.Ceiling(delay.TotalMilliseconds), 50d, int.MaxValue);
+		_captureTimer.Interval = milliseconds;
+		_captureTimer.Start();
+	}
+
+	private void StartCapture(WindowCardVisual card, PreviewMode previewMode, PreviewCapturePriority priority)
 	{
 		lock (_captureGate)
 		{
@@ -824,16 +1038,6 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var width = card.SurfaceWidth;
 		var height = card.SurfaceHeight;
 		card.MarkCaptureStarted();
-		var priority = _manualRefreshPending
-			? PreviewCapturePriority.Manual
-			: window.IsFocused
-				? PreviewCapturePriority.Current
-				: window.Handle == _hoveredWindowHandle
-					? PreviewCapturePriority.Hovered
-					: PreviewCapturePriority.Periodic;
-		var previewMode = card.IsApplicationGroupCard
-			? PreviewMode.IconOnly
-			: _previewModeResolver(window);
 		_ = _previews.CaptureAsync(
 			window,
 			width,
@@ -851,12 +1055,13 @@ internal sealed class CompositionStageRenderer : IDisposable
 			}
 			if (disposePreviewService)
 				_previews.Dispose();
-			if (task.IsFaulted || task.IsCanceled)
-				return;
-			var frame = task.Result;
+			var failure = task.IsFaulted
+				? task.Exception?.GetBaseException() ?? new InvalidOperationException("The preview task failed.")
+				: task.IsCanceled ? new OperationCanceledException("The preview task was canceled.") : null;
+			var frame = task.Status == TaskStatus.RanToCompletion ? task.Result : null;
 			if (_disposed || _owner.IsDisposed)
 			{
-				frame.Dispose();
+				frame?.Dispose();
 				return;
 			}
 			try
@@ -865,17 +1070,134 @@ internal sealed class CompositionStageRenderer : IDisposable
 				{
 					using (frame)
 					{
-						if (!_disposed && _sidebarVisible && card.IsVisible && card.Window.Handle == frame.Handle)
-							card.Upload(frame);
+						if (!_disposed && failure is not null)
+						{
+							card.MarkCaptureFailed();
+							UpdateWindowStatuses();
+							if (failure is not OperationCanceledException)
+								AppLogger.Warn($"A preview request failed: {failure.Message}");
+						}
+						else if (!_disposed && frame is not null && _sidebarVisible && card.IsVisible && card.Window.Handle == frame.Handle)
+						{
+							var captureFailed = frame.IsPlaceholder &&
+								previewMode != PreviewMode.IconOnly &&
+								!card.IsApplicationGroupCard &&
+								!card.Window.IsMinimized;
+							try
+							{
+								card.Upload(frame, captureFailed);
+								_consecutiveGraphicsFailures = 0;
+								UpdateWindowStatuses();
+							}
+							catch (Exception exception)
+							{
+								HandleGraphicsFailure(card, exception);
+							}
+						}
+						else if (!_disposed && frame is not null)
+							card.InvalidateCapture();
+						if (!_disposed)
+							ScheduleCaptures();
 					}
 				}));
 			}
 			catch (InvalidOperationException)
 			{
-				frame.Dispose();
+				frame?.Dispose();
 			}
 		}, TaskScheduler.Default);
 	}
+
+	private void HandleGraphicsFailure(WindowCardVisual card, Exception exception)
+	{
+		card.MarkCaptureFailed();
+		UpdateWindowStatuses();
+		if (!GraphicsDeviceRecoveryPolicy.IsDeviceLoss(exception))
+		{
+			AppLogger.Warn($"A card texture upload failed: {exception.Message}");
+			return;
+		}
+
+		_consecutiveGraphicsFailures++;
+		AppLogger.Warn($"The card graphics device was lost (attempt {_consecutiveGraphicsFailures}/3): {exception.Message}");
+		if (_consecutiveGraphicsFailures >= 3)
+		{
+			_iconOnlyGraphicsFallback = true;
+			try
+			{
+				ReleasePreviewSurfaces();
+			}
+			catch (Exception releaseException)
+			{
+				AppLogger.Warn($"Lost graphics resources could not be fully released: {releaseException.Message}");
+			}
+			AppLogger.Error("Card graphics recovery failed three consecutive times. The sidebar remains active with placeholder cards.");
+			return;
+		}
+
+		try
+		{
+			RebuildGraphicsResources();
+		}
+		catch (Exception rebuildException)
+		{
+			AppLogger.Error("The card graphics device could not be rebuilt.", rebuildException);
+		}
+	}
+
+	private void RebuildGraphicsResources(RenderProfile? requestedProfile = null)
+	{
+		var renderProfile = requestedProfile ?? _renderProfile;
+		D3DCompositionDevice? replacementGraphics = null;
+		IRenderSurfacePool? replacementPool = null;
+		SidebarHintVisual? replacementHint = null;
+		try
+		{
+			replacementGraphics = new D3DCompositionDevice(renderProfile);
+			replacementPool = new RenderSurfacePool(replacementGraphics, _compositor);
+			replacementHint = new SidebarHintVisual(replacementGraphics, _compositor);
+			replacementHint.SetDpiScale(_dpiScale);
+			replacementHint.SetIdleBehavior(_idleAutoHideEnabled, _idleAutoHideSeconds);
+		}
+		catch
+		{
+			replacementHint?.Dispose();
+			replacementPool?.Dispose();
+			replacementGraphics?.Dispose();
+			throw;
+		}
+
+		foreach (var stage in _stages.Values)
+		{
+			_cameraRoot.Children.Remove(stage.Root);
+			stage.Dispose();
+		}
+		_stages.Clear();
+		_cameraRoot.Children.Remove(_sidebarHint.Root);
+		_sidebarHint.Dispose();
+		_surfacePool.Dispose();
+		_graphics.Dispose();
+		_graphics = replacementGraphics!;
+		_surfacePool = replacementPool!;
+		_sidebarHint = replacementHint!;
+		_renderProfile = renderProfile;
+		_cameraRoot.Children.InsertAtTop(_sidebarHint.Root);
+		_cameraRoot.Children.Remove(_collapseButton.Root);
+		_cameraRoot.Children.InsertAtTop(_collapseButton.Root);
+		Synchronize(_snapshots);
+		AppLogger.Info($"The card graphics device and pooled surfaces were rebuilt with the {renderProfile} profile.");
+	}
+}
+
+[Flags]
+internal enum WindowCardState
+{
+	None = 0,
+	Minimized = 1,
+	Offscreen = 2,
+	OtherDisplay = 4,
+	CaptureFailed = 8,
+	Pinned = 16
 }
 
 internal sealed record CardHitTarget(
@@ -885,7 +1207,8 @@ internal sealed record CardHitTarget(
 	int ZOrder,
 	int PageDelta = 0,
 	bool IsPrimaryCard = false,
-	bool IsSidebarCollapseButton = false);
+	bool IsSidebarCollapseButton = false,
+	bool IsStageDragHandle = false);
 
 internal readonly record struct DesktopUiState(
 	string? ExpandedStageKey,
@@ -1086,6 +1409,13 @@ internal sealed class StageCardVisual : IDisposable
 	}
 
 	public void HideExpandedConnector() => ExpandedConnector.Root.IsVisible = false;
+
+	public void SetHighContrast(bool enabled)
+	{
+		GroupCard?.SetHighContrast(enabled);
+		foreach (var card in Windows)
+			card.SetHighContrast(enabled);
+	}
 
 	public void Dispose()
 	{
@@ -1448,12 +1778,17 @@ internal sealed class WindowCardVisual : IDisposable
 	private readonly CompositionColorBrush _focusIndicatorBrush;
 	private readonly CompositionRoundedRectangleGeometry _focusIndicatorGeometry;
 	private readonly CompositionGeometricClip _focusIndicatorClip;
+	private readonly CompositionColorBrush _statusIndicatorBrush;
+	private readonly SpriteVisual _statusIndicator;
+	private readonly CompositionRoundedRectangleGeometry _statusIndicatorGeometry;
+	private readonly CompositionGeometricClip _statusIndicatorClip;
 	private Vector3 _lastOffset;
 	private Vector3 _lastScale;
 	private float _lastAngle;
 	private bool _lastKnownMinimized;
 	private bool _hasTransform;
 	private bool _disposed;
+	private bool _highContrast;
 
 	public WindowCardVisual(Compositor compositor, IRenderSurfacePool surfacePool, IWindow window, int surfaceWidth, int surfaceHeight, Vector2 cardSize, bool isApplicationGroupCard)
 	{
@@ -1493,14 +1828,32 @@ internal sealed class WindowCardVisual : IDisposable
 		_focusIndicatorGeometry.CornerRadius = new Vector2(indicatorSize / 2f);
 		_focusIndicatorClip = compositor.CreateGeometricClip(_focusIndicatorGeometry);
 		_focusIndicator.Clip = _focusIndicatorClip;
+		var statusWidth = Math.Max(22f, cardSize.X * 0.13f);
+		var statusHeight = Math.Max(5f, cardSize.Y * 0.045f);
+		_statusIndicatorBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(238, 127, 134, 149));
+		_statusIndicator = compositor.CreateSpriteVisual();
+		_statusIndicator.Size = new Vector2(statusWidth, statusHeight);
+		_statusIndicator.Offset = new Vector3(
+			cardSize.X - statusWidth - Math.Max(8f, cardSize.Y * 0.08f),
+			cardSize.Y - statusHeight - Math.Max(8f, cardSize.Y * 0.08f),
+			3f);
+		_statusIndicator.Brush = _statusIndicatorBrush;
+		_statusIndicator.IsVisible = false;
+		_statusIndicatorGeometry = compositor.CreateRoundedRectangleGeometry();
+		_statusIndicatorGeometry.Size = _statusIndicator.Size;
+		_statusIndicatorGeometry.CornerRadius = new Vector2(statusHeight / 2f);
+		_statusIndicatorClip = compositor.CreateGeometricClip(_statusIndicatorGeometry);
+		_statusIndicator.Clip = _statusIndicatorClip;
 		Root = compositor.CreateContainerVisual();
 		Root.Size = cardSize;
 		Root.CenterPoint = new Vector3(cardSize.X * 0.88f, cardSize.Y * 0.5f, 0);
 		Root.RotationAxis = Vector3.UnitY;
 		Root.Children.InsertAtTop(_content);
 		Root.Children.InsertAtTop(_focusIndicator);
+		Root.Children.InsertAtTop(_statusIndicator);
 		Pivot = new Vector2(Root.CenterPoint.X, Root.CenterPoint.Y);
 		UpdateFocusIndicator();
+		SetHighContrast(SystemInformation.HighContrast);
 	}
 
 	public ContainerVisual Root { get; }
@@ -1510,12 +1863,22 @@ internal sealed class WindowCardVisual : IDisposable
 	public int SurfaceHeight { get; }
 	public bool IsVisible { get; private set; }
 	public bool IsApplicationGroupCard { get; }
+	public bool CaptureFailed { get; private set; }
+	public WindowCardState Status { get; private set; }
 	public string? DesiredBadge { get; set; }
 	public DateTime LastCaptureUtc { get; private set; } = DateTime.MinValue;
 	public bool NeedsCapture(DateTime nowUtc, int refreshMinutes) =>
 		WindowCapturePolicy.NeedsCapture(LastCaptureUtc, nowUtc, refreshMinutes);
+	public DateTime NextCaptureDueUtc(int refreshMinutes) => LastCaptureUtc == DateTime.MinValue
+		? DateTime.MinValue
+		: LastCaptureUtc + TimeSpan.FromMinutes(Math.Clamp(refreshMinutes, 1, 60));
 
 	public void InvalidateCapture() => LastCaptureUtc = DateTime.MinValue;
+	public void MarkCaptureFailed()
+	{
+		CaptureFailed = true;
+		LastCaptureUtc = DateTime.UtcNow;
+	}
 
 	public void SetVisible(bool visible)
 	{
@@ -1541,6 +1904,42 @@ internal sealed class WindowCardVisual : IDisposable
 
 	private void UpdateFocusIndicator() =>
 		_focusIndicator.IsVisible = Window.IsFocused && !Window.IsMinimized;
+
+	public void SetStatus(WindowCardState status)
+	{
+		Status = status;
+		_statusIndicator.IsVisible = status != WindowCardState.None;
+		if (_highContrast)
+		{
+			_statusIndicatorBrush.Color = ToCompositionColor(SystemColors.Highlight);
+			return;
+		}
+		_statusIndicatorBrush.Color = status.HasFlag(WindowCardState.CaptureFailed)
+			? Windows.UI.Color.FromArgb(245, 220, 76, 76)
+			: status.HasFlag(WindowCardState.Offscreen)
+				? Windows.UI.Color.FromArgb(245, 235, 154, 58)
+				: status.HasFlag(WindowCardState.Pinned)
+					? Windows.UI.Color.FromArgb(245, 69, 133, 255)
+					: status.HasFlag(WindowCardState.OtherDisplay)
+						? Windows.UI.Color.FromArgb(245, 151, 107, 224)
+						: Windows.UI.Color.FromArgb(238, 127, 134, 149);
+	}
+
+	public void SetHighContrast(bool enabled)
+	{
+		_highContrast = enabled;
+		_placeholderBrush.Color = enabled
+			? ToCompositionColor(SystemColors.Window)
+			: Windows.UI.Color.FromArgb(238, 232, 236, 242);
+		_focusIndicatorBrush.Color = enabled
+			? ToCompositionColor(SystemColors.Highlight)
+			: Windows.UI.Color.FromArgb(245, 69, 133, 255);
+		_shadow.Opacity = enabled ? 0f : 0.48f;
+		SetStatus(Status);
+	}
+
+	private static Windows.UI.Color ToCompositionColor(Color color) =>
+		Windows.UI.Color.FromArgb(color.A, color.R, color.G, color.B);
 
 	public void SetTransform(Vector3 offset, Vector3 scale, float angle, bool animate)
 	{
@@ -1577,7 +1976,7 @@ internal sealed class WindowCardVisual : IDisposable
 		Root.StartAnimation(nameof(Visual.RotationAngleInDegrees), angleAnimation);
 	}
 
-	public void Upload(CapturedCardFrame frame)
+	public void Upload(CapturedCardFrame frame, bool captureFailed = false)
 	{
 		if (_disposed || frame.Width != SurfaceWidth || frame.Height != SurfaceHeight)
 			return;
@@ -1587,6 +1986,7 @@ internal sealed class WindowCardVisual : IDisposable
 			return;
 		}
 		_surface!.Upload(frame.Pixels);
+		CaptureFailed = captureFailed;
 		LastCaptureUtc = DateTime.UtcNow;
 	}
 
@@ -1640,6 +2040,10 @@ internal sealed class WindowCardVisual : IDisposable
 		_focusIndicatorGeometry.Dispose();
 		_focusIndicator.Dispose();
 		_focusIndicatorBrush.Dispose();
+		_statusIndicatorClip.Dispose();
+		_statusIndicatorGeometry.Dispose();
+		_statusIndicator.Dispose();
+		_statusIndicatorBrush.Dispose();
 		_clip.Dispose();
 		_clipGeometry.Dispose();
 		_content.Dispose();

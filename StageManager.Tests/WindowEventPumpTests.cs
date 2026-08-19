@@ -3,6 +3,8 @@ using StageManager.Model;
 using StageManager.Native;
 using System;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 [TestClass]
 public sealed class WindowEventPumpTests
@@ -88,6 +90,22 @@ public sealed class WindowEventPumpTests
 	}
 
 	[TestMethod]
+	public void BatchCoalescesTitleAndStyleChangesIndependently()
+	{
+		var instance = Instance(105, 4);
+		var batch = WindowEventBatch.Create(
+		[
+			Event(1, WindowEventKind.NameChanged, instance),
+			Event(2, WindowEventKind.StyleChanged, instance),
+			Event(3, WindowEventKind.NameChanged, instance),
+			Event(4, WindowEventKind.StyleChanged, instance),
+		],
+			requiresReconcile: false);
+
+		CollectionAssert.AreEqual(new long[] { 3, 4 }, batch.Events.Select(item => item.Sequence).ToArray());
+	}
+
+	[TestMethod]
 	public void BoundedInboxRequestsOneShotReconcileOnOverflow()
 	{
 		Assert.AreEqual(2048, WindowEventInbox.DefaultCapacity);
@@ -105,6 +123,26 @@ public sealed class WindowEventPumpTests
 		var nextBatch = inbox.DrainBatch();
 		Assert.IsFalse(nextBatch.RequiresReconcile, "The overflow signal was not consumed atomically.");
 		Assert.AreEqual(0, nextBatch.Events.Length);
+	}
+
+	[TestMethod]
+	public async Task InboxSleepsWithoutWorkAndCoalescesWakeSignals()
+	{
+		var inbox = new WindowEventInbox(capacity: 4);
+		Assert.IsFalse(await inbox.WaitForWorkAsync(TimeSpan.Zero, CancellationToken.None));
+
+		var instance = Instance(18, 1);
+		Assert.IsTrue(inbox.TryWrite(Event(1, WindowEventKind.Show, instance)));
+		Assert.IsTrue(inbox.TryWrite(Event(2, WindowEventKind.NameChanged, instance)));
+		Assert.IsTrue(await inbox.WaitForWorkAsync(TimeSpan.FromSeconds(1), CancellationToken.None));
+		inbox.ClearPendingSignals();
+
+		Assert.AreEqual(2, inbox.DrainBatch().Events.Length);
+		Assert.IsFalse(await inbox.WaitForWorkAsync(TimeSpan.Zero, CancellationToken.None));
+
+		inbox.RequestReconcile();
+		Assert.IsTrue(await inbox.WaitForWorkAsync(TimeSpan.FromSeconds(1), CancellationToken.None));
+		Assert.IsTrue(inbox.DrainBatch().RequiresReconcile);
 	}
 
 	private static WindowInstanceId Instance(long handle, long generation) =>

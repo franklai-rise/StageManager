@@ -18,13 +18,7 @@ internal static class NativeMethods
 	public const uint SwpNoZOrder = 0x0004;
 	public const uint SwpNoActivate = 0x0010;
 	public const uint SwpAsyncWindowPos = 0x4000;
-
-	[DllImport("psapi.dll")]
-	[return: MarshalAs(UnmanagedType.Bool)]
-	public static extern bool EmptyWorkingSet(IntPtr processHandle);
-
-	[DllImport("kernel32.dll")]
-	public static extern IntPtr GetCurrentProcess();
+	public const uint SpiGetClientAreaAnimation = 0x1042;
 
 	[DllImport("user32.dll")]
 	[return: MarshalAs(UnmanagedType.Bool)]
@@ -37,6 +31,10 @@ internal static class NativeMethods
 	[DllImport("user32.dll")]
 	[return: MarshalAs(UnmanagedType.Bool)]
 	public static extern bool GetWindowPlacement(IntPtr windowHandle, ref NativeWindowPlacement placement);
+
+	[DllImport("user32.dll")]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	public static extern bool SetWindowPlacement(IntPtr windowHandle, ref NativeWindowPlacement placement);
 
 	[DllImport("user32.dll")]
 	[return: MarshalAs(UnmanagedType.Bool)]
@@ -78,6 +76,14 @@ internal static class NativeMethods
 	[DllImport("user32.dll", SetLastError = true)]
 	[return: MarshalAs(UnmanagedType.Bool)]
 	public static extern bool UnregisterHotKey(IntPtr windowHandle, int id);
+
+	[DllImport("user32.dll", SetLastError = true)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	public static extern bool SystemParametersInfo(
+		uint action,
+		uint parameter,
+		[MarshalAs(UnmanagedType.Bool)] out bool value,
+		uint updateFlags);
 
 	[DllImport("user32.dll")]
 	[return: MarshalAs(UnmanagedType.Bool)]

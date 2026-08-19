@@ -28,6 +28,14 @@ internal static class OffscreenWindowRecovery
 			: GetCurrentBounds(window.Handle);
 		var centered = CenterInWorkArea(restoreBounds, targetDisplay.WorkingArea);
 		var wasMaximized = restoreMaximized || window.IsMaximized;
+		if (window.IsMinimized && TryGetPlacement(window.Handle, out var minimizedPlacement))
+		{
+			minimizedPlacement.NormalPosition = ToNativeRect(centered);
+			if (!NativeMethods.SetWindowPlacement(window.Handle, ref minimizedPlacement))
+				return false;
+			window.NotifyUpdated();
+			return true;
+		}
 
 		NativeMethods.ShowWindowAsync(window.Handle, NativeMethods.SwRestore);
 		NativeMethods.SetWindowPos(
@@ -44,6 +52,14 @@ internal static class OffscreenWindowRecovery
 			NativeMethods.ShowWindowAsync(window.Handle, NativeMethods.SwShowMaximized);
 		window.NotifyUpdated();
 		return true;
+	}
+
+	public static bool TryRecoverToNearestDisplay(IWindow window)
+	{
+		if (!TryGetVisibilityBounds(window, out var bounds) ||
+			IsMeaningfullyVisible(bounds, Screen.AllScreens.Select(screen => screen.WorkingArea)))
+			return false;
+		return TryCenterIfOffscreen(window, Screen.FromRectangle(bounds), window.IsMaximized);
 	}
 
 	internal static bool IsMeaningfullyVisible(Rectangle bounds, IEnumerable<Rectangle> workAreas)
@@ -91,11 +107,7 @@ internal static class OffscreenWindowRecovery
 
 	private static bool TryGetNormalBounds(IntPtr handle, out Rectangle bounds)
 	{
-		var placement = new NativeWindowPlacement
-		{
-			Length = Marshal.SizeOf<NativeWindowPlacement>()
-		};
-		if (NativeMethods.GetWindowPlacement(handle, ref placement))
+		if (TryGetPlacement(handle, out var placement))
 		{
 			bounds = ToRectangle(placement.NormalPosition);
 			if (bounds.Width > 0 && bounds.Height > 0)
@@ -106,8 +118,25 @@ internal static class OffscreenWindowRecovery
 		return false;
 	}
 
+	private static bool TryGetPlacement(IntPtr handle, out NativeWindowPlacement placement)
+	{
+		placement = new NativeWindowPlacement
+		{
+			Length = Marshal.SizeOf<NativeWindowPlacement>()
+		};
+		return NativeMethods.GetWindowPlacement(handle, ref placement);
+	}
+
 	private static Rectangle ToRectangle(NativeRect rectangle)
 	{
 		return Rectangle.FromLTRB(rectangle.Left, rectangle.Top, rectangle.Right, rectangle.Bottom);
 	}
+
+	private static NativeRect ToNativeRect(Rectangle rectangle) => new()
+	{
+		Left = rectangle.Left,
+		Top = rectangle.Top,
+		Right = rectangle.Right,
+		Bottom = rectangle.Bottom
+	};
 }

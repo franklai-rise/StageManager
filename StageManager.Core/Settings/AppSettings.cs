@@ -73,6 +73,7 @@ public sealed class AppSettings
 	public string PreviousStageHotkey { get; set; } = "Win+Alt+[";
 	public string NextStageHotkey { get; set; } = "Win+Alt+]";
 	public string ToggleWindowInStageHotkey { get; set; } = "Win+Alt+G";
+	public string WindowSwitcherHotkey { get; set; } = "Win+Alt+Space";
 	public List<string> IgnoredProcesses { get; set; } = new();
 	public List<ApplicationRule> ApplicationRules { get; set; } = new();
 

@@ -9,11 +9,19 @@ internal enum AppCommandKind
 	ShowSidebar,
 	HideSidebar,
 	OpenSettings,
+	ShowWindowSwitcher,
 	RefreshAllPreviews,
 	RefreshStagePreviews,
+	ActivateStage,
 	ActivateWindow,
 	PreviousStage,
 	NextStage,
+	ToggleWindowInCurrentStage,
+	MergeStages,
+	MoveWindowToStage,
+	ExtractWindow,
+	UndoStageChange,
+	TogglePinToAllStages,
 	ExportDiagnostics,
 	Exit
 }
@@ -22,6 +30,7 @@ internal readonly record struct AppCommandRequest(
 	AppCommandKind Kind,
 	IWindow? Window = null,
 	string? StageKey = null,
+	string? TargetStageKey = null,
 	bool AllowMinimize = false);
 
 internal interface IAppCommandDispatcher

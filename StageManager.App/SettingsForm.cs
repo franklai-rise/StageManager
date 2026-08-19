@@ -49,6 +49,7 @@ internal sealed class SettingsForm : Form
 	private TextBox _previousStageHotkey = null!;
 	private TextBox _nextStageHotkey = null!;
 	private TextBox _toggleWindowInStageHotkey = null!;
+	private TextBox _windowSwitcherHotkey = null!;
 
 	private Button _exportDiagnostics = null!;
 	private Label _diagnosticStatus = null!;
@@ -550,7 +551,7 @@ internal sealed class SettingsForm : Form
 			"Enable global keyboard shortcuts",
 			Draft.HotkeysEnabled,
 			"Enable global shortcuts",
-			"Register the four shortcuts below with Windows.");
+			"Register the five shortcuts below with Windows.");
 		_hotkeysEnabled.CheckedChanged += (_, _) => UpdateControlStates();
 		AddSettingRow(grid, "Availability", _hotkeysEnabled);
 
@@ -577,6 +578,12 @@ internal sealed class SettingsForm : Form
 			"Add or remove window from stage shortcut",
 			"Global shortcut that adds the current window to, or removes it from, the current stage.");
 		AddSettingRow(grid, "Add / remove current window", _toggleWindowInStageHotkey);
+
+		_windowSwitcherHotkey = CreateShortcutTextBox(
+			Draft.WindowSwitcherHotkey,
+			"Search windows shortcut",
+			"Global shortcut that opens the searchable application and window switcher.");
+		AddSettingRow(grid, "Search applications / windows", _windowSwitcherHotkey);
 		AddFiller(grid);
 		page.Controls.Add(grid);
 		return page;
@@ -656,6 +663,7 @@ internal sealed class SettingsForm : Form
 		Draft.PreviousStageHotkey = _previousStageHotkey.Text.Trim();
 		Draft.NextStageHotkey = _nextStageHotkey.Text.Trim();
 		Draft.ToggleWindowInStageHotkey = _toggleWindowInStageHotkey.Text.Trim();
+		Draft.WindowSwitcherHotkey = _windowSwitcherHotkey.Text.Trim();
 
 		var rules = ReadApplicationRules();
 		Draft.ApplicationRules = rules;
@@ -677,7 +685,8 @@ internal sealed class SettingsForm : Form
 			new ShortcutEntry("Show / hide sidebar", _toggleSidebarHotkey),
 			new ShortcutEntry("Previous stage", _previousStageHotkey),
 			new ShortcutEntry("Next stage", _nextStageHotkey),
-			new ShortcutEntry("Add / remove current window", _toggleWindowInStageHotkey)
+			new ShortcutEntry("Add / remove current window", _toggleWindowInStageHotkey),
+			new ShortcutEntry("Search applications / windows", _windowSwitcherHotkey)
 		};
 		var combinations = new Dictionary<(uint Modifiers, uint Key), string>();
 		foreach (var shortcut in shortcuts)
@@ -880,6 +889,7 @@ internal sealed class SettingsForm : Form
 		_previousStageHotkey.Text = "Win+Alt+[";
 		_nextStageHotkey.Text = "Win+Alt+]";
 		_toggleWindowInStageHotkey.Text = "Win+Alt+G";
+		_windowSwitcherHotkey.Text = "Win+Alt+Space";
 
 		foreach (DataGridViewRow row in _applicationRules.Rows)
 		{
@@ -901,7 +911,8 @@ internal sealed class SettingsForm : Form
 			_toggleSidebarHotkey,
 			_previousStageHotkey,
 			_nextStageHotkey,
-			_toggleWindowInStageHotkey
+			_toggleWindowInStageHotkey,
+			_windowSwitcherHotkey
 		})
 			textBox.Enabled = _hotkeysEnabled.Checked;
 	}

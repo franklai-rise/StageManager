@@ -33,6 +33,7 @@ public enum WindowEventKind
 	MoveEnd,
 	LocationChanged,
 	NameChanged,
+	StyleChanged,
 	DesktopSwitch,
 }
 
@@ -89,7 +90,7 @@ public sealed record WindowEventBatch(
 	}
 
 	private static bool IsCoalescible(WindowEventKind kind) =>
-		kind is WindowEventKind.LocationChanged or WindowEventKind.NameChanged;
+		kind is WindowEventKind.LocationChanged or WindowEventKind.NameChanged or WindowEventKind.StyleChanged;
 
 	private static void FlushPending(
 		Dictionary<CoalesceKey, WindowEventEnvelope> pending,

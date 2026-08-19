@@ -11,7 +11,7 @@
     <RootNamespace>StageManager.Desktop</RootNamespace>
 		<Product>Stage_Manager_Lai</Product>
 	<Authors>Andreas Wäscher; Frank Lai (modified fork)</Authors>
-	<Description>Stage Manager for Windows with low-memory 3D window cards, stable click targeting, click-through transparency, and adjustable card sizing.</Description>
+	<Description>Stage Manager for Windows with cross-application stages, low-memory 3D cards, isolated static previews, virtual-desktop sessions, and accessible controls.</Description>
 	<Copyright>Original copyright (c) 2022 Andreas Wäscher; Lai modifications (c) 2026 Frank Lai</Copyright>
 	<RepositoryUrl>https://github.com/franklai-rise/StageManager</RepositoryUrl>
   </PropertyGroup>
