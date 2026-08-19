@@ -18,6 +18,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private readonly Compositor _compositor;
 	private readonly ContainerVisual _cameraRoot;
 	private readonly D3DCompositionDevice _graphics;
+	private readonly IRenderSurfacePool _surfacePool;
 	private readonly IPreviewService _previews = new PreviewService();
 	private readonly SidebarCollapseButtonVisual _collapseButton;
 	private readonly SidebarHintVisual _sidebarHint;
@@ -61,6 +62,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_preferenceScale = NormalizeCardScale(cardScale);
 		_animationsEnabled = animationsEnabled;
 		_graphics = new D3DCompositionDevice(renderProfile);
+		_surfacePool = new RenderSurfacePool(_graphics, _compositor);
 		_collapseButton = new SidebarCollapseButtonVisual(_compositor);
 		_sidebarHint = new SidebarHintVisual(_graphics, _compositor);
 		_cameraRoot.Children.InsertAtTop(_collapseButton.Root);
@@ -160,6 +162,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		foreach (var stage in _stages.Values)
 			stage.ReleasePreviewSurfaces();
+		_surfacePool.ReleaseAllIdle();
 		_graphics.Trim();
 	}
 
@@ -239,7 +242,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 			if (!_stages.TryGetValue(snapshot.Key, out var stage))
 			{
 				layoutChanged = true;
-				stage = new StageCardVisual(snapshot.Key, _compositor, _graphics, CardPixelWidth, CardPixelHeight, CardSize);
+				stage = new StageCardVisual(snapshot.Key, _compositor, _surfacePool, CardPixelWidth, CardPixelHeight, CardSize);
 				_stages[snapshot.Key] = stage;
 				_cameraRoot.Children.InsertAtTop(stage.Root);
 			}
@@ -439,6 +442,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 			else
 				_disposePreviewServiceWhenIdle = true;
 		}
+		_surfacePool.Dispose();
 		_graphics.Dispose();
 	}
 
@@ -784,6 +788,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	private void ScheduleCaptures()
 	{
+		_surfacePool.TrimExpired();
 		if (_disposed || (_pausePreviewRefreshWhenHidden && !_sidebarVisible && !_manualRefreshPending))
 			return;
 		lock (_captureGate)
@@ -890,17 +895,17 @@ internal readonly record struct DesktopUiState(
 internal sealed class StageCardVisual : IDisposable
 {
 	private readonly Compositor _compositor;
-	private readonly D3DCompositionDevice _graphics;
+	private readonly IRenderSurfacePool _surfacePool;
 	private readonly int _surfaceWidth;
 	private readonly int _surfaceHeight;
 	private readonly Vector2 _cardSize;
 	private string? _groupCardIdentity;
 
-	public StageCardVisual(string key, Compositor compositor, D3DCompositionDevice graphics, int surfaceWidth, int surfaceHeight, Vector2 cardSize)
+	public StageCardVisual(string key, Compositor compositor, IRenderSurfacePool surfacePool, int surfaceWidth, int surfaceHeight, Vector2 cardSize)
 	{
 		Key = key;
 		_compositor = compositor;
-		_graphics = graphics;
+		_surfacePool = surfacePool;
 		_surfaceWidth = surfaceWidth;
 		_surfaceHeight = surfaceHeight;
 		_cardSize = cardSize;
@@ -941,7 +946,7 @@ internal sealed class StageCardVisual : IDisposable
 			var existing = Windows.FirstOrDefault(card => card.Window.Handle == window.Handle);
 			if (existing is null)
 			{
-				existing = new WindowCardVisual(_compositor, _graphics, window, _surfaceWidth, _surfaceHeight, _cardSize, false);
+				existing = new WindowCardVisual(_compositor, _surfacePool, window, _surfaceWidth, _surfaceHeight, _cardSize, false);
 				Windows.Insert(Math.Min(index, Windows.Count), existing);
 				Root.Children.InsertAtTop(existing.Root);
 			}
@@ -976,7 +981,7 @@ internal sealed class StageCardVisual : IDisposable
 			: representative.ProcessExecutable;
 		if (GroupCard is null)
 		{
-			GroupCard = new WindowCardVisual(_compositor, _graphics, representative, _surfaceWidth, _surfaceHeight, _cardSize, true);
+			GroupCard = new WindowCardVisual(_compositor, _surfacePool, representative, _surfaceWidth, _surfaceHeight, _cardSize, true);
 			Root.Children.InsertAtTop(GroupCard.Root);
 			GroupCard.SetVisible(false);
 		}
@@ -1431,8 +1436,8 @@ internal sealed class SidebarHintVisual : IDisposable
 internal sealed class WindowCardVisual : IDisposable
 {
 	private readonly Compositor _compositor;
-	private readonly D3DCompositionDevice _graphics;
-	private CardSwapChain? _surface;
+	private readonly IRenderSurfacePool _surfacePool;
+	private RenderSurfaceLease? _surface;
 	private CompositionSurfaceBrush? _surfaceBrush;
 	private readonly CompositionColorBrush _placeholderBrush;
 	private readonly SpriteVisual _content;
@@ -1450,10 +1455,10 @@ internal sealed class WindowCardVisual : IDisposable
 	private bool _hasTransform;
 	private bool _disposed;
 
-	public WindowCardVisual(Compositor compositor, D3DCompositionDevice graphics, IWindow window, int surfaceWidth, int surfaceHeight, Vector2 cardSize, bool isApplicationGroupCard)
+	public WindowCardVisual(Compositor compositor, IRenderSurfacePool surfacePool, IWindow window, int surfaceWidth, int surfaceHeight, Vector2 cardSize, bool isApplicationGroupCard)
 	{
 		_compositor = compositor;
-		_graphics = graphics;
+		_surfacePool = surfacePool;
 		Window = window;
 		IsApplicationGroupCard = isApplicationGroupCard;
 		_lastKnownMinimized = window.IsMinimized;
@@ -1519,7 +1524,9 @@ internal sealed class WindowCardVisual : IDisposable
 		IsVisible = visible;
 		Root.IsVisible = visible;
 		if (!visible)
-			ReleaseSurface();
+			ReleaseSurface(preserveCapture: true);
+		else if (LastCaptureUtc != DateTime.MinValue)
+			EnsureSurface();
 	}
 
 	public void UpdateWindow(IWindow window)
@@ -1574,23 +1581,38 @@ internal sealed class WindowCardVisual : IDisposable
 	{
 		if (_disposed || frame.Width != SurfaceWidth || frame.Height != SurfaceHeight)
 			return;
-		EnsureSurface();
+		if (!EnsureSurface())
+		{
+			InvalidateCapture();
+			return;
+		}
 		_surface!.Upload(frame.Pixels);
 		LastCaptureUtc = DateTime.UtcNow;
 	}
 
-	private void EnsureSurface()
+	private bool EnsureSurface()
 	{
 		if (_surface is not null)
-			return;
-		_surface = _graphics.CreateSurface(_compositor, SurfaceWidth, SurfaceHeight);
+			return true;
+		_surface = _surfacePool.Rent(
+			this,
+			() =>
+			{
+				if (!_disposed)
+					InvalidateCapture();
+			},
+			SurfaceWidth,
+			SurfaceHeight);
+		if (_surface is null)
+			return false;
 		_surfaceBrush = _compositor.CreateSurfaceBrush(_surface.CompositionSurface);
 		_surfaceBrush.Stretch = CompositionStretch.Fill;
 		_content.Brush = _surfaceBrush;
 		_shadow.Mask = _surfaceBrush;
+		return true;
 	}
 
-	public void ReleaseSurface()
+	public void ReleaseSurface(bool preserveCapture = false)
 	{
 		if (_surface is null)
 			return;
@@ -1600,7 +1622,8 @@ internal sealed class WindowCardVisual : IDisposable
 		_surfaceBrush = null;
 		_surface.Dispose();
 		_surface = null;
-		LastCaptureUtc = DateTime.MinValue;
+		if (!preserveCapture)
+			LastCaptureUtc = DateTime.MinValue;
 	}
 
 	public void MarkCaptureStarted() => LastCaptureUtc = DateTime.UtcNow;

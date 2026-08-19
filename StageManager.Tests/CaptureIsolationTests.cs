@@ -17,6 +17,23 @@ public sealed class CaptureIsolationTests
 	}
 
 	[TestMethod]
+	public void RenderSurfaceBudgetIsBounded()
+	{
+		Assert.IsTrue(RenderSurfacePoolPolicy.CanAllocate(0, 0, 320, 200));
+		Assert.IsFalse(RenderSurfacePoolPolicy.CanAllocate(
+			RenderSurfacePoolPolicy.MaximumSurfaceCount,
+			0,
+			64,
+			64));
+		Assert.IsFalse(RenderSurfacePoolPolicy.CanAllocate(
+			1,
+			RenderSurfacePoolPolicy.MaximumSurfaceBytes - 1,
+			64,
+			64));
+		Assert.AreEqual(320L * 200 * 8, RenderSurfacePoolPolicy.EstimateBytes(320, 200));
+	}
+
+	[TestMethod]
 	public async Task CaptureWorkerProtocolReturnsDownscaledPlaceholder()
 	{
 		var pipeName = $"StageManagerCaptureTest_{Guid.NewGuid():N}";
