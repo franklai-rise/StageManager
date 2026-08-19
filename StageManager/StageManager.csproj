@@ -2,7 +2,7 @@
 
 	<PropertyGroup>
 		<OutputType>WinExe</OutputType>
-		<TargetFramework>net8.0-windows</TargetFramework>
+		<TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
 		<Nullable>enable</Nullable>
 		<UseWPF>true</UseWPF>
 		<UseWindowsForms>true</UseWindowsForms>
@@ -21,6 +21,10 @@
 
 	<ItemGroup>
 		<Resource Include="StageManager.ico" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\StageManager.Core\StageManager.Core.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

@@ -22,7 +22,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\StageManager\StageManager.csproj" />
+    <ProjectReference Include="..\StageManager.Core\StageManager.Core.csproj" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
   </ItemGroup>

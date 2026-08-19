@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace StageManager.Infrastructure;
 
-internal sealed class StartupGuard
+public sealed class StartupGuard
 {
 	private readonly string _statePath;
 	private GuardState _state = new();

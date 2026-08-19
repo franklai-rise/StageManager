@@ -189,7 +189,7 @@ internal sealed class SettingsForm : Form
 		};
 		if (_hotkeysEnabled.Checked)
 		{
-			var invalid = gestures.FirstOrDefault(item => !HotkeyManager.TryParse(item.Item2, out _, out _));
+			var invalid = gestures.FirstOrDefault(item => !HotkeyGestureParser.TryParse(item.Item2, out _, out _));
 			if (!string.IsNullOrEmpty(invalid.Item1))
 			{
 				MessageBox.Show(this, $"'{invalid.Item2}' is not a valid shortcut for {invalid.Item1}.", "Invalid shortcut", MessageBoxButtons.OK, MessageBoxIcon.Warning);

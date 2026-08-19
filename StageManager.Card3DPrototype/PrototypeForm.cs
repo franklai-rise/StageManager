@@ -517,7 +517,7 @@ internal sealed class PrototypeForm : Form
 
 	private void RegisterHotkey(int id, string gesture)
 	{
-		if (!HotkeyManager.TryParse(gesture, out var modifiers, out var virtualKey) ||
+		if (!HotkeyGestureParser.TryParse(gesture, out var modifiers, out var virtualKey) ||
 			!NativeMethods.RegisterHotKey(Handle, id, modifiers | ModNoRepeat, virtualKey))
 		{
 			_trayIcon?.ShowBalloonTip(3500, "Stage_Manager_Lai", $"The shortcut {gesture} is already in use or invalid.", ToolTipIcon.Warning);

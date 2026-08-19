@@ -61,58 +61,8 @@ public sealed class HotkeyManager : IDisposable
 		_source.RemoveHook(WindowProcedure);
 	}
 
-	public static bool TryParse(string gesture, out uint modifiers, out uint virtualKey)
-	{
-		modifiers = 0;
-		virtualKey = 0;
-		var parts = gesture.Split('+', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-		if (parts.Length < 2)
-			return false;
-
-		foreach (var modifier in parts.Take(parts.Length - 1))
-		{
-			switch (modifier.ToUpperInvariant())
-			{
-				case "WIN":
-				case "WINDOWS":
-					modifiers |= ModWin;
-					break;
-				case "ALT":
-					modifiers |= ModAlt;
-					break;
-				case "CTRL":
-				case "CONTROL":
-					modifiers |= ModControl;
-					break;
-				case "SHIFT":
-					modifiers |= ModShift;
-					break;
-				default:
-					return false;
-			}
-		}
-
-		var keyText = parts[^1];
-		if (keyText == "[")
-			virtualKey = 0xDB;
-		else if (keyText == "]")
-			virtualKey = 0xDD;
-		else if (keyText.Length == 1 && char.IsLetterOrDigit(keyText[0]))
-			virtualKey = char.ToUpper(keyText[0], CultureInfo.InvariantCulture);
-		else
-		{
-			try
-			{
-				var key = (Key)new KeyConverter().ConvertFromInvariantString(keyText)!;
-				virtualKey = (uint)KeyInterop.VirtualKeyFromKey(key);
-			}
-			catch
-			{
-				return false;
-			}
-		}
-		return virtualKey != 0;
-	}
+	public static bool TryParse(string gesture, out uint modifiers, out uint virtualKey) =>
+		HotkeyGestureParser.TryParse(gesture, out modifiers, out virtualKey);
 
 	private IntPtr WindowProcedure(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
 	{

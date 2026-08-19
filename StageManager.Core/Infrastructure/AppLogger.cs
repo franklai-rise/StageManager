@@ -4,7 +4,7 @@ using System.Linq;
 
 namespace StageManager.Infrastructure;
 
-internal static class AppLogger
+public static class AppLogger
 {
 	private static readonly object Sync = new();
 	private static readonly string LogDirectory = Path.Combine(
