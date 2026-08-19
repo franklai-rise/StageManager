@@ -4,12 +4,12 @@ using StageManager.Native.PInvoke;
 using StageManager.Native.Window;
 using StageManager.Services;
 using StageManager.Settings;
+using StageManager.Threading;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Threading;
 
 namespace StageManager;
 
@@ -18,7 +18,7 @@ public sealed class SceneManager : IDisposable
 	private readonly SettingsService _settings;
 	private readonly VirtualDesktopService _virtualDesktops;
 	private readonly DisplayTopologyService _displays;
-	private readonly Dispatcher _dispatcher;
+	private readonly IUiDispatcher _dispatcher;
 	private readonly SemaphoreSlim _gate = new(1, 1);
 	private readonly CancellationTokenSource _lifetime = new();
 	private readonly Dictionary<Guid, List<Stage>> _stagesByDesktop = new();
@@ -33,7 +33,7 @@ public sealed class SceneManager : IDisposable
 		SettingsService settings,
 		VirtualDesktopService virtualDesktops,
 		DisplayTopologyService displays,
-		Dispatcher dispatcher)
+		IUiDispatcher dispatcher)
 	{
 		WindowsManager = windowsManager ?? throw new ArgumentNullException(nameof(windowsManager));
 		_settings = settings ?? throw new ArgumentNullException(nameof(settings));
@@ -55,7 +55,7 @@ public sealed class SceneManager : IDisposable
 		if (_started)
 			return;
 		if (!_dispatcher.CheckAccess())
-			throw new NotSupportedException("SceneManager.Start must run on the WPF dispatcher thread.");
+			throw new NotSupportedException("SceneManager.Start must run on its UI dispatcher thread.");
 
 		WindowsManager.WindowCreated += OnWindowCreated;
 		WindowsManager.WindowUpdated += OnWindowUpdated;
@@ -531,8 +531,7 @@ public sealed class SceneManager : IDisposable
 	{
 		if (_stopping)
 			return;
-		var dispatcherOperation = _dispatcher.InvokeAsync(() => RunSerializedAsync(action, operation), DispatcherPriority.Background);
-		_ = dispatcherOperation.Task.Unwrap().ContinueWith(task =>
+		_ = _dispatcher.InvokeAsync(() => RunSerializedAsync(action, operation)).ContinueWith(task =>
 		{
 			if (task.Exception is not null)
 				AppLogger.Error($"Queued operation '{operation}' failed.", task.Exception.Flatten());

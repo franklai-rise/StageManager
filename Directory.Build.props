@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <StageManagerVersion>2.6.0</StageManagerVersion>
+    <Version>$(StageManagerVersion)</Version>
+    <AssemblyVersion>$(StageManagerVersion).0</AssemblyVersion>
+    <FileVersion>$(StageManagerVersion).0</FileVersion>
+    <InformationalVersion>Stage_Manager_Lai_v$(StageManagerVersion)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+</Project>

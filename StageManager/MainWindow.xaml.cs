@@ -168,7 +168,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
 		IsSafeMode = false;
 		var windowsManager = new WindowsManager(AppServices.WindowClassifier, AppServices.VirtualDesktops);
-		SceneManager = new SceneManager(windowsManager, _settings, AppServices.VirtualDesktops, _displays, Dispatcher);
+		SceneManager = new SceneManager(windowsManager, _settings, AppServices.VirtualDesktops, _displays, new WpfUiDispatcher(Dispatcher));
 		SceneManager.StageChanged += SceneManager_StageChanged;
 		SceneManager.CurrentStageSelectionChanged += SceneManager_CurrentStageSelectionChanged;
 		SceneManager.StagesReset += SceneManager_StagesReset;
