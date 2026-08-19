@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -47,7 +48,11 @@ public sealed class DiagnosticBundleExporter
 	private readonly DiagnosticBundleOptions _options;
 	private readonly Assembly _applicationAssembly;
 	private readonly TimeProvider _timeProvider;
-	private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
+	private readonly JsonSerializerOptions _jsonOptions = new()
+	{
+		WriteIndented = true,
+		Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+	};
 	private readonly IReadOnlyList<(string Path, string Token)> _pathReplacements;
 
 	public DiagnosticBundleExporter(

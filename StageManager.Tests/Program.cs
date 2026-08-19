@@ -91,8 +91,9 @@ public sealed class StageManagerTests
 				}
 				""");
 			var service = new SettingsService(path);
-			Assert(service.Current.SchemaVersion == 7, "Settings schema was not upgraded for low-memory rendering.");
+			Assert(service.Current.SchemaVersion == 9, "Settings schema was not upgraded to the render-policy schema.");
 			Assert(service.Current.LowMemoryRendering, "Low-memory rendering should be enabled by default.");
+			Assert(service.Current.RenderProfile == RenderProfile.LowMemory, "Legacy low-memory rendering was not migrated.");
 			Assert(!service.Current.IgnoredProcesses.Contains("explorer", StringComparer.OrdinalIgnoreCase),
 				"The legacy default Explorer ignore entry was not migrated.");
 			Assert(!service.Current.IgnoredProcesses.Contains("yuanbao", StringComparer.OrdinalIgnoreCase),
@@ -100,7 +101,7 @@ public sealed class StageManagerTests
 			Assert(service.Current.IgnoredProcesses.Contains("custom-app", StringComparer.OrdinalIgnoreCase),
 				"A user-selected ignored process was lost during migration.");
 			var migratedJson = File.ReadAllText(path);
-			Assert(migratedJson.Contains("\"SchemaVersion\": 7", StringComparison.Ordinal),
+			Assert(migratedJson.Contains("\"SchemaVersion\": 9", StringComparison.Ordinal),
 				"The migrated schema was not written back to disk.");
 			Assert(!migratedJson.Contains("explorer", StringComparison.OrdinalIgnoreCase),
 				"The legacy Explorer ignore entry remained in the persisted settings.");
@@ -365,6 +366,22 @@ public sealed class StageManagerTests
 		};
 		var selected = SidebarDisplayPolicy.SelectLeftmost(displays, area => area);
 		Assert(selected.Left == -2560, "The sidebar did not select the physical leftmost display.");
+		var primary = SidebarDisplayPolicy.Select(
+			displays,
+			area => area,
+			area => area.Left.ToString(),
+			area => area.Left == 0,
+			SidebarDisplayMode.Primary,
+			null);
+		Assert(primary.Left == 0, "Primary-display selection did not honor the setting.");
+		var specific = SidebarDisplayPolicy.Select(
+			displays,
+			area => area,
+			area => area.Left.ToString(),
+			_ => false,
+			SidebarDisplayMode.Specific,
+			"1920");
+		Assert(specific.Left == 1920, "Specific-display selection did not honor the stored identity.");
 	}
 
 	[TestMethod]

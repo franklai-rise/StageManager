@@ -33,6 +33,7 @@ internal sealed class PrototypeForm : Form
 	private readonly ContextMenuStrip _contextMenu = new();
 	private readonly ContextMenuStrip _cardContextMenu = new();
 	private readonly AppCommandDispatcher _commands;
+	private readonly DisplayIdentityService _displayIdentities = new();
 	private readonly HashSet<int> _registeredHotkeys = new();
 	private Screen _sidebarDisplay;
 	private Rectangle _sidebarScreenBounds;
@@ -416,6 +417,7 @@ internal sealed class PrototypeForm : Form
 		_renderer.SetCardScale(settings.CardScale);
 		_renderer.SetPreviewPolicy(settings.PreviewRefreshMinutes, settings.PausePreviewRefreshWhenHidden);
 		_renderer.SetIdleHint(settings.IdleAutoHideEnabled, settings.IdleAutoHideSeconds);
+		UpdateSidebarDisplay();
 		RegisterHotkeys();
 		if (!settings.IdleAutoHideEnabled && !_sidebarVisible)
 			SetSidebarVisible(true);
@@ -702,9 +704,10 @@ internal sealed class PrototypeForm : Form
 		var screenPoint = Cursor.Position;
 		var nowUtc = DateTime.UtcNow;
 		var pointerAtLeftEdge = IsNearLeftEdge(screenPoint);
-		var largeWindowActive = FullScreenService.UsesTransientSidebarOn(
-			NativeMethods.GetForegroundWindow(),
-			_sidebarDisplay);
+		var largeWindowActive = _catalog.Settings.Current.FullScreenSidebarMode == FullScreenSidebarMode.EdgeReveal &&
+			FullScreenService.UsesTransientSidebarOn(
+				NativeMethods.GetForegroundWindow(),
+				_sidebarDisplay);
 		UpdateTransientSession(largeWindowActive, nowUtc);
 		if (!_sidebarVisible)
 		{
@@ -840,7 +843,16 @@ internal sealed class PrototypeForm : Form
 	{
 		if (_closing || Screen.AllScreens.Length == 0)
 			return;
-		var selected = SidebarDisplayPolicy.SelectLeftmost(Screen.AllScreens, screen => screen.WorkingArea);
+		var settings = _catalog?.Settings.Current;
+		var selected = settings is null
+			? SidebarDisplayPolicy.SelectLeftmost(Screen.AllScreens, screen => screen.WorkingArea)
+			: SidebarDisplayPolicy.Select(
+				Screen.AllScreens,
+				screen => screen.WorkingArea,
+				screen => _displayIdentities.GetStableId(screen),
+				screen => screen.Primary,
+				settings.SidebarDisplayMode,
+				settings.SidebarDisplayId);
 		if (string.Equals(selected.DeviceName, _sidebarDisplay.DeviceName, StringComparison.OrdinalIgnoreCase) &&
 			selected.WorkingArea == _sidebarScreenBounds)
 			return;
