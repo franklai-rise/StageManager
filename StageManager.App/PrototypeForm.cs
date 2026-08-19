@@ -24,8 +24,9 @@ internal sealed class PrototypeForm : Form
 	private const int NextStageHotkeyId = 0x4C43;
 	private const int EdgeActivationWidth = 8;
 	private readonly DispatcherQueueHelper _dispatcherQueue = new();
-	private readonly System.Windows.Forms.Timer _stageTimer = new() { Interval = 500 };
-	private readonly System.Windows.Forms.Timer _pointerTimer = new() { Interval = 50 };
+	private readonly System.Windows.Forms.Timer _stageTimer = new() { Interval = 15000 };
+	private readonly System.Windows.Forms.Timer _catalogRefreshTimer = new() { Interval = 33 };
+	private readonly System.Windows.Forms.Timer _pointerTimer = new() { Interval = 250 };
 	private readonly System.Windows.Forms.Timer _regionCollapseTimer = new() { Interval = 260 };
 	private readonly System.Windows.Forms.Timer _displayChangeTimer = new() { Interval = 250 };
 	private readonly System.Windows.Forms.Timer _previewReleaseTimer = new() { Interval = 30000 };
@@ -87,7 +88,17 @@ internal sealed class PrototypeForm : Form
 		_contextMenu.Items.Add(diagnosticsItem);
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(exitItem);
-		_stageTimer.Tick += (_, _) => RefreshStages();
+		_stageTimer.Tick += (_, _) =>
+		{
+			_catalog?.ReevaluateWindows();
+			RefreshStages();
+		};
+		_catalogRefreshTimer.Tick += (_, _) =>
+		{
+			_catalogRefreshTimer.Stop();
+			RefreshStages();
+			PollPointer();
+		};
 		_pointerTimer.Tick += (_, _) => PollPointer();
 		_regionCollapseTimer.Tick += (_, _) =>
 		{
@@ -140,6 +151,7 @@ internal sealed class PrototypeForm : Form
 			_target.Root = _root;
 			_catalog = new PrototypeStageCatalog();
 			await _catalog.StartAsync();
+			_catalog.Changed += Catalog_Changed;
 			_catalog.Settings.SettingsChanged += Settings_SettingsChanged;
 			_renderer = new CompositionStageRenderer(
 				this,
@@ -147,7 +159,7 @@ internal sealed class PrototypeForm : Form
 				_root,
 				_catalog.Settings.Current.CardScale,
 				_catalog.Settings.Current.AnimationsEnabled,
-				_catalog.Settings.Current.LowMemoryRendering);
+				_catalog.Settings.Current.RenderProfile);
 			_renderer.Resize(ClientSize.Width, ClientSize.Height, DeviceDpi / 96f);
 			CreateTrayIcon();
 			ApplyRuntimeSettings(updateStartup: false);
@@ -352,11 +364,13 @@ internal sealed class PrototypeForm : Form
 		_closing = true;
 		UnregisterHotkeys();
 		_stageTimer.Stop();
+		_catalogRefreshTimer.Stop();
 		_pointerTimer.Stop();
 		_regionCollapseTimer.Stop();
 		_displayChangeTimer.Stop();
 		_previewReleaseTimer.Stop();
 		_stageTimer.Dispose();
+		_catalogRefreshTimer.Dispose();
 		_pointerTimer.Dispose();
 		_regionCollapseTimer.Dispose();
 		_displayChangeTimer.Dispose();
@@ -375,6 +389,8 @@ internal sealed class PrototypeForm : Form
 		}
 		_renderer?.Dispose();
 		_renderer = null;
+		if (_catalog is not null)
+			_catalog.Changed -= Catalog_Changed;
 		if (_catalog is not null)
 			_catalog.Settings.SettingsChanged -= Settings_SettingsChanged;
 		_catalog?.Dispose();
@@ -396,10 +412,29 @@ internal sealed class PrototypeForm : Form
 	{
 		if (_closing || _catalog is null || _renderer is null)
 			return;
+		var stages = _catalog.GetStages();
+		_renderer.SetDesktopSession(_catalog.CurrentDesktopId);
 		var previousRevision = _renderer.LayoutRevision;
-		_renderer.Synchronize(_catalog.GetStages());
+		_renderer.Synchronize(stages);
 		if (_sidebarVisible && previousRevision != _renderer.LayoutRevision)
 			UpdateWindowRegion(true);
+	}
+
+	private void Catalog_Changed(object? sender, EventArgs e)
+	{
+		if (_closing || !IsHandleCreated)
+			return;
+		try
+		{
+			BeginInvoke(new Action(() =>
+			{
+				_catalogRefreshTimer.Stop();
+				_catalogRefreshTimer.Start();
+			}));
+		}
+		catch (InvalidOperationException)
+		{
+		}
 	}
 
 	private void Settings_SettingsChanged(object? sender, EventArgs e)
@@ -415,12 +450,16 @@ internal sealed class PrototypeForm : Form
 		var settings = _catalog.Settings.Current;
 		_renderer.SetAnimationsEnabled(settings.AnimationsEnabled);
 		_renderer.SetCardScale(settings.CardScale);
-		_renderer.SetPreviewPolicy(settings.PreviewRefreshMinutes, settings.PausePreviewRefreshWhenHidden);
+		_renderer.SetPreviewPolicy(
+			settings.PreviewRefreshMinutes,
+			settings.PausePreviewRefreshWhenHidden,
+			window => settings.FindApplicationRule(window.ProcessName)?.PreviewMode ?? PreviewMode.Auto);
 		_renderer.SetIdleHint(settings.IdleAutoHideEnabled, settings.IdleAutoHideSeconds);
 		UpdateSidebarDisplay();
 		RegisterHotkeys();
 		if (!settings.IdleAutoHideEnabled && !_sidebarVisible)
 			SetSidebarVisible(true);
+		ConfigurePointerPolling(IsLargeWindowActive());
 		if (updateStartup)
 		{
 			try
@@ -623,6 +662,7 @@ internal sealed class PrototypeForm : Form
 				0,
 				NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
 			_renderer.SetSidebarVisible(true, animate: true);
+			ConfigurePointerPolling(IsLargeWindowActive());
 			return;
 		}
 
@@ -643,6 +683,7 @@ internal sealed class PrototypeForm : Form
 				SetTransientOverlayRaised(false);
 			}
 		}
+		ConfigurePointerPolling(IsLargeWindowActive());
 	}
 
 	private void ActivateRelativeStage(int delta)
@@ -704,10 +745,7 @@ internal sealed class PrototypeForm : Form
 		var screenPoint = Cursor.Position;
 		var nowUtc = DateTime.UtcNow;
 		var pointerAtLeftEdge = IsNearLeftEdge(screenPoint);
-		var largeWindowActive = _catalog.Settings.Current.FullScreenSidebarMode == FullScreenSidebarMode.EdgeReveal &&
-			FullScreenService.UsesTransientSidebarOn(
-				NativeMethods.GetForegroundWindow(),
-				_sidebarDisplay);
+		var largeWindowActive = IsLargeWindowActive();
 		UpdateTransientSession(largeWindowActive, nowUtc);
 		if (!_sidebarVisible)
 		{
@@ -726,6 +764,7 @@ internal sealed class PrototypeForm : Form
 			}
 			else if (!largeWindowActive && pointerAtLeftEdge)
 				SetSidebarVisible(true);
+			ConfigurePointerPolling(largeWindowActive);
 			return;
 		}
 
@@ -758,6 +797,7 @@ internal sealed class PrototypeForm : Form
 		if (transientAction == TransientSidebarAction.Hide)
 		{
 			SetSidebarVisible(false);
+			ConfigurePointerPolling(largeWindowActive);
 			return;
 		}
 		if (largeWindowActive)
@@ -767,6 +807,7 @@ internal sealed class PrototypeForm : Form
 				_transientRevealUtc = nowUtc;
 				SetTransientOverlayRaised(true);
 			}
+			ConfigurePointerPolling(true);
 			return;
 		}
 
@@ -778,7 +819,35 @@ internal sealed class PrototypeForm : Form
 			nowUtc))
 		{
 			SetSidebarVisible(false);
+			return;
 		}
+		ConfigurePointerPolling(false);
+	}
+
+	private bool IsLargeWindowActive() =>
+		_catalog?.Settings.Current.FullScreenSidebarMode == FullScreenSidebarMode.EdgeReveal &&
+		FullScreenService.UsesTransientSidebarOn(
+			NativeMethods.GetForegroundWindow(),
+			_sidebarDisplay);
+
+	private void ConfigurePointerPolling(bool largeWindowActive)
+	{
+		if (_closing || _catalog is null)
+			return;
+		int? interval = !_sidebarVisible
+			? largeWindowActive ? 50 : 100
+			: largeWindowActive
+				? 50
+				: _catalog.Settings.Current.IdleAutoHideEnabled ? 500 : null;
+		if (interval is null)
+		{
+			_pointerTimer.Stop();
+			return;
+		}
+		if (_pointerTimer.Interval != interval.Value)
+			_pointerTimer.Interval = interval.Value;
+		if (!_pointerTimer.Enabled)
+			_pointerTimer.Start();
 	}
 
 	private void UpdateTransientSession(bool largeWindowActive, DateTime nowUtc)

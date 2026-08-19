@@ -8,8 +8,11 @@ internal static class Program
 {
 	[STAThread]
 	[SupportedOSPlatform("windows10.0.19041.0")]
-	private static int Main()
+	private static int Main(string[] args)
 	{
+		if (CaptureWorkerEntryPoint.IsCaptureWorker(args))
+			return CaptureWorkerEntryPoint.Run(args);
+
 		Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
 		Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 		Application.EnableVisualStyles();

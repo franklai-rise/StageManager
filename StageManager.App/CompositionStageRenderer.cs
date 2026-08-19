@@ -1,4 +1,5 @@
 using StageManager.Native.Window;
+using StageManager.Settings;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Numerics;
@@ -17,7 +18,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private readonly Compositor _compositor;
 	private readonly ContainerVisual _cameraRoot;
 	private readonly D3DCompositionDevice _graphics;
-	private readonly WindowFrameCapture _capture = new();
+	private readonly IPreviewService _previews = new PreviewService();
 	private readonly SidebarCollapseButtonVisual _collapseButton;
 	private readonly SidebarHintVisual _sidebarHint;
 	private readonly Dictionary<string, StageCardVisual> _stages = new(StringComparer.OrdinalIgnoreCase);
@@ -26,6 +27,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private readonly HashSet<IntPtr> _capturesInFlight = new();
 	private readonly List<CardHitTarget> _hitTargets = new();
 	private readonly List<IReadOnlyList<Vector2>> _passivePolygons = new();
+	private readonly Dictionary<Guid, DesktopUiState> _desktopUiStates = new();
 	private IReadOnlyList<PrototypeStageSnapshot> _snapshots = Array.Empty<PrototypeStageSnapshot>();
 	private string? _expandedStageKey;
 	private string? _hoveredStageKey;
@@ -38,7 +40,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private float _scrollOffset;
 	private float _maximumScroll;
 	private int _expandedPage;
-	private bool _disposeCaptureWhenIdle;
+	private bool _disposePreviewServiceWhenIdle;
 	private bool _disposed;
 	private bool _animationsEnabled;
 	private bool _sidebarVisible = true;
@@ -48,15 +50,17 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private int _previewRefreshMinutes = WindowCapturePolicy.DefaultRefreshMinutes;
 	private bool _pausePreviewRefreshWhenHidden = true;
 	private bool _manualRefreshPending;
+	private Func<IWindow, PreviewMode> _previewModeResolver = _ => PreviewMode.Auto;
+	private Guid _desktopSessionId;
 
-	public CompositionStageRenderer(Control owner, Compositor compositor, ContainerVisual cameraRoot, double cardScale, bool animationsEnabled, bool lowMemoryRendering)
+	public CompositionStageRenderer(Control owner, Compositor compositor, ContainerVisual cameraRoot, double cardScale, bool animationsEnabled, RenderProfile renderProfile)
 	{
 		_owner = owner;
 		_compositor = compositor;
 		_cameraRoot = cameraRoot;
 		_preferenceScale = NormalizeCardScale(cardScale);
 		_animationsEnabled = animationsEnabled;
-		_graphics = new D3DCompositionDevice(lowMemoryRendering);
+		_graphics = new D3DCompositionDevice(renderProfile);
 		_collapseButton = new SidebarCollapseButtonVisual(_compositor);
 		_sidebarHint = new SidebarHintVisual(_graphics, _compositor);
 		_cameraRoot.Children.InsertAtTop(_collapseButton.Root);
@@ -80,6 +84,29 @@ internal sealed class CompositionStageRenderer : IDisposable
 		return requested;
 	}
 
+	public void SetDesktopSession(Guid desktopId)
+	{
+		if (_desktopSessionId == desktopId)
+			return;
+		_desktopUiStates[_desktopSessionId] = new DesktopUiState(_expandedStageKey, _expandedPage, _scrollOffset);
+		_desktopSessionId = desktopId;
+		if (_desktopUiStates.TryGetValue(desktopId, out var state))
+		{
+			_expandedStageKey = state.ExpandedStageKey;
+			_expandedPage = state.ExpandedPage;
+			_scrollOffset = state.ScrollOffset;
+		}
+		else
+		{
+			_expandedStageKey = null;
+			_expandedPage = 0;
+			_scrollOffset = 0;
+		}
+		_hoveredStageKey = null;
+		_hoveredWindowHandle = IntPtr.Zero;
+		_hoveredGroupCard = false;
+	}
+
 	public IReadOnlyList<PointF[]> GetInteractivePolygons()
 	{
 		var polygons = _hitTargets
@@ -91,10 +118,14 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	public void SetAnimationsEnabled(bool enabled) => _animationsEnabled = enabled;
 
-	public void SetPreviewPolicy(int refreshMinutes, bool pauseWhenHidden)
+	public void SetPreviewPolicy(
+		int refreshMinutes,
+		bool pauseWhenHidden,
+		Func<IWindow, PreviewMode>? previewModeResolver = null)
 	{
 		_previewRefreshMinutes = Math.Clamp(refreshMinutes, 1, 60);
 		_pausePreviewRefreshWhenHidden = pauseWhenHidden;
+		_previewModeResolver = previewModeResolver ?? (_ => PreviewMode.Auto);
 		if (_sidebarVisible)
 			ScheduleCaptures();
 	}
@@ -404,9 +435,9 @@ internal sealed class CompositionStageRenderer : IDisposable
 		lock (_captureGate)
 		{
 			if (_capturesInFlight.Count == 0)
-				_capture.Dispose();
+				_previews.Dispose();
 			else
-				_disposeCaptureWhenIdle = true;
+				_disposePreviewServiceWhenIdle = true;
 		}
 		_graphics.Dispose();
 	}
@@ -788,18 +819,33 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var width = card.SurfaceWidth;
 		var height = card.SurfaceHeight;
 		card.MarkCaptureStarted();
-		_ = Task.Run(() => card.IsApplicationGroupCard
-			? _capture.CaptureApplicationCard(window, width, height)
-			: _capture.Capture(window, width, height, badge)).ContinueWith(task =>
+		var priority = _manualRefreshPending
+			? PreviewCapturePriority.Manual
+			: window.IsFocused
+				? PreviewCapturePriority.Current
+				: window.Handle == _hoveredWindowHandle
+					? PreviewCapturePriority.Hovered
+					: PreviewCapturePriority.Periodic;
+		var previewMode = card.IsApplicationGroupCard
+			? PreviewMode.IconOnly
+			: _previewModeResolver(window);
+		_ = _previews.CaptureAsync(
+			window,
+			width,
+			height,
+			badge,
+			card.IsApplicationGroupCard,
+			previewMode,
+			priority).ContinueWith(task =>
 		{
-			var disposeCapture = false;
+			var disposePreviewService = false;
 			lock (_captureGate)
 			{
 				_capturesInFlight.Remove(window.Handle);
-				disposeCapture = _disposeCaptureWhenIdle && _capturesInFlight.Count == 0;
+				disposePreviewService = _disposePreviewServiceWhenIdle && _capturesInFlight.Count == 0;
 			}
-			if (disposeCapture)
-				_capture.Dispose();
+			if (disposePreviewService)
+				_previews.Dispose();
 			if (task.IsFaulted || task.IsCanceled)
 				return;
 			var frame = task.Result;
@@ -835,6 +881,11 @@ internal sealed record CardHitTarget(
 	int PageDelta = 0,
 	bool IsPrimaryCard = false,
 	bool IsSidebarCollapseButton = false);
+
+internal readonly record struct DesktopUiState(
+	string? ExpandedStageKey,
+	int ExpandedPage,
+	float ScrollOffset);
 
 internal sealed class StageCardVisual : IDisposable
 {

@@ -41,7 +41,13 @@ internal sealed class WindowFrameCapture : IDisposable
 	private readonly ConcurrentDictionary<string, Bitmap> _icons = new(StringComparer.OrdinalIgnoreCase);
 	private bool _disposed;
 
-	public CapturedCardFrame Capture(IWindow window, int targetWidth, int targetHeight, string? countBadge = null)
+	public CapturedCardFrame Capture(
+		IWindow window,
+		int targetWidth,
+		int targetHeight,
+		string? countBadge = null,
+		bool allowWindowCapture = true,
+		string? fallbackStatus = null)
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		targetWidth = Math.Max(32, targetWidth);
@@ -62,7 +68,7 @@ internal sealed class WindowFrameCapture : IDisposable
 		graphics.SetClip(clipPath);
 
 		var target = new Rectangle(1, 1, targetWidth - 2, targetHeight - 2);
-		var captured = !window.IsMinimized && TryDrawWindow(window.Handle, graphics, target);
+		var captured = allowWindowCapture && !window.IsMinimized && TryDrawWindow(window.Handle, graphics, target);
 		var placeholder = !captured;
 		if (placeholder)
 		{
@@ -74,7 +80,7 @@ internal sealed class WindowFrameCapture : IDisposable
 		DrawIconBadge(graphics, window, targetWidth, targetHeight);
 		DrawStatusBadge(
 			graphics,
-			window.IsMinimized ? "MINIMIZED" : !captured ? "NO PREVIEW" : null,
+			window.IsMinimized ? "MINIMIZED" : !captured ? fallbackStatus ?? "NO PREVIEW" : null,
 			targetWidth,
 			targetHeight);
 		if (!string.IsNullOrWhiteSpace(countBadge))
@@ -149,7 +155,7 @@ internal sealed class WindowFrameCapture : IDisposable
 			return false;
 		var width = rectangle.Right - rectangle.Left;
 		var height = rectangle.Bottom - rectangle.Top;
-		if (width < 2 || height < 2 || width > 8192 || height > 8192)
+		if (!WindowCapturePolicy.CanCaptureSource(width, height))
 			return false;
 
 		var memoryDc = NativeMethods.CreateCompatibleDC(IntPtr.Zero);

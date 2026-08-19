@@ -1,5 +1,6 @@
 using StageManager.Native;
 using StageManager.Native.PInvoke;
+using StageManager.Model;
 using StageManager.Settings;
 using System;
 using System.Collections.Generic;
@@ -9,6 +10,7 @@ namespace StageManager.Services;
 public interface IWindowClassifier
 {
 	bool IsCandidate(WindowsWindow window, out string reason);
+	WindowClassification Classify(WindowsWindow window);
 }
 
 public sealed class WindowClassifier : IWindowClassifier
@@ -62,25 +64,49 @@ public sealed class WindowClassifier : IWindowClassifier
 
 	public bool IsCandidate(WindowsWindow window, out string reason)
 	{
-		if (window.Handle == IntPtr.Zero || !Win32.IsWindow(window.Handle))
-			return Reject("invalid handle", out reason);
-		if (window.ProcessId < 0 || string.IsNullOrWhiteSpace(window.ProcessName))
-			return Reject("process unavailable", out reason);
-		if (string.IsNullOrWhiteSpace(window.Title))
-			return Reject("untitled/transient window", out reason);
-		if (IgnoredClasses.Contains(window.Class))
-			return Reject($"protected class {window.Class}", out reason);
-		if (ProtectedProcesses.Contains(window.ProcessName) && !IsExplorerFolderWindow(window))
-			return Reject($"protected process {window.ProcessName}", out reason);
-		if (_settings.Current.IgnoredProcesses.Exists(name => string.Equals(name, window.ProcessName, StringComparison.OrdinalIgnoreCase)))
-			return Reject($"user ignored process {window.ProcessName}", out reason);
-		if (!Win32Helper.IsAppWindow(window.Handle) || !Win32Helper.IsAltTabWindow(window.Handle))
-			return Reject("tool, owned, child, or non-activating window", out reason);
-		if (Win32Helper.IsCloaked(window.Handle) && _virtualDesktops.IsWindowOnCurrentDesktop(window.Handle))
-			return Reject("cloaked window on current desktop", out reason);
+		var classification = Classify(window);
+		reason = classification.RejectionReason;
+		return classification.CreatesCard;
+	}
 
-		reason = string.Empty;
-		return true;
+	public WindowClassification Classify(WindowsWindow window)
+	{
+		ArgumentNullException.ThrowIfNull(window);
+		var applicationId = GetCanonicalApplicationId(window);
+		var owner = window.Handle == IntPtr.Zero ? IntPtr.Zero : Win32.GetWindow(window.Handle, Win32.GW.GW_OWNER);
+		var activationTarget = owner == IntPtr.Zero ? window.Handle : owner;
+		if (window.Handle == IntPtr.Zero || !Win32.IsWindow(window.Handle))
+			return Reject(applicationId, WindowRole.Unknown, activationTarget, "invalid handle");
+		if (window.ProcessId < 0 || string.IsNullOrWhiteSpace(window.ProcessName))
+			return Reject(applicationId, WindowRole.Unknown, activationTarget, "process unavailable");
+		if (string.IsNullOrWhiteSpace(window.Title))
+			return Reject(applicationId, WindowRole.TransientPopup, activationTarget, "untitled/transient window");
+		if (IgnoredClasses.Contains(window.Class))
+			return Reject(applicationId, WindowRole.Shell, activationTarget, $"protected class {window.Class}");
+		if (ProtectedProcesses.Contains(window.ProcessName) && !IsExplorerFolderWindow(window))
+			return Reject(applicationId, WindowRole.Shell, activationTarget, $"protected process {window.ProcessName}");
+		if (_settings.Current.IgnoredProcesses.Exists(name => string.Equals(name, window.ProcessName, StringComparison.OrdinalIgnoreCase)))
+			return Reject(applicationId, WindowRole.Primary, activationTarget, $"user ignored process {window.ProcessName}");
+		var extendedStyle = Win32.GetWindowExStyleLongPtr(window.Handle);
+		if (extendedStyle.HasFlag(Win32.WS_EX.WS_EX_NOACTIVATE))
+			return Reject(applicationId, WindowRole.Overlay, activationTarget, "non-activating overlay");
+		if (owner != IntPtr.Zero)
+			return Reject(applicationId, WindowRole.ModalDialog, activationTarget, "owned dialog uses its application card");
+		if (!Win32Helper.IsAppWindow(window.Handle) || !Win32Helper.IsAltTabWindow(window.Handle))
+			return Reject(applicationId, WindowRole.TransientPopup, activationTarget, "tool, child, or transient window");
+		if (Win32Helper.IsCloaked(window.Handle) && _virtualDesktops.IsWindowOnCurrentDesktop(window.Handle))
+			return Reject(applicationId, WindowRole.Unknown, activationTarget, "cloaked window on current desktop");
+
+		return new WindowClassification(true, applicationId, WindowRole.Primary, window.Handle, string.Empty);
+	}
+
+	public static string GetCanonicalApplicationId(WindowsWindow window)
+	{
+		if (!string.IsNullOrWhiteSpace(window.AppUserModelId))
+			return "aumid:" + window.AppUserModelId.Trim().ToUpperInvariant();
+		if (!string.IsNullOrWhiteSpace(window.ProcessExecutable))
+			return "exe:" + Path.GetFullPath(window.ProcessExecutable).Trim().ToUpperInvariant();
+		return "process:" + window.ProcessName.Trim().ToUpperInvariant();
 	}
 
 	private static bool IsExplorerFolderWindow(WindowsWindow window)
@@ -89,9 +115,9 @@ public sealed class WindowClassifier : IWindowClassifier
 			ExplorerFolderClasses.Contains(window.Class);
 	}
 
-	private static bool Reject(string value, out string reason)
-	{
-		reason = value;
-		return false;
-	}
+	private static WindowClassification Reject(
+		string applicationId,
+		WindowRole role,
+		IntPtr activationTarget,
+		string reason) => WindowClassification.Rejected(applicationId, role, activationTarget, reason);
 }

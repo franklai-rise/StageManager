@@ -30,8 +30,8 @@ internal sealed class PrototypeStageCatalog : IDisposable
 	private readonly SettingsService _settings;
 	private readonly VirtualDesktopService _virtualDesktops;
 	private readonly WindowsManager _windows;
-	private readonly Dictionary<string, DateTime> _lastActivated = new(StringComparer.OrdinalIgnoreCase);
-	private readonly StableStageOrder _stableStageOrder = new();
+	private readonly Dictionary<Guid, Dictionary<string, DateTime>> _lastActivatedByDesktop = new();
+	private readonly Dictionary<Guid, StableStageOrder> _stableStageOrderByDesktop = new();
 	private IntPtr _lastForeground;
 	private bool _started;
 	private bool _disposed;
@@ -41,7 +41,16 @@ internal sealed class PrototypeStageCatalog : IDisposable
 		_settings = new SettingsService();
 		_virtualDesktops = new VirtualDesktopService();
 		_windows = new WindowsManager(new WindowClassifier(_settings, _virtualDesktops), _virtualDesktops);
+		_windows.WindowCreated += Windows_Changed;
+		_windows.WindowDestroyed += Windows_Changed;
+		_windows.WindowUpdated += Windows_Updated;
+		_windows.WindowFocused += Windows_Focused;
+		_windows.DesktopChanged += Windows_DesktopChanged;
+		_windows.ExternalWindowUpdate += Windows_Changed;
+		_windows.ExternalWindowClosed += Windows_Changed;
 	}
+
+	public event EventHandler? Changed;
 
 	public async Task StartAsync()
 	{
@@ -53,6 +62,7 @@ internal sealed class PrototypeStageCatalog : IDisposable
 	}
 
 	public SettingsService Settings => _settings;
+	public Guid CurrentDesktopId { get; private set; }
 
 	public void ReevaluateWindows()
 	{
@@ -91,8 +101,20 @@ internal sealed class PrototypeStageCatalog : IDisposable
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		var foreground = NativeMethods.GetForegroundWindow();
+		var allWindows = _windows.Windows.ToArray();
+		CurrentDesktopId = _virtualDesktops.GetCurrentDesktopId(allWindows, foreground);
+		if (!_lastActivatedByDesktop.TryGetValue(CurrentDesktopId, out var lastActivatedByApp))
+		{
+			lastActivatedByApp = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+			_lastActivatedByDesktop.Add(CurrentDesktopId, lastActivatedByApp);
+		}
+		if (!_stableStageOrderByDesktop.TryGetValue(CurrentDesktopId, out var stableStageOrder))
+		{
+			stableStageOrder = new StableStageOrder();
+			_stableStageOrderByDesktop.Add(CurrentDesktopId, stableStageOrder);
+		}
 		var ignoredProcesses = _settings.Current.IgnoredProcesses.ToHashSet(StringComparer.OrdinalIgnoreCase);
-		var candidates = _windows.Windows
+		var candidates = allWindows
 			.Where(window => NativeMethods.IsWindow(window.Handle) &&
 				ManagedWindowPresence.ShouldDisplay(
 					NativeMethods.IsWindowVisible(window.Handle),
@@ -106,7 +128,7 @@ internal sealed class PrototypeStageCatalog : IDisposable
 		if (foreground != IntPtr.Zero && foreground != _lastForeground && foregroundKey is not null)
 		{
 			_lastForeground = foreground;
-			_lastActivated[foregroundKey] = DateTime.UtcNow;
+			lastActivatedByApp[foregroundKey] = DateTime.UtcNow;
 		}
 
 		var now = DateTime.UtcNow;
@@ -114,10 +136,10 @@ internal sealed class PrototypeStageCatalog : IDisposable
 			.GroupBy(Stage.GetAppKey, StringComparer.OrdinalIgnoreCase)
 			.Select(group =>
 			{
-				if (!_lastActivated.TryGetValue(group.Key, out var lastActivated))
+				if (!lastActivatedByApp.TryGetValue(group.Key, out var lastActivated))
 				{
-					lastActivated = now.AddSeconds(-_lastActivated.Count - 1);
-					_lastActivated[group.Key] = lastActivated;
+					lastActivated = now.AddSeconds(-lastActivatedByApp.Count - 1);
+					lastActivatedByApp[group.Key] = lastActivated;
 				}
 				var windows = group
 					.OrderByDescending(window => window.IsFocused)
@@ -132,13 +154,13 @@ internal sealed class PrototypeStageCatalog : IDisposable
 			})
 			.ToArray();
 
-		snapshots = _stableStageOrder
+		snapshots = stableStageOrder
 			.Apply(snapshots, stage => stage.Key, stage => stage.LastActivatedUtc)
 			.ToArray();
 
 		var liveKeys = snapshots.Select(stage => stage.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
-		foreach (var staleKey in _lastActivated.Keys.Where(key => !liveKeys.Contains(key)).ToArray())
-			_lastActivated.Remove(staleKey);
+		foreach (var staleKey in lastActivatedByApp.Keys.Where(key => !liveKeys.Contains(key)).ToArray())
+			lastActivatedByApp.Remove(staleKey);
 		return snapshots;
 	}
 
@@ -147,6 +169,23 @@ internal sealed class PrototypeStageCatalog : IDisposable
 		if (_disposed)
 			return;
 		_disposed = true;
+		_windows.WindowCreated -= Windows_Changed;
+		_windows.WindowDestroyed -= Windows_Changed;
+		_windows.WindowUpdated -= Windows_Updated;
+		_windows.WindowFocused -= Windows_Focused;
+		_windows.DesktopChanged -= Windows_DesktopChanged;
+		_windows.ExternalWindowUpdate -= Windows_Changed;
+		_windows.ExternalWindowClosed -= Windows_Changed;
 		_windows.Dispose();
 	}
+
+	private void Windows_Changed(IWindow window) => Changed?.Invoke(this, EventArgs.Empty);
+
+	private void Windows_Changed(IWindow window, bool firstCreate) => Changed?.Invoke(this, EventArgs.Empty);
+
+	private void Windows_Updated(IWindow window, WindowUpdateType updateType) => Changed?.Invoke(this, EventArgs.Empty);
+
+	private void Windows_Focused(IWindow window) => Changed?.Invoke(this, EventArgs.Empty);
+
+	private void Windows_DesktopChanged(object? sender, EventArgs e) => Changed?.Invoke(this, EventArgs.Empty);
 }

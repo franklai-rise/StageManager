@@ -1,4 +1,6 @@
 using System.Runtime.InteropServices;
+using StageManager.Infrastructure;
+using StageManager.Settings;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
@@ -15,7 +17,7 @@ internal sealed class D3DCompositionDevice : IDisposable
 	private readonly IDXGIFactory2 _factory;
 	private bool _disposed;
 
-	public D3DCompositionDevice(bool lowMemoryRendering)
+	public D3DCompositionDevice(RenderProfile renderProfile)
 	{
 		var featureLevels = new[]
 		{
@@ -24,12 +26,13 @@ internal sealed class D3DCompositionDevice : IDisposable
 			FeatureLevel.Level_10_1,
 			FeatureLevel.Level_10_0
 		};
+		_factory = CreateDXGIFactory2<IDXGIFactory2>(false);
 		// A hardware D3D device loads the vendor's complete user-mode driver into this
 		// small utility process. On discrete NVIDIA systems that context alone can retain
 		// tens of megabytes of private memory. The cards are static, low-resolution
 		// snapshots, so WARP is a better default: Composition still performs the visual
 		// transforms, while uploads avoid a per-process vendor GPU context.
-		if (lowMemoryRendering)
+		if (renderProfile == RenderProfile.LowMemory)
 		{
 			try
 			{
@@ -42,10 +45,12 @@ internal sealed class D3DCompositionDevice : IDisposable
 		}
 		else
 		{
-			_device = D3D11CreateDevice(DriverType.Hardware, DeviceCreationFlags.BgraSupport, featureLevels);
+			_device = CreatePreferredHardwareDevice(
+				_factory,
+				renderProfile == RenderProfile.Balanced ? GpuPreference.MinimumPower : GpuPreference.HighPerformance,
+				featureLevels);
 		}
 		_context = _device.ImmediateContext;
-		_factory = CreateDXGIFactory2<IDXGIFactory2>(false);
 	}
 
 	public CardSwapChain CreateSurface(Compositor compositor, int width, int height)
@@ -56,8 +61,55 @@ internal sealed class D3DCompositionDevice : IDisposable
 
 	public void Trim()
 	{
-		if (!_disposed)
-			_context.Flush();
+		if (_disposed)
+			return;
+		_context.ClearState();
+		_context.Flush();
+		try
+		{
+			using var dxgiDevice = _device.QueryInterfaceOrNull<IDXGIDevice3>();
+			dxgiDevice?.Trim();
+		}
+		catch (Exception exception)
+		{
+			AppLogger.Warn($"DXGI trim was unavailable: {exception.Message}");
+		}
+	}
+
+	private static ID3D11Device CreatePreferredHardwareDevice(
+		IDXGIFactory2 factory,
+		GpuPreference preference,
+		FeatureLevel[] featureLevels)
+	{
+		try
+		{
+			using var factory6 = factory.QueryInterfaceOrNull<IDXGIFactory6>();
+			using var adapter = factory6?.EnumAdapterByGpuPreference<IDXGIAdapter1>(0, preference);
+			if (adapter is not null)
+			{
+				D3D11CreateDevice(
+					adapter,
+					DriverType.Unknown,
+					DeviceCreationFlags.BgraSupport,
+					featureLevels,
+					out var preferredDevice).CheckError();
+				if (preferredDevice is not null)
+					return preferredDevice;
+			}
+		}
+		catch (Exception exception)
+		{
+			AppLogger.Warn($"The preferred GPU could not be selected: {exception.Message}");
+		}
+
+		try
+		{
+			return D3D11CreateDevice(DriverType.Hardware, DeviceCreationFlags.BgraSupport, featureLevels);
+		}
+		catch
+		{
+			return D3D11CreateDevice(DriverType.Warp, DeviceCreationFlags.BgraSupport, featureLevels);
+		}
 	}
 
 	public void Dispose()
