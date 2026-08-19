@@ -1,5 +1,6 @@
 using StageManager.Native;
 using StageManager.Native.Window;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -7,7 +8,33 @@ using System.Runtime.InteropServices;
 
 namespace StageManager.Card3DPrototype;
 
-internal sealed record CapturedCardFrame(IntPtr Handle, byte[] Pixels, int Width, int Height, bool IsPlaceholder);
+internal sealed class CapturedCardFrame : IDisposable
+{
+	private byte[]? _buffer;
+
+	public CapturedCardFrame(IntPtr handle, byte[] buffer, int width, int height, bool isPlaceholder)
+	{
+		Handle = handle;
+		_buffer = buffer;
+		Width = width;
+		Height = height;
+		IsPlaceholder = isPlaceholder;
+	}
+
+	public IntPtr Handle { get; }
+	public int Width { get; }
+	public int Height { get; }
+	public bool IsPlaceholder { get; }
+	public ReadOnlySpan<byte> Pixels => (_buffer ?? throw new ObjectDisposedException(nameof(CapturedCardFrame)))
+		.AsSpan(0, Width * Height * 4);
+
+	public void Dispose()
+	{
+		var buffer = Interlocked.Exchange(ref _buffer, null);
+		if (buffer is not null)
+			ArrayPool<byte>.Shared.Return(buffer);
+	}
+}
 
 internal sealed class WindowFrameCapture : IDisposable
 {
@@ -21,7 +48,6 @@ internal sealed class WindowFrameCapture : IDisposable
 		targetHeight = Math.Max(24, targetHeight);
 		// Minimized windows are rendered as lightweight placeholders. Calling PrintWindow on
 		// them can wake or flash GPU-heavy applications without producing a useful frame.
-		using var source = window.IsMinimized ? null : TryCaptureWindow(window.Handle);
 		using var card = new Bitmap(targetWidth, targetHeight, PixelFormat.Format32bppArgb);
 		using var graphics = Graphics.FromImage(card);
 		graphics.Clear(Color.Transparent);
@@ -35,24 +61,20 @@ internal sealed class WindowFrameCapture : IDisposable
 		using var clipPath = CreateRoundedRectangle(new Rectangle(1, 1, targetWidth - 2, targetHeight - 2), radius);
 		graphics.SetClip(clipPath);
 
-		var placeholder = window.IsMinimized || source is null;
+		var target = new Rectangle(1, 1, targetWidth - 2, targetHeight - 2);
+		var captured = !window.IsMinimized && TryDrawWindow(window.Handle, graphics, target);
+		var placeholder = !captured;
 		if (placeholder)
 		{
 			using var placeholderBackground = new SolidBrush(Color.FromArgb(238, 232, 236, 242));
 			graphics.FillPath(placeholderBackground, clipPath);
-		}
-		else
-		{
-			var target = new Rectangle(1, 1, targetWidth - 2, targetHeight - 2);
-			var crop = AspectFillCrop(source!.Size, target.Size);
-			graphics.DrawImage(source, target, crop.X, crop.Y, crop.Width, crop.Height, GraphicsUnit.Pixel);
 		}
 
 		graphics.ResetClip();
 		DrawIconBadge(graphics, window, targetWidth, targetHeight);
 		DrawStatusBadge(
 			graphics,
-			window.IsMinimized ? "MINIMIZED" : source is null ? "NO PREVIEW" : null,
+			window.IsMinimized ? "MINIMIZED" : !captured ? "NO PREVIEW" : null,
 			targetWidth,
 			targetHeight);
 		if (!string.IsNullOrWhiteSpace(countBadge))
@@ -121,18 +143,18 @@ internal sealed class WindowFrameCapture : IDisposable
 		_icons.Clear();
 	}
 
-	private Bitmap? TryCaptureWindow(IntPtr handle)
+	private static bool TryDrawWindow(IntPtr handle, Graphics destination, Rectangle target)
 	{
 		if (!NativeMethods.IsWindow(handle) || !NativeMethods.GetWindowRect(handle, out var rectangle))
-			return null;
+			return false;
 		var width = rectangle.Right - rectangle.Left;
 		var height = rectangle.Bottom - rectangle.Top;
 		if (width < 2 || height < 2 || width > 8192 || height > 8192)
-			return null;
+			return false;
 
 		var memoryDc = NativeMethods.CreateCompatibleDC(IntPtr.Zero);
 		if (memoryDc == IntPtr.Zero)
-			return null;
+			return false;
 
 		var bitmapInfo = new BitmapInfo
 		{
@@ -151,7 +173,7 @@ internal sealed class WindowFrameCapture : IDisposable
 		if (bitmapHandle == IntPtr.Zero || bits == IntPtr.Zero)
 		{
 			NativeMethods.DeleteDC(memoryDc);
-			return null;
+			return false;
 		}
 
 		var priorObject = NativeMethods.SelectObject(memoryDc, bitmapHandle);
@@ -174,7 +196,7 @@ internal sealed class WindowFrameCapture : IDisposable
 				}
 			}
 			if (!captured)
-				return null;
+				return false;
 
 			var pixelCount = width * height;
 			unsafe
@@ -185,22 +207,15 @@ internal sealed class WindowFrameCapture : IDisposable
 			}
 
 			if (IsUniformFrame(bits, pixelCount))
-				return null;
+				return false;
 
-			var copiedPixels = new byte[width * height * 4];
-			Marshal.Copy(bits, copiedPixels, 0, copiedPixels.Length);
-			var copy = new Bitmap(width, height, PixelFormat.Format32bppArgb);
-			var copyData = copy.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
-			try
-			{
-				for (var row = 0; row < height; row++)
-					Marshal.Copy(copiedPixels, row * width * 4, copyData.Scan0 + row * copyData.Stride, width * 4);
-			}
-			finally
-			{
-				copy.UnlockBits(copyData);
-			}
-			return copy;
+			// Draw directly from the DIB while it is alive. The previous implementation
+			// copied the full window into a large byte[] and then into a second Bitmap,
+			// putting multi-megabyte arrays on the LOH after every refresh.
+			using var source = new Bitmap(width, height, width * 4, PixelFormat.Format32bppArgb, bits);
+			var crop = AspectFillCrop(source.Size, target.Size);
+			destination.DrawImage(source, target, crop.X, crop.Y, crop.Width, crop.Height, GraphicsUnit.Pixel);
+			return true;
 		}
 		finally
 		{
@@ -333,22 +348,28 @@ internal sealed class WindowFrameCapture : IDisposable
 	{
 		var rectangle = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
 		var data = bitmap.LockBits(rectangle, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+		byte[]? pixels = null;
 		try
 		{
-			var pixels = new byte[bitmap.Width * bitmap.Height * 4];
+			var pixelBytes = bitmap.Width * bitmap.Height * 4;
+			pixels = ArrayPool<byte>.Shared.Rent(pixelBytes);
 			for (var row = 0; row < bitmap.Height; row++)
 				Marshal.Copy(data.Scan0 + row * data.Stride, pixels, row * bitmap.Width * 4, bitmap.Width * 4);
-			for (var index = 0; index < pixels.Length; index += 4)
+			for (var index = 0; index < pixelBytes; index += 4)
 			{
 				var alpha = pixels[index + 3];
 				pixels[index] = (byte)(pixels[index] * alpha / 255);
 				pixels[index + 1] = (byte)(pixels[index + 1] * alpha / 255);
 				pixels[index + 2] = (byte)(pixels[index + 2] * alpha / 255);
 			}
-			return pixels;
+			var result = pixels;
+			pixels = null;
+			return result;
 		}
 		finally
 		{
+			if (pixels is not null)
+				ArrayPool<byte>.Shared.Return(pixels);
 			bitmap.UnlockBits(data);
 		}
 	}

@@ -19,6 +19,13 @@ internal static class NativeMethods
 	public const uint SwpNoActivate = 0x0010;
 	public const uint SwpAsyncWindowPos = 0x4000;
 
+	[DllImport("psapi.dll")]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	public static extern bool EmptyWorkingSet(IntPtr processHandle);
+
+	[DllImport("kernel32.dll")]
+	public static extern IntPtr GetCurrentProcess();
+
 	[DllImport("user32.dll")]
 	[return: MarshalAs(UnmanagedType.Bool)]
 	public static extern bool PrintWindow(IntPtr windowHandle, IntPtr deviceContext, uint flags);

@@ -8,6 +8,7 @@ internal sealed class SettingsForm : Form
 	private readonly TrackBar _cardSizeSlider;
 	private readonly Label _cardSizeValue;
 	private readonly CheckBox _animationsEnabled;
+	private readonly CheckBox _lowMemoryRendering;
 	private readonly CheckBox _idleAutoHideEnabled;
 	private readonly NumericUpDown _idleSeconds;
 	private readonly NumericUpDown _previewRefreshMinutes;
@@ -39,7 +40,7 @@ internal sealed class SettingsForm : Form
 
 		Controls.Add(new Label
 		{
-			Text = "Stage_Manager_Lai v2.4.0",
+			Text = "Stage_Manager_Lai v2.5.0",
 			Font = new Font("Segoe UI", 17f, FontStyle.Bold),
 			AutoSize = true,
 			Location = new Point(22, 18)
@@ -63,7 +64,8 @@ internal sealed class SettingsForm : Form
 		_cardSizeValue.Font = new Font(Font, FontStyle.Bold);
 		_cardSizeSlider.ValueChanged += (_, _) => UpdateCardSizeLabel();
 		_animationsEnabled = CreateCheckBox("Use animations", draft.AnimationsEnabled, 18, 82, 220);
-		appearanceGroup.Controls.AddRange(new Control[] { _cardSizeSlider, _cardSizeValue, _animationsEnabled });
+		_lowMemoryRendering = CreateCheckBox("Low-memory renderer (restart required)", draft.LowMemoryRendering, 250, 82, 310);
+		appearanceGroup.Controls.AddRange(new Control[] { _cardSizeSlider, _cardSizeValue, _animationsEnabled, _lowMemoryRendering });
 
 		var behaviorGroup = CreateGroup("Behavior", new Rectangle(20, 203, 580, 166));
 		_idleAutoHideEnabled = CreateCheckBox("Auto-hide after no pointer activity", draft.IdleAutoHideEnabled, 18, 31, 300);
@@ -197,6 +199,7 @@ internal sealed class SettingsForm : Form
 
 		Draft.CardScale = _cardSizeSlider.Value / 100d;
 		Draft.AnimationsEnabled = _animationsEnabled.Checked;
+		Draft.LowMemoryRendering = _lowMemoryRendering.Checked;
 		Draft.IdleAutoHideEnabled = _idleAutoHideEnabled.Checked;
 		Draft.IdleAutoHideSeconds = (int)_idleSeconds.Value;
 		Draft.PreviewRefreshMinutes = (int)_previewRefreshMinutes.Value;
@@ -263,6 +266,7 @@ internal sealed class SettingsForm : Form
 	{
 		_cardSizeSlider.Value = 60;
 		_animationsEnabled.Checked = true;
+		_lowMemoryRendering.Checked = true;
 		_idleAutoHideEnabled.Checked = true;
 		_idleSeconds.Value = 60;
 		_previewRefreshMinutes.Value = 5;

@@ -15,7 +15,7 @@ internal sealed class D3DCompositionDevice : IDisposable
 	private readonly IDXGIFactory2 _factory;
 	private bool _disposed;
 
-	public D3DCompositionDevice()
+	public D3DCompositionDevice(bool lowMemoryRendering)
 	{
 		var featureLevels = new[]
 		{
@@ -24,7 +24,26 @@ internal sealed class D3DCompositionDevice : IDisposable
 			FeatureLevel.Level_10_1,
 			FeatureLevel.Level_10_0
 		};
-		_device = D3D11CreateDevice(DriverType.Hardware, DeviceCreationFlags.BgraSupport, featureLevels);
+		// A hardware D3D device loads the vendor's complete user-mode driver into this
+		// small utility process. On discrete NVIDIA systems that context alone can retain
+		// tens of megabytes of private memory. The cards are static, low-resolution
+		// snapshots, so WARP is a better default: Composition still performs the visual
+		// transforms, while uploads avoid a per-process vendor GPU context.
+		if (lowMemoryRendering)
+		{
+			try
+			{
+				_device = D3D11CreateDevice(DriverType.Warp, DeviceCreationFlags.BgraSupport, featureLevels);
+			}
+			catch
+			{
+				_device = D3D11CreateDevice(DriverType.Hardware, DeviceCreationFlags.BgraSupport, featureLevels);
+			}
+		}
+		else
+		{
+			_device = D3D11CreateDevice(DriverType.Hardware, DeviceCreationFlags.BgraSupport, featureLevels);
+		}
 		_context = _device.ImmediateContext;
 		_factory = CreateDXGIFactory2<IDXGIFactory2>(false);
 	}
@@ -33,6 +52,12 @@ internal sealed class D3DCompositionDevice : IDisposable
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		return new CardSwapChain(_device, _context, _factory, compositor, width, height);
+	}
+
+	public void Trim()
+	{
+		if (!_disposed)
+			_context.Flush();
 	}
 
 	public void Dispose()

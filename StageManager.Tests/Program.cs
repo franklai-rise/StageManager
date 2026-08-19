@@ -116,7 +116,8 @@ internal static class TestRunner
 				}
 				""");
 			var service = new SettingsService(path);
-			Assert(service.Current.SchemaVersion == 6, "Settings schema was not upgraded for smart preview controls.");
+			Assert(service.Current.SchemaVersion == 7, "Settings schema was not upgraded for low-memory rendering.");
+			Assert(service.Current.LowMemoryRendering, "Low-memory rendering should be enabled by default.");
 			Assert(!service.Current.IgnoredProcesses.Contains("explorer", StringComparer.OrdinalIgnoreCase),
 				"The legacy default Explorer ignore entry was not migrated.");
 			Assert(!service.Current.IgnoredProcesses.Contains("yuanbao", StringComparer.OrdinalIgnoreCase),
@@ -124,7 +125,7 @@ internal static class TestRunner
 			Assert(service.Current.IgnoredProcesses.Contains("custom-app", StringComparer.OrdinalIgnoreCase),
 				"A user-selected ignored process was lost during migration.");
 			var migratedJson = File.ReadAllText(path);
-			Assert(migratedJson.Contains("\"SchemaVersion\": 6", StringComparison.Ordinal),
+			Assert(migratedJson.Contains("\"SchemaVersion\": 7", StringComparison.Ordinal),
 				"The migrated schema was not written back to disk.");
 			Assert(!migratedJson.Contains("explorer", StringComparison.OrdinalIgnoreCase),
 				"The legacy Explorer ignore entry remained in the persisted settings.");
@@ -258,7 +259,7 @@ internal static class TestRunner
 	private static void CaptureFallback()
 	{
 		using var capture = new WindowFrameCapture();
-		var frame = capture.Capture(new FakeWindow(0, "Missing", "missing.exe"), 254, 158, "+2");
+		using var frame = capture.Capture(new FakeWindow(0, "Missing", "missing.exe"), 254, 158, "+2");
 		Assert(frame.IsPlaceholder, "Invalid HWND did not use the placeholder renderer.");
 		Assert(frame.Pixels.Length == frame.Width * frame.Height * 4, "Placeholder pixel buffer size is invalid.");
 		Assert(frame.Pixels[3] == 0, "Rounded placeholder corner is not transparent.");
@@ -332,7 +333,7 @@ internal static class TestRunner
 	private static void ApplicationGroupCardRendering()
 	{
 		using var capture = new WindowFrameCapture();
-		var frame = capture.CaptureApplicationCard(new FakeWindow(0, "Example", "missing.exe"), 254, 158);
+		using var frame = capture.CaptureApplicationCard(new FakeWindow(0, "Example", "missing.exe"), 254, 158);
 		Assert(!frame.IsPlaceholder, "The synthetic application card was marked as a failed window capture.");
 		Assert(frame.Pixels[3] == 0, "The rounded application card corner is not transparent.");
 		var backgroundIndex = (8 * frame.Width + frame.Width / 2) * 4;

@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.4.0
+# Stage_Manager_Lai v2.5.0
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -102,6 +102,13 @@ user-configurable 1–60 minute refresh interval. The tray and each card provide
 The sidebar now follows the physical leftmost display when monitor topology changes without restarting the application.
 Card right-click actions expose bring-to-front, off-screen recovery, preview refresh, and application ignore controls.
 The footer hint reflects the actual configured idle delay, and left-clicking the tray icon toggles the sidebar.
+
+v2.5.0 adds a low-memory rendering mode, enabled by default. Card surfaces are created only when visible, released
+after the hidden sidebar has been idle, and rendered at a lower internal oversampling ratio. Window capture now scales
+directly from the native DIB into the card bitmap and reuses pooled pixel buffers, avoiding multiple full-window copies
+on the managed large-object heap. The low-memory renderer uses Windows' software composition path to avoid loading a
+large vendor GPU driver into this small utility; it can be disabled in Settings if a particular machine prefers GPU
+rendering. On the development machine, steady private memory fell from roughly 84–104 MB to about 37–40 MB.
 
 ## What the current 3D build includes
 

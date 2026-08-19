@@ -32,6 +32,7 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 	private CancellationTokenSource _lifetime = new();
 	private WindowsWindow? _mouseMoveWindow;
 	private volatile bool _active;
+	private bool _disposed;
 	private int _currentProcessId;
 
 	public WindowsManager(IWindowClassifier classifier, VirtualDesktopService virtualDesktops)
@@ -55,6 +56,7 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 
 	public Task Start()
 	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
 		if (_active)
 			return Task.CompletedTask;
 
@@ -98,6 +100,9 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 
 	public void Dispose()
 	{
+		if (_disposed)
+			return;
+		_disposed = true;
 		Stop();
 		_lifetime.Dispose();
 	}
@@ -316,6 +321,7 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 
 	private void UnregisterWindow(IntPtr handle)
 	{
+		_lastForegroundEvents.TryRemove(handle, out _);
 		if (!_windows.TryRemove(handle, out var window))
 			return;
 		window.WindowFocused -= HandleWindowFocused;

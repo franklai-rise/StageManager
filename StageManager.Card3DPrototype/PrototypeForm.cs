@@ -25,6 +25,7 @@ internal sealed class PrototypeForm : Form
 	private readonly System.Windows.Forms.Timer _pointerTimer = new() { Interval = 50 };
 	private readonly System.Windows.Forms.Timer _regionCollapseTimer = new() { Interval = 260 };
 	private readonly System.Windows.Forms.Timer _displayChangeTimer = new() { Interval = 250 };
+	private readonly System.Windows.Forms.Timer _previewReleaseTimer = new() { Interval = 30000 };
 	private readonly ToolTip _toolTip = new() { InitialDelay = 450, ReshowDelay = 100, AutoPopDelay = 3000, ShowAlways = true };
 	private readonly ContextMenuStrip _contextMenu = new();
 	private readonly ContextMenuStrip _cardContextMenu = new();
@@ -68,7 +69,7 @@ internal sealed class PrototypeForm : Form
 		refreshItem.Click += (_, _) => _renderer?.RefreshAllPreviews();
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => Close();
-		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.4.0") { Enabled = false });
+		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.5.0") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(refreshItem);
@@ -92,6 +93,14 @@ internal sealed class PrototypeForm : Form
 		{
 			_displayChangeTimer.Stop();
 			UpdateSidebarDisplay();
+		};
+		_previewReleaseTimer.Tick += (_, _) =>
+		{
+			_previewReleaseTimer.Stop();
+			if (_sidebarVisible)
+				return;
+			_renderer?.ReleasePreviewSurfaces();
+			NativeMethods.EmptyWorkingSet(NativeMethods.GetCurrentProcess());
 		};
 		SystemEvents.DisplaySettingsChanged += SystemEvents_DisplaySettingsChanged;
 	}
@@ -127,7 +136,8 @@ internal sealed class PrototypeForm : Form
 				_compositor,
 				_root,
 				_catalog.Settings.Current.CardScale,
-				_catalog.Settings.Current.AnimationsEnabled);
+				_catalog.Settings.Current.AnimationsEnabled,
+				_catalog.Settings.Current.LowMemoryRendering);
 			_renderer.Resize(ClientSize.Width, ClientSize.Height, DeviceDpi / 96f);
 			CreateTrayIcon();
 			ApplyRuntimeSettings(updateStartup: false);
@@ -331,10 +341,12 @@ internal sealed class PrototypeForm : Form
 		_pointerTimer.Stop();
 		_regionCollapseTimer.Stop();
 		_displayChangeTimer.Stop();
+		_previewReleaseTimer.Stop();
 		_stageTimer.Dispose();
 		_pointerTimer.Dispose();
 		_regionCollapseTimer.Dispose();
 		_displayChangeTimer.Dispose();
+		_previewReleaseTimer.Dispose();
 		_toolTip.Dispose();
 		_contextMenu.Dispose();
 		_cardContextMenu.Dispose();
@@ -531,6 +543,7 @@ internal sealed class PrototypeForm : Form
 		_regionCollapseTimer.Stop();
 		if (visible)
 		{
+			_previewReleaseTimer.Stop();
 			_demoteOverlayAfterHide = false;
 			_lastSidebarInteractionUtc = DateTime.UtcNow;
 			UpdateWindowRegion(true);
@@ -548,6 +561,8 @@ internal sealed class PrototypeForm : Form
 
 		_renderer.CollapseExpandedStage();
 		_renderer.SetSidebarVisible(false, animate: true);
+		_previewReleaseTimer.Stop();
+		_previewReleaseTimer.Start();
 		var animate = _catalog?.Settings.Current.AnimationsEnabled == true;
 		_demoteOverlayAfterHide = _transientOverlayRaised;
 		if (animate)
@@ -810,7 +825,7 @@ internal sealed class PrototypeForm : Form
 		var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 		_trayIcon = new NotifyIcon
 		{
-			Text = "Stage_Manager_Lai v2.4.0",
+			Text = "Stage_Manager_Lai v2.5.0",
 			Icon = icon,
 			ContextMenuStrip = _contextMenu,
 			Visible = true
