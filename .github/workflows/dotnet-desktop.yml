@@ -39,12 +39,10 @@ jobs:
         shell: pwsh
         run: dotnet build "$env:SOLUTION_PATH" --configuration Release --no-restore
 
-      # StageManager.Tests is the repository's executable regression-test harness.
       - name: Test
         shell: pwsh
         run: >-
-          dotnet run
-          --project "$env:TEST_PROJECT"
+          dotnet test "$env:TEST_PROJECT"
           --configuration Release
           --no-build
           --no-restore
@@ -84,6 +82,7 @@ jobs:
           -p:PublishSingleFile=true
           -p:IncludeNativeLibrariesForSelfExtract=true
           -p:EnableCompressionInSingleFile=false
+          -p:PublishReadyToRun=false
           -p:DebugType=None
           -p:DebugSymbols=false
 

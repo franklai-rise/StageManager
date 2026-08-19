@@ -6,6 +6,7 @@ namespace StageManager.Infrastructure;
 
 public static class AppLogger
 {
+	private const long MaximumLogBytes = 2L * 1024 * 1024;
 	private static readonly object Sync = new();
 	private static readonly string LogDirectory = Path.Combine(
 		Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -46,11 +47,26 @@ public static class AppLogger
 			{
 				Directory.CreateDirectory(LogDirectory);
 				var detail = exception is null ? string.Empty : $"{Environment.NewLine}{exception}";
-				File.AppendAllText(CurrentLogPath, $"{DateTime.Now:O} [{level}] {message}{detail}{Environment.NewLine}");
+				var entry = $"{DateTime.Now:O} [{level}] {message}{detail}{Environment.NewLine}";
+				RotateCurrentLogIfNeeded(entry.Length * sizeof(char));
+				File.AppendAllText(CurrentLogPath, entry);
 			}
 		}
 		catch
 		{
 		}
+	}
+
+	private static void RotateCurrentLogIfNeeded(long incomingBytes)
+	{
+		var path = CurrentLogPath;
+		if (!File.Exists(path))
+			return;
+		var info = new FileInfo(path);
+		if (info.Length + incomingBytes <= MaximumLogBytes)
+			return;
+
+		var archive = Path.Combine(LogDirectory, $"stage-manager-{DateTime.Now:yyyy-MM-dd}-previous.log");
+		File.Move(path, archive, overwrite: true);
 	}
 }

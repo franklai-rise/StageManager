@@ -1,6 +1,8 @@
 using StageManager.Services;
 using StageManager.Settings;
 using StageManager.Card3DPrototype.Commands;
+using StageManager.Card3DPrototype.Lifecycle;
+using StageManager.Infrastructure;
 using Microsoft.Win32;
 using System.Drawing.Drawing2D;
 using System.Numerics;
@@ -50,6 +52,7 @@ internal sealed class PrototypeForm : Form
 	private bool _demoteOverlayAfterHide;
 	private bool _closing;
 	private CardClickContext? _lastCardClick;
+	private readonly DiagnosticBundleExporter _diagnostics = new();
 
 	public PrototypeForm()
 	{
@@ -71,6 +74,8 @@ internal sealed class PrototypeForm : Form
 		settingsItem.Click += (_, _) => _commands.Execute(new(AppCommandKind.OpenSettings));
 		var refreshItem = new ToolStripMenuItem("Refresh all previews now");
 		refreshItem.Click += (_, _) => _commands.Execute(new(AppCommandKind.RefreshAllPreviews));
+		var diagnosticsItem = new ToolStripMenuItem("Export diagnostics...");
+		diagnosticsItem.Click += (_, _) => _commands.Execute(new(AppCommandKind.ExportDiagnostics));
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => _commands.Execute(new(AppCommandKind.Exit));
 		_contextMenu.Items.Add(new ToolStripMenuItem(AppVersionInfo.DisplayName) { Enabled = false });
@@ -78,6 +83,7 @@ internal sealed class PrototypeForm : Form
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(refreshItem);
 		_contextMenu.Items.Add(settingsItem);
+		_contextMenu.Items.Add(diagnosticsItem);
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(exitItem);
 		_stageTimer.Tick += (_, _) => RefreshStages();
@@ -104,7 +110,6 @@ internal sealed class PrototypeForm : Form
 			if (_sidebarVisible)
 				return;
 			_renderer?.ReleasePreviewSurfaces();
-			NativeMethods.EmptyWorkingSet(NativeMethods.GetCurrentProcess());
 		};
 		SystemEvents.DisplaySettingsChanged += SystemEvents_DisplaySettingsChanged;
 	}
@@ -152,11 +157,15 @@ internal sealed class PrototypeForm : Form
 		}
 		catch (Exception exception)
 		{
-			var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Stage_Manager_Lai", "3DRenderer");
-			Directory.CreateDirectory(directory);
-			File.WriteAllText(Path.Combine(directory, "last-error.log"), exception.ToString());
-			Close();
+			AppLogger.Error("The main sidebar could not finish starting.", exception);
+			throw;
 		}
+	}
+
+	internal void ShowSidebarFromExternalCommand()
+	{
+		if (!_closing)
+			_commands.Execute(new(AppCommandKind.ShowSidebar));
 	}
 
 	protected override void OnPaintBackground(PaintEventArgs e)
@@ -363,16 +372,16 @@ internal sealed class PrototypeForm : Form
 			_trayIcon.Dispose();
 			_trayIcon = null;
 		}
+		_renderer?.Dispose();
+		_renderer = null;
 		if (_catalog is not null)
 			_catalog.Settings.SettingsChanged -= Settings_SettingsChanged;
 		_catalog?.Dispose();
 		_catalog = null;
-		_renderer?.Dispose();
-		_renderer = null;
-		_target?.Dispose();
-		_target = null;
 		_root?.Dispose();
 		_root = null;
+		_target?.Dispose();
+		_target = null;
 		_compositor?.Dispose();
 		_compositor = null;
 		var oldRegion = Region;
@@ -539,7 +548,36 @@ internal sealed class PrototypeForm : Form
 		});
 		_commands.Register(AppCommandKind.PreviousStage, _ => ActivateRelativeStage(-1));
 		_commands.Register(AppCommandKind.NextStage, _ => ActivateRelativeStage(1));
+		_commands.Register(AppCommandKind.ExportDiagnostics, request =>
+		{
+			_ = ExportDiagnosticsAsync();
+		});
 		_commands.Register(AppCommandKind.Exit, _ => Close());
+	}
+
+	private async Task ExportDiagnosticsAsync()
+	{
+		using var dialog = new SaveFileDialog
+		{
+			Title = "Export Stage_Manager_Lai diagnostics",
+			Filter = "ZIP archive (*.zip)|*.zip",
+			AddExtension = true,
+			DefaultExt = "zip",
+			FileName = $"Stage_Manager_Lai-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.zip"
+		};
+		if (dialog.ShowDialog(this) != DialogResult.OK)
+			return;
+
+		try
+		{
+			var result = await _diagnostics.ExportAsync(dialog.FileName);
+			_trayIcon?.ShowBalloonTip(4000, "Diagnostics exported", result.ArchivePath, ToolTipIcon.Info);
+		}
+		catch (Exception exception)
+		{
+			AppLogger.Error("The diagnostic bundle could not be exported.", exception);
+			MessageBox.Show(this, exception.Message, "Export failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+		}
 	}
 
 	private void RegisterHotkey(int id, string gesture)
