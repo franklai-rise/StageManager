@@ -10,5 +10,6 @@
         MoveStart,
         MoveEnd,
         Move,
+		NameChanged,
     }
 }
