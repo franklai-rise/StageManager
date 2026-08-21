@@ -1,6 +1,7 @@
 name: Stage_Manager_Lai CI and Release
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - "**"
