@@ -26,6 +26,7 @@ internal sealed class PrototypeForm : Form
 	private readonly System.Windows.Forms.Timer _regionCollapseTimer = new() { Interval = 260 };
 	private readonly System.Windows.Forms.Timer _displayChangeTimer = new() { Interval = 250 };
 	private readonly System.Windows.Forms.Timer _previewReleaseTimer = new() { Interval = 30000 };
+	private readonly System.Threading.Timer _hiddenEdgeTimer;
 	private readonly ToolTip _toolTip = new() { InitialDelay = 450, ReshowDelay = 100, AutoPopDelay = 3000, ShowAlways = true };
 	private readonly ContextMenuStrip _contextMenu = new();
 	private readonly ContextMenuStrip _cardContextMenu = new();
@@ -41,16 +42,19 @@ internal sealed class PrototypeForm : Form
 	private string? _toolTipKey;
 	private DateTime _lastSidebarInteractionUtc = DateTime.UtcNow;
 	private DateTime _transientRevealUtc = DateTime.MinValue;
-	private bool _sidebarVisible = true;
+	private volatile bool _sidebarVisible = true;
 	private bool _transientSession;
+	private bool _edgeRevealSession;
 	private bool _sidebarWasVisibleBeforeTransientSession;
 	private bool _transientOverlayRaised;
 	private bool _demoteOverlayAfterHide;
-	private bool _closing;
+	private volatile bool _closing;
+	private int _hiddenEdgeUiRequestPending;
 	private CardClickContext? _lastCardClick;
 
 	public PrototypeForm()
 	{
+		_hiddenEdgeTimer = new(_ => PollHiddenEdgeFromBackground(), null, Timeout.Infinite, Timeout.Infinite);
 		Text = "Stage_Manager_Lai";
 		FormBorderStyle = FormBorderStyle.None;
 		ShowInTaskbar = false;
@@ -69,7 +73,7 @@ internal sealed class PrototypeForm : Form
 		refreshItem.Click += (_, _) => _renderer?.RefreshAllPreviews();
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => Close();
-		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.5.0") { Enabled = false });
+		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.5.1") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(refreshItem);
@@ -339,11 +343,13 @@ internal sealed class PrototypeForm : Form
 		UnregisterHotkeys();
 		_stageTimer.Stop();
 		_pointerTimer.Stop();
+		_hiddenEdgeTimer.Change(Timeout.Infinite, Timeout.Infinite);
 		_regionCollapseTimer.Stop();
 		_displayChangeTimer.Stop();
 		_previewReleaseTimer.Stop();
 		_stageTimer.Dispose();
 		_pointerTimer.Dispose();
+		_hiddenEdgeTimer.Dispose();
 		_regionCollapseTimer.Dispose();
 		_displayChangeTimer.Dispose();
 		_previewReleaseTimer.Dispose();
@@ -540,6 +546,22 @@ internal sealed class PrototypeForm : Form
 		if (_renderer is null || _sidebarVisible == visible)
 			return;
 		_sidebarVisible = visible;
+		if (visible)
+		{
+			_hiddenEdgeTimer.Change(Timeout.Infinite, Timeout.Infinite);
+			_pointerTimer.Start();
+		}
+		else
+		{
+			_edgeRevealSession = false;
+			_pointerTimer.Stop();
+			var largeWindowActive = FullScreenService.UsesTransientSidebarOn(
+				NativeMethods.GetForegroundWindow(),
+				_sidebarDisplay);
+			_hiddenEdgeTimer.Change(
+				0,
+				SidebarIdleBehavior.GetHiddenEdgePollingInterval(largeWindowActive));
+		}
 		_regionCollapseTimer.Stop();
 		if (visible)
 		{
@@ -643,21 +665,13 @@ internal sealed class PrototypeForm : Form
 		UpdateTransientSession(largeWindowActive, nowUtc);
 		if (!_sidebarVisible)
 		{
-			var hiddenAction = TransientSidebarBehavior.Decide(
-				largeWindowActive,
-				false,
-				pointerAtLeftEdge,
-				false,
-				_transientRevealUtc,
-				nowUtc);
-			if (hiddenAction == TransientSidebarAction.Reveal)
+			if (pointerAtLeftEdge)
 			{
+				_edgeRevealSession = true;
 				_transientRevealUtc = nowUtc;
 				SetTransientOverlayRaised(true);
 				SetSidebarVisible(true);
 			}
-			else if (!largeWindowActive && pointerAtLeftEdge)
-				SetSidebarVisible(true);
 			return;
 		}
 
@@ -680,8 +694,9 @@ internal sealed class PrototypeForm : Form
 		if (wasExpanded != _renderer.HasExpandedStage)
 			UpdateWindowRegion(true);
 
+		var transientOverlayActive = largeWindowActive || _edgeRevealSession;
 		var transientAction = TransientSidebarBehavior.Decide(
-			largeWindowActive,
+			transientOverlayActive,
 			true,
 			pointerAtLeftEdge,
 			pointerWithinTransientSidebar,
@@ -689,10 +704,11 @@ internal sealed class PrototypeForm : Form
 			nowUtc);
 		if (transientAction == TransientSidebarAction.Hide)
 		{
+			_edgeRevealSession = false;
 			SetSidebarVisible(false);
 			return;
 		}
-		if (largeWindowActive)
+		if (transientOverlayActive)
 		{
 			if (pointerWithinTransientSidebar && !_transientOverlayRaised)
 			{
@@ -710,6 +726,40 @@ internal sealed class PrototypeForm : Form
 			nowUtc))
 		{
 			SetSidebarVisible(false);
+		}
+	}
+
+	private void PollHiddenEdgeFromBackground()
+	{
+		if (_closing || _sidebarVisible || !NativeMethods.GetCursorPos(out var nativePoint))
+			return;
+		var screenPoint = new Point(nativePoint.X, nativePoint.Y);
+		if (!SidebarIdleBehavior.ShouldRequestHiddenEdgePoll(
+			_sidebarVisible,
+			screenPoint,
+			_sidebarScreenBounds,
+			EdgeActivationWidth) ||
+			Interlocked.Exchange(ref _hiddenEdgeUiRequestPending, 1) != 0)
+			return;
+
+		try
+		{
+			BeginInvoke(new Action(() =>
+			{
+				try
+				{
+					if (!_closing && !_sidebarVisible)
+						PollPointer();
+				}
+				finally
+				{
+					Interlocked.Exchange(ref _hiddenEdgeUiRequestPending, 0);
+				}
+			}));
+		}
+		catch (InvalidOperationException)
+		{
+			Interlocked.Exchange(ref _hiddenEdgeUiRequestPending, 0);
 		}
 	}
 

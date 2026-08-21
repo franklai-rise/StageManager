@@ -14,4 +14,14 @@ internal static class SidebarIdleBehavior
 			screenPoint.X >= screenBounds.Left &&
 			screenPoint.X <= screenBounds.Left + Math.Max(1, activationWidth);
 	}
+
+	public static bool ShouldRequestHiddenEdgePoll(
+		bool sidebarVisible,
+		Point screenPoint,
+		Rectangle screenBounds,
+		int activationWidth) =>
+		!sidebarVisible && IsNearLeftEdge(screenPoint, screenBounds, activationWidth);
+
+	public static int GetHiddenEdgePollingInterval(bool largeWindowActive) =>
+		largeWindowActive ? 50 : 100;
 }
