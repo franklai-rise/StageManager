@@ -425,6 +425,14 @@ public sealed class StageManagerTests
 		var screen = new Rectangle(0, 0, 1920, 1040);
 		Assert(SidebarIdleBehavior.IsNearLeftEdge(new Point(7, 500), screen, 8), "Left-edge activation zone rejected a nearby pointer.");
 		Assert(!SidebarIdleBehavior.IsNearLeftEdge(new Point(20, 500), screen, 8), "Left-edge activation zone is wider than requested.");
+		Assert(SidebarIdleBehavior.ShouldRequestHiddenEdgePoll(false, new Point(7, 500), screen, 8),
+			"A hidden sidebar did not request a background edge poll.");
+		Assert(!SidebarIdleBehavior.ShouldRequestHiddenEdgePoll(true, new Point(7, 500), screen, 8),
+			"A visible sidebar incorrectly requested a background edge poll.");
+		Assert(SidebarIdleBehavior.GetHiddenEdgePollingInterval(false) == 100,
+			"Normal hidden edge polling did not use the low-power interval.");
+		Assert(SidebarIdleBehavior.GetHiddenEdgePollingInterval(true) == 50,
+			"Full-screen hidden edge polling did not use the responsive interval.");
 	}
 
 	[TestMethod]

@@ -1,11 +1,11 @@
-# Stage_Manager_Lai v3.1.0
+# Stage_Manager_Lai v3.1.1
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
 [Andreas Wäscher](https://github.com/awaescher). It remains a derivative work under the upstream MIT
 license and is not presented as an original project by the fork maintainer.
 
-`Stage_Manager_Lai_v2.5.0` remains the unchanged stable rollback build while v3.1 completes its burn-in gate.
+`Stage_Manager_Lai_v2.5.1` is the installed stable hotfix, with the unchanged v2.5.0 executable retained as a rollback build while v3.1 completes its burn-in gate.
 
 v2.0.1 makes the sidebar canvas fully transparent while retaining the individual live-preview cards.
 
@@ -137,6 +137,10 @@ roles, states, window counts, and actions for the Composition sidebar. Preview s
 than a 350 ms polling loop, rejected shell windows are cached between 15-second calibration passes, mixed-DPI moves
 recreate card surfaces, and display-topology changes recover only genuinely off-screen windows without moving them
 back when a monitor reconnects.
+
+v3.1.1 moves hidden edge detection onto an independent low-power background timer. Reaching the physical left edge
+now reveals the sidebar without first clicking the foreground window; the sidebar is raised only for that transient
+interaction and is demoted again after it hides.
 
 ## What the current 3D build includes
 
