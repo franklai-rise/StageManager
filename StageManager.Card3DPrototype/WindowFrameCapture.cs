@@ -68,6 +68,7 @@ internal sealed class WindowFrameCapture : IDisposable
 		{
 			using var placeholderBackground = new SolidBrush(Color.FromArgb(238, 232, 236, 242));
 			graphics.FillPath(placeholderBackground, clipPath);
+			PlaceholderTitleRenderer.Draw(graphics, window.Title, window.ProcessName, target);
 		}
 
 		graphics.ResetClip();

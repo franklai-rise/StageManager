@@ -264,10 +264,35 @@ internal static class TestRunner
 		Assert(frame.IsPlaceholder, "Invalid HWND did not use the placeholder renderer.");
 		Assert(frame.Pixels.Length == frame.Width * frame.Height * 4, "Placeholder pixel buffer size is invalid.");
 		Assert(frame.Pixels[3] == 0, "Rounded placeholder corner is not transparent.");
-		var centerIndex = ((frame.Height / 2) * frame.Width + frame.Width / 2) * 4;
-		Assert(frame.Pixels[centerIndex] >= 210 && frame.Pixels[centerIndex + 1] >= 210 &&
-			frame.Pixels[centerIndex + 2] >= 210 && frame.Pixels[centerIndex + 3] >= 225,
+		var backgroundIndex = ((frame.Height / 2) * frame.Width + 10) * 4;
+		Assert(frame.Pixels[backgroundIndex] >= 210 && frame.Pixels[backgroundIndex + 1] >= 210 &&
+			frame.Pixels[backgroundIndex + 2] >= 210 && frame.Pixels[backgroundIndex + 3] >= 225,
 			"Placeholder does not paint a visible light gray card background.");
+		var hasCenteredTitlePixel = false;
+		for (var y = frame.Height / 3; y < frame.Height * 2 / 3 && !hasCenteredTitlePixel; y++)
+		{
+			for (var x = frame.Width / 4; x < frame.Width * 3 / 4; x++)
+			{
+				var pixel = (y * frame.Width + x) * 4;
+				if (frame.Pixels[pixel + 3] > 180 &&
+					(frame.Pixels[pixel] < 175 || frame.Pixels[pixel + 1] < 175 || frame.Pixels[pixel + 2] < 175))
+				{
+					hasCenteredTitlePixel = true;
+					break;
+				}
+			}
+		}
+		Assert(hasCenteredTitlePixel, "Placeholder did not render the window title in its center.");
+		Assert(PlaceholderTitleRenderer.FormatTitle("这是一个很长的中文窗口标题用于测试", "fallback").EndsWith("..."),
+			"Long Chinese placeholder titles are not shortened.");
+		Assert(PlaceholderTitleRenderer.FormatTitle("Quarterly Simulation Results Document", "fallback").EndsWith("..."),
+			"Long English placeholder titles are not shortened.");
+		Assert(PlaceholderTitleRenderer.FormatTitle("Abaqus", "fallback") == "Abaqus",
+			"Short placeholder titles should not gain an ellipsis.");
+		Assert(PlaceholderTitleRenderer.GetPreferredFontFamily("中") == PlaceholderTitleRenderer.ChineseFontFamily,
+			"Chinese title runs do not select STZhongsong.");
+		Assert(PlaceholderTitleRenderer.GetPreferredFontFamily("A") == PlaceholderTitleRenderer.LatinFontFamily,
+			"Latin title runs do not select Times New Roman.");
 	}
 
 	private static void PrototypeStageSlotsStayStable()
