@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.5.0
+# Stage_Manager_Lai v2.5.2
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -109,6 +109,12 @@ directly from the native DIB into the card bitmap and reuses pooled pixel buffer
 on the managed large-object heap. The low-memory renderer uses Windows' software composition path to avoid loading a
 large vendor GPU driver into this small utility; it can be disabled in Settings if a particular machine prefers GPU
 rendering. On the development machine, steady private memory fell from roughly 84–104 MB to about 37–40 MB.
+
+v2.5.1 makes left-edge reveal independent of the currently focused application, including maximized and full-screen
+windows, without leaving the sidebar permanently topmost.
+
+v2.5.2 keeps every expanded child-window card in a stable slot. Clicking, minimizing, restoring, or retitling a child
+window no longer changes the list order, and newly opened windows are appended.
 
 ## What the current 3D build includes
 

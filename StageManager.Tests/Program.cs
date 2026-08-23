@@ -27,6 +27,7 @@ internal static class TestRunner
 		RunTest("Expanded multi-window cards form a full vertical child list", SubtleHoverProjection);
 		RunTest("Capture fallback produces a light gray placeholder card", CaptureFallback);
 		RunTest("Prototype stage slots do not jump after activation", PrototypeStageSlotsStayStable);
+		RunTest("Prototype child-window slots do not jump after activation", PrototypeChildWindowSlotsStayStableAfterActivation);
 		RunTest("Prototype card click toggles only the selected foreground window", PrototypeClickToggle);
 		RunTest("Multi-window child selection stays expanded until the primary card is clicked", MultiWindowCardClicking);
 		RunTest("Expanded application groups keep every real window available", ExpandedApplicationGroupPaging);
@@ -289,6 +290,24 @@ internal static class TestRunner
 		};
 		var stable = slots.Apply(afterActivation, stage => stage.Key, stage => stage.Priority);
 		Assert(string.Concat(stable.Select(stage => stage.Key)) == "ABC", "Activation reordered card slots under the pointer.");
+	}
+
+	private static void PrototypeChildWindowSlotsStayStableAfterActivation()
+	{
+		var slots = new StableWindowOrder();
+		var first = new FakeWindow(201, "First", "app.exe");
+		var second = new FakeWindow(202, "Second", "app.exe");
+		var third = new FakeWindow(203, "Third", "app.exe");
+		var baseline = slots.Apply("app", new[] { first, second, third }, window => window.Handle);
+		var afterActivation = slots.Apply("app", new[] { third, first, second }, window => window.Handle);
+
+		Assert(
+			baseline.Select(window => window.Handle).SequenceEqual(afterActivation.Select(window => window.Handle)),
+			"Activating a child window changed its card slot.");
+
+		var fourth = new FakeWindow(204, "Fourth", "app.exe");
+		var withNewWindow = slots.Apply("app", new[] { fourth, third, first, second }, window => window.Handle);
+		Assert(withNewWindow[^1].Handle == fourth.Handle, "A newly opened child window was not appended to the stable list.");
 	}
 
 	private static void PrototypeClickToggle()

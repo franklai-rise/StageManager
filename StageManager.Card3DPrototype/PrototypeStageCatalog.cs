@@ -32,6 +32,7 @@ internal sealed class PrototypeStageCatalog : IDisposable
 	private readonly WindowsManager _windows;
 	private readonly Dictionary<string, DateTime> _lastActivated = new(StringComparer.OrdinalIgnoreCase);
 	private readonly StableStageOrder _stableStageOrder = new();
+	private readonly StableWindowOrder _stableWindowOrder = new();
 	private IntPtr _lastForeground;
 	private bool _started;
 	private bool _disposed;
@@ -119,11 +120,11 @@ internal sealed class PrototypeStageCatalog : IDisposable
 					lastActivated = now.AddSeconds(-_lastActivated.Count - 1);
 					_lastActivated[group.Key] = lastActivated;
 				}
-				var windows = group
-					.OrderByDescending(window => window.IsFocused)
-					.ThenBy(window => window.IsMinimized)
-					.ThenBy(window => window.Title, StringComparer.CurrentCultureIgnoreCase)
+				var observedWindows = group
+					.OrderBy(window => window.Title, StringComparer.CurrentCultureIgnoreCase)
+					.ThenBy(window => window.Handle.ToInt64())
 					.ToArray();
+				var windows = _stableWindowOrder.Apply(group.Key, observedWindows, window => window.Handle);
 				return new PrototypeStageSnapshot(
 					group.Key,
 					string.Join(" + ", windows.Select(window => window.ProcessName).Distinct(StringComparer.OrdinalIgnoreCase)),
@@ -137,6 +138,7 @@ internal sealed class PrototypeStageCatalog : IDisposable
 			.ToArray();
 
 		var liveKeys = snapshots.Select(stage => stage.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+		_stableWindowOrder.RetainStages(liveKeys);
 		foreach (var staleKey in _lastActivated.Keys.Where(key => !liveKeys.Contains(key)).ToArray())
 			_lastActivated.Remove(staleKey);
 		return snapshots;
