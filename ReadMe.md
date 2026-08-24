@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.5.4
+# Stage_Manager_Lai v2.5.5
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -122,6 +122,12 @@ v2.5.3 adds a centered title to empty preview cards. The title is shortened with
 v2.5.4 remembers each window's first observed normal size, position, and maximized state for its current lifetime.
 Card right-click menus can restore that initial layout, move the selected window or application group directly to
 the current display center, or close it through the application's normal close path so save prompts remain intact.
+
+v2.5.5 explicitly closes sidebar context menus before deferring window actions, associates manually opened menus with
+the sidebar owner, and restores normal outside-click dismissal. Ignoring an application now explains how to restore it
+from Settings > Ignored applications. Settings now include a persisted English / Simplified Chinese interface switch
+that also updates tray menus, card actions, and tooltips. The small idle-status line below the footer arrow has been
+removed and its reserved space returned to the card list.
 
 ## What the current 3D build includes
 

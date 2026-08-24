@@ -29,8 +29,8 @@ internal sealed class PrototypeForm : Form
 	private readonly System.Windows.Forms.Timer _previewReleaseTimer = new() { Interval = 30000 };
 	private readonly System.Threading.Timer _hiddenEdgeTimer;
 	private readonly ToolTip _toolTip = new() { InitialDelay = 450, ReshowDelay = 100, AutoPopDelay = 3000, ShowAlways = true };
-	private readonly ContextMenuStrip _contextMenu = new();
-	private readonly ContextMenuStrip _cardContextMenu = new();
+	private readonly ContextMenuStrip _contextMenu = new() { AutoClose = true };
+	private readonly ContextMenuStrip _cardContextMenu = new() { AutoClose = true };
 	private readonly InitialWindowLayoutMemory _initialWindowLayouts = new();
 	private readonly HashSet<int> _registeredHotkeys = new();
 	private Screen _sidebarDisplay;
@@ -53,6 +53,8 @@ internal sealed class PrototypeForm : Form
 	private volatile bool _closing;
 	private int _hiddenEdgeUiRequestPending;
 	private CardClickContext? _lastCardClick;
+	private UiLanguage CurrentLanguage => _catalog?.Settings.Current.UiLanguage ?? UiLanguage.English;
+	private string L(string english, string chinese) => UiText.Get(CurrentLanguage, english, chinese);
 
 	public PrototypeForm()
 	{
@@ -68,14 +70,16 @@ internal sealed class PrototypeForm : Form
 		SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
 
 		var toggleItem = new ToolStripMenuItem("Show / Hide sidebar");
-		toggleItem.Click += (_, _) => ToggleSidebarVisibility();
+		toggleItem.Click += (_, _) => RunAfterContextMenuCloses(_contextMenu, ToggleSidebarVisibility);
 		var settingsItem = new ToolStripMenuItem("Settings...");
-		settingsItem.Click += (_, _) => ShowSettings();
+		settingsItem.Click += (_, _) => RunAfterContextMenuCloses(_contextMenu, ShowSettings);
 		var refreshItem = new ToolStripMenuItem("Refresh all previews now");
-		refreshItem.Click += (_, _) => _renderer?.RefreshAllPreviews();
+		refreshItem.Click += (_, _) => RunAfterContextMenuCloses(
+			_contextMenu,
+			() => _renderer?.RefreshAllPreviews());
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
-		exitItem.Click += (_, _) => Close();
-		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.5.4") { Enabled = false });
+		exitItem.Click += (_, _) => RunAfterContextMenuCloses(_contextMenu, Close);
+		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.5.5") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(refreshItem);
@@ -219,7 +223,7 @@ internal sealed class PrototypeForm : Form
 			if (target is not null && !target.IsSidebarCollapseButton && target.PageDelta == 0)
 				ShowCardContextMenu(target);
 			else
-				_contextMenu.Show(Cursor.Position);
+				ShowOwnedContextMenu(_contextMenu);
 			return;
 		}
 		if (e.Button != MouseButtons.Left || _renderer is null)
@@ -414,7 +418,7 @@ internal sealed class PrototypeForm : Form
 		_renderer.SetAnimationsEnabled(settings.AnimationsEnabled);
 		_renderer.SetCardScale(settings.CardScale);
 		_renderer.SetPreviewPolicy(settings.PreviewRefreshMinutes, settings.PausePreviewRefreshWhenHidden);
-		_renderer.SetIdleHint(settings.IdleAutoHideEnabled, settings.IdleAutoHideSeconds);
+		UiText.Apply(_contextMenu.Items, settings.UiLanguage);
 		RegisterHotkeys();
 		if (!settings.IdleAutoHideEnabled && !_sidebarVisible)
 			SetSidebarVisible(true);
@@ -426,7 +430,12 @@ internal sealed class PrototypeForm : Form
 			}
 			catch (Exception exception)
 			{
-				MessageBox.Show(this, $"Settings were saved, but the startup entry could not be updated.\n\n{exception.Message}", "Startup setting", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				MessageBox.Show(
+					this,
+					L($"Settings were saved, but the startup entry could not be updated.\n\n{exception.Message}", $"设置已保存，但无法更新开机启动项。\n\n{exception.Message}"),
+					L("Startup setting", "开机启动设置"),
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Warning);
 			}
 		}
 		RefreshStages();
@@ -454,13 +463,15 @@ internal sealed class PrototypeForm : Form
 		}
 		var stage = _catalog.GetStages().FirstOrDefault(snapshot =>
 			string.Equals(snapshot.Key, target.StageKey, StringComparison.OrdinalIgnoreCase));
-		var title = target.Window?.Title ?? stage?.Title ?? "Application";
+		var title = target.Window?.Title ?? stage?.Title ?? L("Application", "应用");
 		_cardContextMenu.Items.Add(new ToolStripMenuItem(title) { Enabled = false });
 		_cardContextMenu.Items.Add(new ToolStripSeparator());
 		if (target.Window is { } window)
 		{
-			var activateItem = new ToolStripMenuItem("Bring this window to front");
-			activateItem.Click += (_, _) => ActivateSelectedWindow(window, allowMinimize: false);
+			var activateItem = new ToolStripMenuItem(L("Bring this window to front", "将此窗口置于前台"));
+			activateItem.Click += (_, _) => RunAfterContextMenuCloses(
+				_cardContextMenu,
+				() => ActivateSelectedWindow(window, allowMinimize: false));
 			_cardContextMenu.Items.Add(activateItem);
 
 		}
@@ -472,37 +483,45 @@ internal sealed class PrototypeForm : Form
 			_cardContextMenu.Items.Add(new ToolStripSeparator());
 
 			var restoreLayoutItem = new ToolStripMenuItem(appliesToGroup
-				? "Restore all windows to initial size and position"
-				: "Restore initial size and position")
+				? L("Restore all windows to initial size and position", "恢复全部窗口的初始大小和位置")
+				: L("Restore initial size and position", "恢复初始大小和位置"))
 			{
 				Enabled = actionWindows.Any(_initialWindowLayouts.HasSnapshot)
 			};
-			restoreLayoutItem.Click += (_, _) => RestoreInitialLayouts(actionWindows);
+			restoreLayoutItem.Click += (_, _) => RunAfterContextMenuCloses(
+				_cardContextMenu,
+				() => RestoreInitialLayouts(actionWindows));
 			_cardContextMenu.Items.Add(restoreLayoutItem);
 
 			var centerItem = new ToolStripMenuItem(appliesToGroup
-				? "Move all windows to current display center"
-				: "Move to current display center")
+				? L("Move all windows to current display center", "将全部窗口移到当前显示器中央")
+				: L("Move to current display center", "移到当前显示器中央"))
 			{
 				Enabled = actionWindows.Any(candidate => NativeMethods.IsWindow(candidate.Handle))
 			};
-			centerItem.Click += (_, _) => CenterWindowsOnCurrentDisplay(actionWindows);
+			centerItem.Click += (_, _) => RunAfterContextMenuCloses(
+				_cardContextMenu,
+				() => CenterWindowsOnCurrentDisplay(actionWindows));
 			_cardContextMenu.Items.Add(centerItem);
 
 			var closeItem = new ToolStripMenuItem(appliesToGroup
-				? "Close all windows in this card"
-				: "Close this window")
+				? L("Close all windows in this card", "关闭此卡片中的全部窗口")
+				: L("Close this window", "关闭此窗口"))
 			{
 				Enabled = actionWindows.Any(candidate => NativeMethods.IsWindow(candidate.Handle)),
 				ForeColor = Color.Firebrick
 			};
-			closeItem.Click += (_, _) => CloseWindows(actionWindows);
+			closeItem.Click += (_, _) => RunAfterContextMenuCloses(
+				_cardContextMenu,
+				() => CloseWindows(actionWindows));
 			_cardContextMenu.Items.Add(closeItem);
 			_cardContextMenu.Items.Add(new ToolStripSeparator());
 		}
 
-		var refreshItem = new ToolStripMenuItem("Refresh preview now");
-		refreshItem.Click += (_, _) => _renderer.RefreshStagePreviews(target.StageKey);
+		var refreshItem = new ToolStripMenuItem(L("Refresh preview now", "立即刷新预览"));
+		refreshItem.Click += (_, _) => RunAfterContextMenuCloses(
+			_cardContextMenu,
+			() => _renderer.RefreshStagePreviews(target.StageKey));
 		_cardContextMenu.Items.Add(refreshItem);
 		var processNames = (stage?.Windows ?? Array.Empty<StageManager.Native.Window.IWindow>())
 			.Select(window => window.ProcessName)
@@ -513,12 +532,49 @@ internal sealed class PrototypeForm : Form
 		{
 			_cardContextMenu.Items.Add(new ToolStripSeparator());
 			var ignoreItem = new ToolStripMenuItem(processNames.Length == 1
-				? $"Ignore {processNames[0]}"
-				: "Ignore applications in this card");
-			ignoreItem.Click += (_, _) => _catalog.Settings.AddIgnoredProcesses(processNames);
+				? L($"Ignore {processNames[0]}", $"忽略 {processNames[0]}")
+				: L("Ignore applications in this card", "忽略此卡片中的应用"));
+			ignoreItem.Click += (_, _) => RunAfterContextMenuCloses(
+				_cardContextMenu,
+				() =>
+				{
+					_catalog?.Settings.AddIgnoredProcesses(processNames);
+					_trayIcon?.ShowBalloonTip(
+						4500,
+						L("Application hidden", "应用已隐藏"),
+						L(
+							"Restore it from Settings > Ignored applications by clearing its check box.",
+							"如需恢复，请打开“设置 > 已忽略的应用”，取消勾选后保存。"),
+						ToolTipIcon.Info);
+				});
 			_cardContextMenu.Items.Add(ignoreItem);
 		}
-		_cardContextMenu.Show(Cursor.Position);
+		ShowOwnedContextMenu(_cardContextMenu);
+	}
+
+	private void ShowOwnedContextMenu(ContextMenuStrip menu)
+	{
+		if (menu.Visible)
+			menu.Close(ToolStripDropDownCloseReason.CloseCalled);
+		menu.Show(this, PointToClient(Cursor.Position));
+	}
+
+	private void RunAfterContextMenuCloses(ContextMenuStrip menu, Action action)
+	{
+		menu.Close(ToolStripDropDownCloseReason.ItemClicked);
+		if (_closing || !IsHandleCreated)
+			return;
+		try
+		{
+			BeginInvoke(new Action(() =>
+			{
+				if (!_closing)
+					action();
+			}));
+		}
+		catch (InvalidOperationException) when (_closing)
+		{
+		}
 	}
 
 	private static IReadOnlyList<IWindow> ResolveCardActionWindows(
@@ -586,22 +642,26 @@ internal sealed class PrototypeForm : Form
 	private string GetToolTipText(CardHitTarget target)
 	{
 		if (target.IsSidebarCollapseButton)
-			return "Hide sidebar";
+			return L("Hide sidebar", "隐藏侧栏");
 		if (target.PageDelta < 0)
-			return "Previous windows";
+			return L("Previous windows", "上一组窗口");
 		if (target.PageDelta > 0)
-			return "Next windows";
+			return L("Next windows", "下一组窗口");
 		if (target.Window is { } window)
 		{
-			var state = window.IsMinimized ? " (minimized)" : string.Empty;
-			return $"{window.Title}{state}\nDouble-click to recover an off-screen window · Right-click for options";
+			var state = window.IsMinimized ? L(" (minimized)", "（已最小化）") : string.Empty;
+			return L(
+				$"{window.Title}{state}\nDouble-click to recover an off-screen window · Right-click for options",
+				$"{window.Title}{state}\n双击可找回屏幕外窗口 · 右键查看更多选项");
 		}
 
 		var stage = _catalog?.GetStages().FirstOrDefault(snapshot =>
 			string.Equals(snapshot.Key, target.StageKey, StringComparison.OrdinalIgnoreCase));
 		return stage is null
-			? "Application group"
-			: $"{stage.Title} · {stage.Windows.Count} windows\nClick to expand or collapse · Right-click for options";
+			? L("Application group", "应用组")
+			: L(
+				$"{stage.Title} · {stage.Windows.Count} windows\nClick to expand or collapse · Right-click for options",
+				$"{stage.Title} · {stage.Windows.Count} 个窗口\n点击展开或收起 · 右键查看更多选项");
 	}
 
 	private void RegisterHotkeys()
@@ -620,7 +680,11 @@ internal sealed class PrototypeForm : Form
 		if (!HotkeyManager.TryParse(gesture, out var modifiers, out var virtualKey) ||
 			!NativeMethods.RegisterHotKey(Handle, id, modifiers | ModNoRepeat, virtualKey))
 		{
-			_trayIcon?.ShowBalloonTip(3500, "Stage_Manager_Lai", $"The shortcut {gesture} is already in use or invalid.", ToolTipIcon.Warning);
+			_trayIcon?.ShowBalloonTip(
+				3500,
+				"Stage_Manager_Lai",
+				L($"The shortcut {gesture} is already in use or invalid.", $"快捷键 {gesture} 已被占用或无效。"),
+				ToolTipIcon.Warning);
 			return;
 		}
 		_registeredHotkeys.Add(id);
@@ -969,7 +1033,7 @@ internal sealed class PrototypeForm : Form
 		var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 		_trayIcon = new NotifyIcon
 		{
-			Text = "Stage_Manager_Lai v2.5.0",
+			Text = "Stage_Manager_Lai v2.5.5",
 			Icon = icon,
 			ContextMenuStrip = _contextMenu,
 			Visible = true

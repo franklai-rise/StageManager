@@ -103,6 +103,8 @@ public sealed class SettingsService
 	{
 		var sourceSchemaVersion = settings.SchemaVersion;
 		settings.SchemaVersion = CurrentSchemaVersion;
+		if (!Enum.IsDefined(settings.UiLanguage))
+			settings.UiLanguage = UiLanguage.English;
 		settings.CardScale = Math.Clamp(settings.CardScale, 0.55, 1.25);
 		settings.IdleAutoHideSeconds = Math.Clamp(settings.IdleAutoHideSeconds, 15, 600);
 		settings.PreviewRefreshMinutes = Math.Clamp(settings.PreviewRefreshMinutes, 1, 60);

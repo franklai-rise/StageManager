@@ -7,6 +7,7 @@ using StageManager.Settings;
 using System.Drawing;
 using System.IO;
 using System.Numerics;
+using System.Windows.Forms;
 
 return TestRunner.Run();
 
@@ -34,6 +35,8 @@ internal static class TestRunner
 		RunTest("Application group cards render a white logo surface", ApplicationGroupCardRendering);
 		RunTest("Window cards respect the configured preview schedule", InitialCapturePolicy);
 		RunTest("Sidebar hint reflects the configured idle behavior", SidebarHintFormatting);
+		RunTest("Interface language switches in both directions", InterfaceLanguageTranslation);
+		RunTest("Settings language button updates the visible interface", SettingsLanguageToggle);
 		RunTest("Sidebar display selection follows the physical left edge", SidebarDisplaySelection);
 		RunTest("Tray-hidden windows leave the sidebar while taskbar-minimized windows remain", ManagedWindowVisibility);
 		RunTest("Off-screen recovery preserves visible windows and centers only lost windows", OffscreenRecoveryGeometry);
@@ -146,6 +149,7 @@ internal static class TestRunner
 			settings.IdleAutoHideSeconds = 1;
 			settings.PreviewRefreshMinutes = 0;
 			settings.StageMode = StageMode.Focus;
+			settings.UiLanguage = UiLanguage.SimplifiedChinese;
 			settings.UsePerspectiveCards = false;
 			settings.IgnoredProcesses = new List<string> { "yuanbao", "YuanBao", "  explorer  " };
 			service.Apply(settings);
@@ -160,6 +164,7 @@ internal static class TestRunner
 			Assert(service.Current.IgnoredProcesses.Count == 2, "Ignored process names were not normalized.");
 			var reloaded = new SettingsService(path);
 			Assert(reloaded.Current.StageMode == StageMode.Focus, "Enum setting did not persist.");
+			Assert(reloaded.Current.UiLanguage == UiLanguage.SimplifiedChinese, "Interface language did not persist.");
 			Assert(!reloaded.Current.UsePerspectiveCards, "Perspective-card setting did not persist.");
 			Assert(File.Exists(path) && !File.Exists(path + ".tmp"), "Atomic settings replacement left an invalid temporary file.");
 		}
@@ -410,6 +415,8 @@ internal static class TestRunner
 			"Sub-minute idle behavior is not reflected in the sidebar hint.");
 		Assert(SidebarHintFormatter.Format(false, 60).Contains("Always visible", StringComparison.Ordinal),
 			"Disabled idle auto-hide still advertises a timeout.");
+		Assert(SidebarHintFormatter.Format(true, 60, UiLanguage.SimplifiedChinese).Contains("1 分钟", StringComparison.Ordinal),
+			"Simplified Chinese idle behavior text is not formatted correctly.");
 	}
 
 	private static void SidebarDisplaySelection()
@@ -450,6 +457,60 @@ internal static class TestRunner
 			workAreas[0]);
 		Assert(centered == new Rectangle(510, 170, 900, 700),
 			"The recovered window was not centered while preserving its normal size.");
+	}
+
+	private static void InterfaceLanguageTranslation()
+	{
+		Assert(UiText.Translate(UiLanguage.SimplifiedChinese, "Appearance") == "外观",
+			"The settings interface did not translate to Simplified Chinese.");
+		Assert(UiText.Translate(UiLanguage.English, "外观") == "Appearance",
+			"The settings interface did not switch back to English.");
+	}
+
+	private static void SettingsLanguageToggle()
+	{
+		Exception? failure = null;
+		var thread = new Thread(() =>
+		{
+			try
+			{
+				var draft = new AppSettings();
+				using var form = new SettingsForm(draft);
+				var switchButton = Descendants(form)
+					.OfType<Button>()
+					.Single(button => button.Text == "简体中文");
+				typeof(Button)
+					.GetMethod("OnClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+					.Invoke(switchButton, new object[] { EventArgs.Empty });
+				Assert(draft.UiLanguage == UiLanguage.SimplifiedChinese,
+					"The language button did not update the settings draft.");
+				Assert(form.Text.Contains("设置", StringComparison.Ordinal),
+					"The settings window title did not switch to Chinese.");
+				Assert(Descendants(form).Any(control => control.Text == "外观"),
+					"The settings groups did not switch to Chinese.");
+				Assert(switchButton.Text == "English",
+					"The language button did not offer a switch back to English.");
+			}
+			catch (Exception exception)
+			{
+				failure = exception;
+			}
+		});
+		thread.SetApartmentState(ApartmentState.STA);
+		thread.Start();
+		Assert(thread.Join(TimeSpan.FromSeconds(10)), "The settings language smoke test timed out.");
+		if (failure is not null)
+			throw new InvalidOperationException("Settings language smoke test failed.", failure);
+
+		static IEnumerable<Control> Descendants(Control parent)
+		{
+			foreach (Control child in parent.Controls)
+			{
+				yield return child;
+				foreach (var descendant in Descendants(child))
+					yield return descendant;
+			}
+		}
 	}
 
 	private static void InitialWindowLayoutMemoryBehavior()

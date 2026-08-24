@@ -14,11 +14,18 @@ public enum AppWindowsMode
 	OneAtATime
 }
 
+public enum UiLanguage
+{
+	English,
+	SimplifiedChinese
+}
+
 public sealed class AppSettings
 {
 	public int SchemaVersion { get; set; } = 1;
 	public StageMode StageMode { get; set; } = StageMode.Coexist;
 	public AppWindowsMode AppWindowsMode { get; set; } = AppWindowsMode.AllAtOnce;
+	public UiLanguage UiLanguage { get; set; } = UiLanguage.English;
 	public bool AutoHideSidebar { get; set; }
 	public bool UsePerspectiveCards { get; set; } = true;
 	public bool AnimationsEnabled { get; set; } = true;

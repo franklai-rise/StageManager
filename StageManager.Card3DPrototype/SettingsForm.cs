@@ -20,6 +20,7 @@ internal sealed class SettingsForm : Form
 	private readonly TextBox _nextStageHotkey;
 	private readonly CheckedListBox _ignoredApplications;
 	private readonly TextBox _ignoredProcesses;
+	private readonly Button _languageButton;
 
 	public SettingsForm(AppSettings draft, IReadOnlyList<PrototypeApplicationChoice>? applicationChoices = null)
 	{
@@ -40,11 +41,20 @@ internal sealed class SettingsForm : Form
 
 		Controls.Add(new Label
 		{
-			Text = "Stage_Manager_Lai v2.5.0",
+			Text = "Stage_Manager_Lai v2.5.5",
 			Font = new Font("Segoe UI", 17f, FontStyle.Bold),
 			AutoSize = true,
 			Location = new Point(22, 18)
 		});
+		_languageButton = new Button
+		{
+			Location = new Point(448, 14),
+			Size = new Size(150, 34),
+			FlatStyle = FlatStyle.Flat
+		};
+		_languageButton.FlatAppearance.BorderColor = Color.FromArgb(83, 89, 102);
+		_languageButton.Click += (_, _) => ToggleLanguage();
+		Controls.Add(_languageButton);
 
 		var appearanceGroup = CreateGroup("Appearance", new Rectangle(20, 58, 580, 135));
 		appearanceGroup.Controls.Add(CreateLabel("Card size", 18, 31, 105));
@@ -175,6 +185,7 @@ internal sealed class SettingsForm : Form
 		AcceptButton = saveButton;
 		CancelButton = cancelButton;
 		UpdateCardSizeLabel();
+		ApplyLanguage();
 	}
 
 	public AppSettings Draft { get; }
@@ -192,7 +203,14 @@ internal sealed class SettingsForm : Form
 			var invalid = gestures.FirstOrDefault(item => !HotkeyManager.TryParse(item.Item2, out _, out _));
 			if (!string.IsNullOrEmpty(invalid.Item1))
 			{
-				MessageBox.Show(this, $"'{invalid.Item2}' is not a valid shortcut for {invalid.Item1}.", "Invalid shortcut", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				MessageBox.Show(
+					this,
+					UiText.Get(Draft.UiLanguage,
+						$"'{invalid.Item2}' is not a valid shortcut for {invalid.Item1}.",
+						$"“{invalid.Item2}”不是“{UiText.Translate(Draft.UiLanguage, invalid.Item1)}”的有效快捷键。"),
+					UiText.Get(Draft.UiLanguage, "Invalid shortcut", "快捷键无效"),
+					MessageBoxButtons.OK,
+					MessageBoxIcon.Warning);
 				return;
 			}
 		}
@@ -261,6 +279,21 @@ internal sealed class SettingsForm : Form
 	};
 
 	private void UpdateCardSizeLabel() => _cardSizeValue.Text = $"{_cardSizeSlider.Value}%";
+
+	private void ToggleLanguage()
+	{
+		Draft.UiLanguage = Draft.UiLanguage == UiLanguage.SimplifiedChinese
+			? UiLanguage.English
+			: UiLanguage.SimplifiedChinese;
+		ApplyLanguage();
+	}
+
+	private void ApplyLanguage()
+	{
+		UiText.Apply(this, Draft.UiLanguage);
+		_languageButton.Text = UiText.Get(Draft.UiLanguage, "简体中文", "English");
+		_languageButton.AccessibleName = UiText.Get(Draft.UiLanguage, "Switch to Simplified Chinese", "切换到英文");
+	}
 
 	private void ResetDefaults()
 	{

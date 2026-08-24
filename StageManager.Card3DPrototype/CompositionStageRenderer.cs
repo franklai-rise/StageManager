@@ -1,4 +1,5 @@
 using StageManager.Native.Window;
+using StageManager.Settings;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Numerics;
@@ -19,7 +20,6 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private readonly D3DCompositionDevice _graphics;
 	private readonly WindowFrameCapture _capture = new();
 	private readonly SidebarCollapseButtonVisual _collapseButton;
-	private readonly SidebarHintVisual _sidebarHint;
 	private readonly Dictionary<string, StageCardVisual> _stages = new(StringComparer.OrdinalIgnoreCase);
 	private readonly System.Windows.Forms.Timer _captureTimer;
 	private readonly object _captureGate = new();
@@ -58,9 +58,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_animationsEnabled = animationsEnabled;
 		_graphics = new D3DCompositionDevice(lowMemoryRendering);
 		_collapseButton = new SidebarCollapseButtonVisual(_compositor);
-		_sidebarHint = new SidebarHintVisual(_graphics, _compositor);
 		_cameraRoot.Children.InsertAtTop(_collapseButton.Root);
-		_cameraRoot.Children.InsertAtTop(_sidebarHint.Root);
 		_captureTimer = new System.Windows.Forms.Timer { Interval = 350 };
 		_captureTimer.Tick += (_, _) => ScheduleCaptures();
 		_captureTimer.Start();
@@ -98,9 +96,6 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (_sidebarVisible)
 			ScheduleCaptures();
 	}
-
-	public void SetIdleHint(bool autoHideEnabled, int idleSeconds) =>
-		_sidebarHint.SetIdleBehavior(autoHideEnabled, idleSeconds);
 
 	public void RefreshAllPreviews()
 	{
@@ -400,7 +395,6 @@ internal sealed class CompositionStageRenderer : IDisposable
 			stage.Dispose();
 		_stages.Clear();
 		_collapseButton.Dispose();
-		_sidebarHint.Dispose();
 		lock (_captureGate)
 		{
 			if (_capturesInFlight.Count == 0)
@@ -429,11 +423,9 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_hitTargets.Clear();
 		_passivePolygons.Clear();
 		_collapseButton.SetLayout(_dpiScale, CardSize.X);
-		_sidebarHint.SetDpiScale(_dpiScale);
 		var footerMargin = 10f * _dpiScale;
 		var footerCardGap = 12f * _dpiScale;
-		var footerItemGap = 6f * _dpiScale;
-		var footerHeight = footerCardGap + _collapseButton.Size.Y + footerItemGap + _sidebarHint.Size.Y + footerMargin;
+		var footerHeight = footerCardGap + _collapseButton.Size.Y + footerMargin;
 		var cardViewportHeight = Math.Max(CardSize.Y + 24f * _dpiScale, _viewportHeight - footerHeight);
 		var cardSize = CardSize;
 		var stride = cardSize.Y + Gap;
@@ -487,31 +479,16 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	private void LayoutCollapseButton(float lowestVisibleCardBottom)
 	{
-		_cameraRoot.Children.Remove(_sidebarHint.Root);
-		_cameraRoot.Children.InsertAtTop(_sidebarHint.Root);
 		_cameraRoot.Children.Remove(_collapseButton.Root);
 		_cameraRoot.Children.InsertAtTop(_collapseButton.Root);
 		var margin = 10f * _dpiScale;
 		var cardGap = 12f * _dpiScale;
-		var buttonGap = 6f * _dpiScale;
-		var footerHeight = _collapseButton.Size.Y + buttonGap + _sidebarHint.Size.Y;
+		var footerHeight = _collapseButton.Size.Y;
 		var maximumButtonY = Math.Max(margin, _viewportHeight - footerHeight - margin);
 		var preferredButtonY = float.IsNaN(lowestVisibleCardBottom)
 			? maximumButtonY
 			: lowestVisibleCardBottom + cardGap;
 		var y = Math.Clamp(preferredButtonY, margin, maximumButtonY);
-		var hintY = y + _collapseButton.Size.Y + buttonGap;
-		_sidebarHint.SetOffset(new Vector3(0, hintY, 0));
-		_sidebarHint.SetVisible(true);
-		var hintPolygon = new[]
-		{
-			new Vector2(0, hintY),
-			new Vector2(_sidebarHint.Size.X, hintY),
-			new Vector2(_sidebarHint.Size.X, hintY + _sidebarHint.Size.Y),
-			new Vector2(0, hintY + _sidebarHint.Size.Y)
-		};
-		_passivePolygons.Add(hintPolygon);
-
 		var x = 12f * _dpiScale;
 		_collapseButton.SetOffset(new Vector3(x, y, 0));
 		_collapseButton.SetVisible(true);
@@ -1329,9 +1306,9 @@ internal sealed class SidebarHintVisual : IDisposable
 
 	public void SetVisible(bool visible) => Root.IsVisible = visible;
 
-	public void SetIdleBehavior(bool autoHideEnabled, int idleSeconds)
+	public void SetIdleBehavior(bool autoHideEnabled, int idleSeconds, UiLanguage language = UiLanguage.English)
 	{
-		var text = SidebarHintFormatter.Format(autoHideEnabled, idleSeconds);
+		var text = SidebarHintFormatter.Format(autoHideEnabled, idleSeconds, language);
 		if (string.Equals(_text, text, StringComparison.Ordinal))
 			return;
 		_text = text;
