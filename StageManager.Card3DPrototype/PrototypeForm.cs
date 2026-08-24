@@ -1,5 +1,6 @@
 using StageManager.Services;
 using StageManager.Settings;
+using StageManager.Native.Window;
 using Microsoft.Win32;
 using System.Drawing.Drawing2D;
 using System.Numerics;
@@ -30,6 +31,7 @@ internal sealed class PrototypeForm : Form
 	private readonly ToolTip _toolTip = new() { InitialDelay = 450, ReshowDelay = 100, AutoPopDelay = 3000, ShowAlways = true };
 	private readonly ContextMenuStrip _contextMenu = new();
 	private readonly ContextMenuStrip _cardContextMenu = new();
+	private readonly InitialWindowLayoutMemory _initialWindowLayouts = new();
 	private readonly HashSet<int> _registeredHotkeys = new();
 	private Screen _sidebarDisplay;
 	private Rectangle _sidebarScreenBounds;
@@ -73,7 +75,7 @@ internal sealed class PrototypeForm : Form
 		refreshItem.Click += (_, _) => _renderer?.RefreshAllPreviews();
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => Close();
-		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.5.3") { Enabled = false });
+		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.5.4") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(refreshItem);
@@ -356,6 +358,7 @@ internal sealed class PrototypeForm : Form
 		_toolTip.Dispose();
 		_contextMenu.Dispose();
 		_cardContextMenu.Dispose();
+		_initialWindowLayouts.Clear();
 		SystemEvents.DisplaySettingsChanged -= SystemEvents_DisplaySettingsChanged;
 		if (_trayIcon is not null)
 		{
@@ -387,8 +390,12 @@ internal sealed class PrototypeForm : Form
 	{
 		if (_closing || _catalog is null || _renderer is null)
 			return;
+		var stages = _catalog.GetStages();
+		_initialWindowLayouts.Observe(stages
+			.SelectMany(stage => stage.Windows)
+			.DistinctBy(window => window.Handle));
 		var previousRevision = _renderer.LayoutRevision;
-		_renderer.Synchronize(_catalog.GetStages());
+		_renderer.Synchronize(stages);
 		if (_sidebarVisible && previousRevision != _renderer.LayoutRevision)
 			UpdateWindowRegion(true);
 	}
@@ -456,17 +463,42 @@ internal sealed class PrototypeForm : Form
 			activateItem.Click += (_, _) => ActivateSelectedWindow(window, allowMinimize: false);
 			_cardContextMenu.Items.Add(activateItem);
 
-			var recoverItem = new ToolStripMenuItem("Recover to this display")
+		}
+
+		var actionWindows = ResolveCardActionWindows(target, stage);
+		if (actionWindows.Count > 0)
+		{
+			var appliesToGroup = target.Window is null && actionWindows.Count > 1;
+			_cardContextMenu.Items.Add(new ToolStripSeparator());
+
+			var restoreLayoutItem = new ToolStripMenuItem(appliesToGroup
+				? "Restore all windows to initial size and position"
+				: "Restore initial size and position")
 			{
-				Enabled = OffscreenWindowRecovery.IsOffscreen(window)
+				Enabled = actionWindows.Any(_initialWindowLayouts.HasSnapshot)
 			};
-			recoverItem.Click += (_, _) =>
+			restoreLayoutItem.Click += (_, _) => RestoreInitialLayouts(actionWindows);
+			_cardContextMenu.Items.Add(restoreLayoutItem);
+
+			var centerItem = new ToolStripMenuItem(appliesToGroup
+				? "Move all windows to current display center"
+				: "Move to current display center")
 			{
-				var display = Screen.FromPoint(Cursor.Position);
-				if (OffscreenWindowRecovery.TryCenterIfOffscreen(window, display, window.IsMaximized))
-					ActivateSelectedWindow(window, allowMinimize: false);
+				Enabled = actionWindows.Any(candidate => NativeMethods.IsWindow(candidate.Handle))
 			};
-			_cardContextMenu.Items.Add(recoverItem);
+			centerItem.Click += (_, _) => CenterWindowsOnCurrentDisplay(actionWindows);
+			_cardContextMenu.Items.Add(centerItem);
+
+			var closeItem = new ToolStripMenuItem(appliesToGroup
+				? "Close all windows in this card"
+				: "Close this window")
+			{
+				Enabled = actionWindows.Any(candidate => NativeMethods.IsWindow(candidate.Handle)),
+				ForeColor = Color.Firebrick
+			};
+			closeItem.Click += (_, _) => CloseWindows(actionWindows);
+			_cardContextMenu.Items.Add(closeItem);
+			_cardContextMenu.Items.Add(new ToolStripSeparator());
 		}
 
 		var refreshItem = new ToolStripMenuItem("Refresh preview now");
@@ -487,6 +519,68 @@ internal sealed class PrototypeForm : Form
 			_cardContextMenu.Items.Add(ignoreItem);
 		}
 		_cardContextMenu.Show(Cursor.Position);
+	}
+
+	private static IReadOnlyList<IWindow> ResolveCardActionWindows(
+		CardHitTarget target,
+		PrototypeStageSnapshot? stage)
+	{
+		if (target.Window is { } exactWindow)
+			return [exactWindow];
+		return stage?.Windows
+			.Where(window => NativeMethods.IsWindow(window.Handle))
+			.DistinctBy(window => window.Handle)
+			.ToArray()
+			?? [];
+	}
+
+	private void RestoreInitialLayouts(IReadOnlyList<IWindow> windows)
+	{
+		var restored = false;
+		foreach (var window in windows)
+			restored |= _initialWindowLayouts.TryRestore(window);
+		if (restored)
+			CompleteWindowCardAction(windows, activate: true);
+	}
+
+	private void CenterWindowsOnCurrentDisplay(IReadOnlyList<IWindow> windows)
+	{
+		var display = Screen.FromPoint(Cursor.Position);
+		var moved = false;
+		foreach (var window in windows)
+		{
+			var restoreMaximized = OffscreenWindowRecovery.ShouldRestoreMaximized(window);
+			if (!OffscreenWindowRecovery.TryCenterOnDisplay(window, display, restoreMaximized))
+				continue;
+			moved = true;
+			if (window.IsMinimized)
+				NativeMethods.ShowWindowAsync(
+					window.Handle,
+					restoreMaximized ? NativeMethods.SwShowMaximized : NativeMethods.SwRestore);
+		}
+		if (moved)
+			CompleteWindowCardAction(windows, activate: true);
+	}
+
+	private void CloseWindows(IReadOnlyList<IWindow> windows)
+	{
+		foreach (var window in windows.Where(candidate => NativeMethods.IsWindow(candidate.Handle)))
+			window.Close();
+		CompleteWindowCardAction(windows, activate: false);
+	}
+
+	private void CompleteWindowCardAction(IReadOnlyList<IWindow> windows, bool activate)
+	{
+		if (activate)
+		{
+			var activationTarget = windows.FirstOrDefault(window =>
+				window.IsFocused && NativeMethods.IsWindow(window.Handle))
+				?? windows.FirstOrDefault(window => NativeMethods.IsWindow(window.Handle));
+			if (activationTarget is not null)
+				ActivateSelectedWindow(activationTarget, allowMinimize: false);
+		}
+		if (!_closing && IsHandleCreated)
+			BeginInvoke(new Action(RefreshStages));
 	}
 
 	private string GetToolTipText(CardHitTarget target)

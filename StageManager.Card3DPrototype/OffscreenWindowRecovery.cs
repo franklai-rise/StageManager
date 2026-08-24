@@ -9,6 +9,7 @@ internal static class OffscreenWindowRecovery
 {
 	private const int MinimumVisibleWidth = 96;
 	private const int MinimumVisibleHeight = 48;
+	private const int WindowPlacementRestoreToMaximized = 0x0002;
 
 	public static bool IsOffscreen(IWindow window)
 	{
@@ -22,12 +23,20 @@ internal static class OffscreenWindowRecovery
 	{
 		if (!NativeMethods.IsWindow(window.Handle) || !IsOffscreen(window))
 			return false;
+		return TryCenterOnDisplay(window, targetDisplay, restoreMaximized);
+	}
+
+	public static bool TryCenterOnDisplay(IWindow window, Screen targetDisplay, bool restoreMaximized = false)
+	{
+		ArgumentNullException.ThrowIfNull(targetDisplay);
+		if (!NativeMethods.IsWindow(window.Handle))
+			return false;
 
 		var restoreBounds = TryGetNormalBounds(window.Handle, out var normalBounds)
 			? normalBounds
 			: GetCurrentBounds(window.Handle);
 		var centered = CenterInWorkArea(restoreBounds, targetDisplay.WorkingArea);
-		var wasMaximized = restoreMaximized || window.IsMaximized;
+		var wasMaximized = restoreMaximized || ShouldRestoreMaximized(window);
 
 		NativeMethods.ShowWindowAsync(window.Handle, NativeMethods.SwRestore);
 		NativeMethods.SetWindowPos(
@@ -44,6 +53,20 @@ internal static class OffscreenWindowRecovery
 			NativeMethods.ShowWindowAsync(window.Handle, NativeMethods.SwShowMaximized);
 		window.NotifyUpdated();
 		return true;
+	}
+
+	public static bool ShouldRestoreMaximized(IWindow window)
+	{
+		if (window.IsMaximized)
+			return true;
+
+		var placement = new NativeWindowPlacement
+		{
+			Length = Marshal.SizeOf<NativeWindowPlacement>()
+		};
+		return NativeMethods.GetWindowPlacement(window.Handle, ref placement) &&
+			(placement.ShowCommand == NativeMethods.SwShowMaximized ||
+				(placement.Flags & WindowPlacementRestoreToMaximized) != 0);
 	}
 
 	internal static bool IsMeaningfullyVisible(Rectangle bounds, IEnumerable<Rectangle> workAreas)

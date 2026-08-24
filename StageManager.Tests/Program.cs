@@ -37,6 +37,7 @@ internal static class TestRunner
 		RunTest("Sidebar display selection follows the physical left edge", SidebarDisplaySelection);
 		RunTest("Tray-hidden windows leave the sidebar while taskbar-minimized windows remain", ManagedWindowVisibility);
 		RunTest("Off-screen recovery preserves visible windows and centers only lost windows", OffscreenRecoveryGeometry);
+		RunTest("Initial window layouts keep the first baseline and reject recycled handles", InitialWindowLayoutMemoryBehavior);
 		RunTest("Idle auto-hide waits one minute and wakes at the left edge", IdleAutoHideBehavior);
 		RunTest("Full-screen or maximized sidebar reveals at the edge and hides after pointer leave", LargeWindowTransientSidebar);
 		Console.WriteLine(_failures == 0 ? "All Stage_Manager_Lai tests passed." : $"{_failures} test(s) failed.");
@@ -449,6 +450,50 @@ internal static class TestRunner
 			workAreas[0]);
 		Assert(centered == new Rectangle(510, 170, 900, 700),
 			"The recovered window was not centered while preserving its normal size.");
+	}
+
+	private static void InitialWindowLayoutMemoryBehavior()
+	{
+		var original = new FakeWindow(41001, "Original", "original.exe");
+		var replacement = new FakeWindow(41001, "Replacement", "replacement.exe");
+		var initial = new InitialWindowLayout(new Rectangle(120, 80, 900, 640), WasMaximized: false);
+		var replacementLayout = new InitialWindowLayout(new Rectangle(300, 180, 1100, 760), WasMaximized: true);
+		var captureCount = 0;
+		InitialWindowLayout? restored = null;
+		var memory = new InitialWindowLayoutMemory(
+			window =>
+			{
+				captureCount++;
+				return ReferenceEquals(window, original) ? initial : replacementLayout;
+			},
+			(_, layout) =>
+			{
+				restored = layout;
+				return true;
+			});
+
+		memory.Observe([original]);
+		memory.Observe([original]);
+		Assert(captureCount == 1, "Moving or resizing would have overwritten the initial layout baseline.");
+		Assert(memory.TryRestore(original) && restored == initial, "The first observed layout was not restored.");
+
+		memory.Observe([replacement]);
+		Assert(!memory.HasSnapshot(original), "A recycled HWND inherited the previous window lifetime.");
+		Assert(memory.TryRestore(replacement) && restored == replacementLayout, "A replacement window did not get its own layout baseline.");
+		memory.Observe(Array.Empty<IWindow>());
+		Assert(memory.Count == 0, "Closed-window layout memory was not released.");
+
+		var alive = true;
+		var retained = new InitialWindowLayoutMemory(
+			_ => initial,
+			(_, _) => true,
+			_ => alive);
+		retained.Observe([original]);
+		retained.Observe(Array.Empty<IWindow>());
+		Assert(retained.HasSnapshot(original), "A live window on another desktop lost its layout baseline.");
+		alive = false;
+		retained.Observe(Array.Empty<IWindow>());
+		Assert(retained.Count == 0, "A destroyed off-desktop window was not forgotten.");
 	}
 
 	private static void IdleAutoHideBehavior()

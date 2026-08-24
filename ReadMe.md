@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.5.3
+# Stage_Manager_Lai v2.5.4
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -118,6 +118,10 @@ window no longer changes the list order, and newly opened windows are appended.
 
 v2.5.3 adds a centered title to empty preview cards. The title is shortened with `...`; Chinese runs use STZhongsong
 (华文中宋) while Latin runs use Times New Roman, with a serif fallback when either font is unavailable.
+
+v2.5.4 remembers each window's first observed normal size, position, and maximized state for its current lifetime.
+Card right-click menus can restore that initial layout, move the selected window or application group directly to
+the current display center, or close it through the application's normal close path so save prompts remain intact.
 
 ## What the current 3D build includes
 

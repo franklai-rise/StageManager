@@ -44,6 +44,10 @@ internal static class NativeMethods
 
 	[DllImport("user32.dll")]
 	[return: MarshalAs(UnmanagedType.Bool)]
+	public static extern bool SetWindowPlacement(IntPtr windowHandle, ref NativeWindowPlacement placement);
+
+	[DllImport("user32.dll")]
+	[return: MarshalAs(UnmanagedType.Bool)]
 	public static extern bool IsWindow(IntPtr windowHandle);
 
 	[DllImport("user32.dll")]
