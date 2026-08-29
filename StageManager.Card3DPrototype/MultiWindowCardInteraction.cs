@@ -9,6 +9,9 @@ internal enum MultiWindowCardClickAction
 
 internal static class MultiWindowCardInteraction
 {
+	public static bool ShouldExpandOnHover(int windowCount, bool isExpandedStage, bool isPrimaryCard) =>
+		windowCount > 1 && !isExpandedStage && isPrimaryCard;
+
 	public static MultiWindowCardClickAction Decide(int windowCount, bool isExpandedStage, bool isPrimaryCard)
 	{
 		if (windowCount <= 1)

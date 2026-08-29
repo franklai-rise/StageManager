@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.5.5
+# Stage_Manager_Lai v2.5.6
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -128,6 +128,11 @@ the sidebar owner, and restores normal outside-click dismissal. Ignoring an appl
 from Settings > Ignored applications. Settings now include a persisted English / Simplified Chinese interface switch
 that also updates tray menus, card actions, and tooltips. The small idle-status line below the footer arrow has been
 removed and its reserved space returned to the card list.
+
+v2.5.6 adds a short 350 ms dwell gesture for collapsed application cards with two or more windows: pause over the
+primary card and its vertical child list opens without a click. The list still stays open until the primary card is
+clicked. Settings now show an explicit in-page English / Simplified Chinese selector in addition to the compact toggle,
+and the settings window can be resized or maximized with a safe minimum size and adaptive horizontal controls.
 
 ## What the current 3D build includes
 

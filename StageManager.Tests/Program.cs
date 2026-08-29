@@ -31,6 +31,7 @@ internal static class TestRunner
 		RunTest("Prototype child-window slots do not jump after activation", PrototypeChildWindowSlotsStayStableAfterActivation);
 		RunTest("Prototype card click toggles only the selected foreground window", PrototypeClickToggle);
 		RunTest("Multi-window child selection stays expanded until the primary card is clicked", MultiWindowCardClicking);
+		RunTest("Only collapsed multi-window primary cards arm hover expansion", MultiWindowHoverExpansion);
 		RunTest("Expanded application groups keep every real window available", ExpandedApplicationGroupPaging);
 		RunTest("Application group cards render a white logo surface", ApplicationGroupCardRendering);
 		RunTest("Window cards respect the configured preview schedule", InitialCapturePolicy);
@@ -366,6 +367,18 @@ internal static class TestRunner
 			"Clicking the expanded primary card did not collapse the child list.");
 	}
 
+	private static void MultiWindowHoverExpansion()
+	{
+		Assert(!MultiWindowCardInteraction.ShouldExpandOnHover(1, false, true),
+			"A single-window card armed hover expansion.");
+		Assert(MultiWindowCardInteraction.ShouldExpandOnHover(2, false, true),
+			"A collapsed multi-window primary card did not arm hover expansion.");
+		Assert(!MultiWindowCardInteraction.ShouldExpandOnHover(2, true, true),
+			"An already-expanded application armed a second hover expansion.");
+		Assert(!MultiWindowCardInteraction.ShouldExpandOnHover(2, false, false),
+			"A child card armed hover expansion.");
+	}
+
 	private static void ExpandedApplicationGroupPaging()
 	{
 		var windows = Enumerable.Range(101, 8).Select(value => new IntPtr(value)).ToArray();
@@ -476,20 +489,32 @@ internal static class TestRunner
 			{
 				var draft = new AppSettings();
 				using var form = new SettingsForm(draft);
-				var switchButton = Descendants(form)
-					.OfType<Button>()
-					.Single(button => button.Text == "简体中文");
-				typeof(Button)
-					.GetMethod("OnClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-					.Invoke(switchButton, new object[] { EventArgs.Empty });
+				Assert(form.FormBorderStyle == FormBorderStyle.Sizable && form.MaximizeBox,
+					"The settings window is not freely resizable.");
+				Assert(form.MinimumSize.Width >= 640 && form.MinimumSize.Height >= 700,
+					"The settings window does not have a safe minimum size.");
+				var languageSelector = Descendants(form)
+					.OfType<ComboBox>()
+					.Single(combo => combo.Items.Cast<object>().Contains("Simplified Chinese"));
+				languageSelector.SelectedItem = "Simplified Chinese";
 				Assert(draft.UiLanguage == UiLanguage.SimplifiedChinese,
-					"The language button did not update the settings draft.");
+					"The in-page language option did not update the settings draft.");
 				Assert(form.Text.Contains("设置", StringComparison.Ordinal),
 					"The settings window title did not switch to Chinese.");
 				Assert(Descendants(form).Any(control => control.Text == "外观"),
 					"The settings groups did not switch to Chinese.");
+				Assert(Descendants(form).Any(control => control.Text == "界面语言"),
+					"The in-page interface language label did not switch to Chinese.");
+				var switchButton = Descendants(form)
+					.OfType<Button>()
+					.Single(button => button.Text == "English");
 				Assert(switchButton.Text == "English",
 					"The language button did not offer a switch back to English.");
+				typeof(Button)
+					.GetMethod("OnClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+					.Invoke(switchButton, new object[] { EventArgs.Empty });
+				Assert(draft.UiLanguage == UiLanguage.English,
+					"The compact language button did not switch back to English.");
 			}
 			catch (Exception exception)
 			{

@@ -326,6 +326,37 @@ internal sealed class CompositionStageRenderer : IDisposable
 		}
 	}
 
+	public bool CanExpandOnHover(CardHitTarget target)
+	{
+		if (_disposed ||
+			_expandedStageKey is not null ||
+			target.IsSidebarCollapseButton ||
+			target.PageDelta != 0 ||
+			target.Window is null ||
+			!_stages.TryGetValue(target.StageKey, out var stage))
+			return false;
+
+		return MultiWindowCardInteraction.ShouldExpandOnHover(
+			stage.Windows.Count,
+			isExpandedStage: false,
+			target.IsPrimaryCard);
+	}
+
+	public bool TryExpandHoveredPrimaryCard(Point clientPoint, string expectedStageKey)
+	{
+		if (_disposed || _expandedStageKey is not null)
+			return false;
+
+		var hit = HitTest(clientPoint);
+		if (hit is null ||
+			!string.Equals(hit.StageKey, expectedStageKey, StringComparison.OrdinalIgnoreCase) ||
+			!CanExpandOnHover(hit))
+			return false;
+
+		ExpandStage(hit.StageKey);
+		return true;
+	}
+
 	public IWindow? ActivateAt(Point clientPoint)
 	{
 		var hit = HitTest(clientPoint);
@@ -348,13 +379,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var action = MultiWindowCardInteraction.Decide(stage.Windows.Count, isExpandedStage, hit.IsPrimaryCard);
 		if (action == MultiWindowCardClickAction.Expand)
 		{
-			_expandedStageKey = hit.StageKey;
-			_hoveredStageKey = hit.StageKey;
-			_expandedPage = 0;
-			_hoveredWindowHandle = IntPtr.Zero;
-			_hoveredGroupCard = true;
-			_lastPointerInsideUtc = DateTime.UtcNow;
-			LayoutStages(true);
+			ExpandStage(hit.StageKey);
 			return null;
 		}
 		if (action == MultiWindowCardClickAction.Collapse)
@@ -363,6 +388,17 @@ internal sealed class CompositionStageRenderer : IDisposable
 			return null;
 		}
 		return hit.Window;
+	}
+
+	private void ExpandStage(string stageKey)
+	{
+		_expandedStageKey = stageKey;
+		_hoveredStageKey = stageKey;
+		_expandedPage = 0;
+		_hoveredWindowHandle = IntPtr.Zero;
+		_hoveredGroupCard = true;
+		_lastPointerInsideUtc = DateTime.UtcNow;
+		LayoutStages(true);
 	}
 
 	public void Scroll(int wheelDelta)

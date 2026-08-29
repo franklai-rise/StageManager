@@ -21,27 +21,30 @@ internal sealed class SettingsForm : Form
 	private readonly CheckedListBox _ignoredApplications;
 	private readonly TextBox _ignoredProcesses;
 	private readonly Button _languageButton;
+	private readonly ComboBox _interfaceLanguage;
+	private bool _applyingLanguage;
 
 	public SettingsForm(AppSettings draft, IReadOnlyList<PrototypeApplicationChoice>? applicationChoices = null)
 	{
 		Draft = draft;
 		Text = "Stage_Manager_Lai Settings";
-		FormBorderStyle = FormBorderStyle.FixedDialog;
+		FormBorderStyle = FormBorderStyle.Sizable;
 		StartPosition = FormStartPosition.CenterScreen;
 		ShowInTaskbar = false;
-		MaximizeBox = false;
+		MaximizeBox = true;
 		MinimizeBox = false;
+		MinimumSize = new Size(640, 700);
 		AutoScaleMode = AutoScaleMode.Dpi;
 		AutoScroll = true;
 		var workingArea = Screen.FromPoint(Cursor.Position).WorkingArea;
-		ClientSize = new Size(620, Math.Min(855, Math.Max(620, workingArea.Height - 80)));
+		ClientSize = new Size(620, Math.Min(900, Math.Max(660, workingArea.Height - 80)));
 		BackColor = Color.FromArgb(24, 26, 31);
 		ForeColor = Color.FromArgb(244, 246, 250);
 		Font = new Font("Segoe UI", 10f);
 
 		Controls.Add(new Label
 		{
-			Text = "Stage_Manager_Lai v2.5.5",
+			Text = "Stage_Manager_Lai v2.5.6",
 			Font = new Font("Segoe UI", 17f, FontStyle.Bold),
 			AutoSize = true,
 			Location = new Point(22, 18)
@@ -50,13 +53,14 @@ internal sealed class SettingsForm : Form
 		{
 			Location = new Point(448, 14),
 			Size = new Size(150, 34),
+			Anchor = AnchorStyles.Top | AnchorStyles.Right,
 			FlatStyle = FlatStyle.Flat
 		};
 		_languageButton.FlatAppearance.BorderColor = Color.FromArgb(83, 89, 102);
 		_languageButton.Click += (_, _) => ToggleLanguage();
 		Controls.Add(_languageButton);
 
-		var appearanceGroup = CreateGroup("Appearance", new Rectangle(20, 58, 580, 135));
+		var appearanceGroup = CreateGroup("Appearance", new Rectangle(20, 58, 580, 171));
 		appearanceGroup.Controls.Add(CreateLabel("Card size", 18, 31, 105));
 		_cardSizeSlider = new TrackBar
 		{
@@ -73,11 +77,24 @@ internal sealed class SettingsForm : Form
 		_cardSizeValue.TextAlign = ContentAlignment.MiddleCenter;
 		_cardSizeValue.Font = new Font(Font, FontStyle.Bold);
 		_cardSizeSlider.ValueChanged += (_, _) => UpdateCardSizeLabel();
-		_animationsEnabled = CreateCheckBox("Use animations", draft.AnimationsEnabled, 18, 82, 220);
-		_lowMemoryRendering = CreateCheckBox("Low-memory renderer (restart required)", draft.LowMemoryRendering, 250, 82, 310);
-		appearanceGroup.Controls.AddRange(new Control[] { _cardSizeSlider, _cardSizeValue, _animationsEnabled, _lowMemoryRendering });
+		appearanceGroup.Controls.Add(CreateLabel("Interface language", 18, 77, 130));
+		_interfaceLanguage = new ComboBox
+		{
+			DropDownStyle = ComboBoxStyle.DropDownList,
+			Location = new Point(150, 76),
+			Size = new Size(325, 30),
+			Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+		};
+		_interfaceLanguage.Items.AddRange(new object[] { "English", "Simplified Chinese" });
+		_interfaceLanguage.SelectedItem = draft.UiLanguage == UiLanguage.SimplifiedChinese
+			? "Simplified Chinese"
+			: "English";
+		_interfaceLanguage.SelectedIndexChanged += (_, _) => SetLanguageFromSelection();
+		_animationsEnabled = CreateCheckBox("Use animations", draft.AnimationsEnabled, 18, 119, 220);
+		_lowMemoryRendering = CreateCheckBox("Low-memory renderer (restart required)", draft.LowMemoryRendering, 250, 119, 310);
+		appearanceGroup.Controls.AddRange(new Control[] { _cardSizeSlider, _cardSizeValue, _interfaceLanguage, _animationsEnabled, _lowMemoryRendering });
 
-		var behaviorGroup = CreateGroup("Behavior", new Rectangle(20, 203, 580, 166));
+		var behaviorGroup = CreateGroup("Behavior", new Rectangle(20, 239, 580, 166));
 		_idleAutoHideEnabled = CreateCheckBox("Auto-hide after no pointer activity", draft.IdleAutoHideEnabled, 18, 31, 300);
 		behaviorGroup.Controls.Add(_idleAutoHideEnabled);
 		behaviorGroup.Controls.Add(CreateLabel("Idle delay", 325, 33, 78));
@@ -116,7 +133,7 @@ internal sealed class SettingsForm : Form
 			430);
 		behaviorGroup.Controls.Add(_pausePreviewRefreshWhenHidden);
 
-		var shortcutsGroup = CreateGroup("Keyboard shortcuts", new Rectangle(20, 379, 580, 190));
+		var shortcutsGroup = CreateGroup("Keyboard shortcuts", new Rectangle(20, 415, 580, 190));
 		_hotkeysEnabled = CreateCheckBox("Enable global shortcuts", draft.HotkeysEnabled, 18, 28, 260);
 		shortcutsGroup.Controls.Add(_hotkeysEnabled);
 		shortcutsGroup.Controls.Add(CreateLabel("Show / hide sidebar", 18, 70, 180));
@@ -125,9 +142,12 @@ internal sealed class SettingsForm : Form
 		_toggleSidebarHotkey = CreateTextBox(draft.ToggleSidebarHotkey, 205, 66, 330);
 		_previousStageHotkey = CreateTextBox(draft.PreviousStageHotkey, 205, 104, 330);
 		_nextStageHotkey = CreateTextBox(draft.NextStageHotkey, 205, 142, 330);
+		_toggleSidebarHotkey.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+		_previousStageHotkey.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+		_nextStageHotkey.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 		shortcutsGroup.Controls.AddRange(new Control[] { _toggleSidebarHotkey, _previousStageHotkey, _nextStageHotkey });
 
-		var ignoredGroup = CreateGroup("Ignored applications", new Rectangle(20, 579, 580, 192));
+		var ignoredGroup = CreateGroup("Ignored applications", new Rectangle(20, 615, 580, 192));
 		ignoredGroup.Controls.Add(CreateLabel("Check a running app to hide it; no .exe name is required.", 18, 25, 540));
 		_ignoredApplications = new CheckedListBox
 		{
@@ -137,7 +157,8 @@ internal sealed class SettingsForm : Form
 			BackColor = Color.FromArgb(34, 37, 44),
 			ForeColor = Color.FromArgb(244, 246, 250),
 			Location = new Point(18, 51),
-			Size = new Size(540, 88)
+			Size = new Size(540, 88),
+			Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
 		};
 		var choices = applicationChoices ?? Array.Empty<PrototypeApplicationChoice>();
 		var choiceNames = choices
@@ -156,7 +177,8 @@ internal sealed class SettingsForm : Form
 			ScrollBars = ScrollBars.Vertical,
 			Text = string.Join(Environment.NewLine, draft.IgnoredProcesses.Where(name => !choiceNames.Contains(name))),
 			Location = new Point(18, 166),
-			Size = new Size(540, 20)
+			Size = new Size(540, 20),
+			Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
 		};
 		ignoredGroup.Controls.Add(_ignoredProcesses);
 
@@ -164,21 +186,23 @@ internal sealed class SettingsForm : Form
 		{
 			Text = "Cancel",
 			DialogResult = DialogResult.Cancel,
-			Location = new Point(412, 805),
-			Size = new Size(88, 34)
+			Location = new Point(412, 841),
+			Size = new Size(88, 34),
+			Anchor = AnchorStyles.Top | AnchorStyles.Right
 		};
 		var resetButton = new Button
 		{
 			Text = "Reset defaults",
-			Location = new Point(20, 805),
+			Location = new Point(20, 841),
 			Size = new Size(120, 34)
 		};
 		resetButton.Click += (_, _) => ResetDefaults();
 		var saveButton = new Button
 		{
 			Text = "Save",
-			Location = new Point(510, 805),
-			Size = new Size(88, 34)
+			Location = new Point(510, 841),
+			Size = new Size(88, 34),
+			Anchor = AnchorStyles.Top | AnchorStyles.Right
 		};
 		saveButton.Click += SaveButton_Click;
 		Controls.AddRange(new Control[] { appearanceGroup, behaviorGroup, shortcutsGroup, ignoredGroup, resetButton, cancelButton, saveButton });
@@ -250,6 +274,7 @@ internal sealed class SettingsForm : Form
 		{
 			Text = text,
 			Bounds = bounds,
+			Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
 			ForeColor = ForeColor,
 			BackColor = BackColor
 		};
@@ -282,17 +307,36 @@ internal sealed class SettingsForm : Form
 
 	private void ToggleLanguage()
 	{
-		Draft.UiLanguage = Draft.UiLanguage == UiLanguage.SimplifiedChinese
+		SetLanguage(Draft.UiLanguage == UiLanguage.SimplifiedChinese
 			? UiLanguage.English
-			: UiLanguage.SimplifiedChinese;
+			: UiLanguage.SimplifiedChinese);
+	}
+
+	private void SetLanguageFromSelection()
+	{
+		if (_applyingLanguage)
+			return;
+		SetLanguage(string.Equals(_interfaceLanguage.SelectedItem as string, "Simplified Chinese", StringComparison.Ordinal)
+			? UiLanguage.SimplifiedChinese
+			: UiLanguage.English);
+	}
+
+	private void SetLanguage(UiLanguage language)
+	{
+		Draft.UiLanguage = language;
 		ApplyLanguage();
 	}
 
 	private void ApplyLanguage()
 	{
+		_applyingLanguage = true;
+		_interfaceLanguage.SelectedItem = Draft.UiLanguage == UiLanguage.SimplifiedChinese
+			? "Simplified Chinese"
+			: "English";
 		UiText.Apply(this, Draft.UiLanguage);
 		_languageButton.Text = UiText.Get(Draft.UiLanguage, "简体中文", "English");
 		_languageButton.AccessibleName = UiText.Get(Draft.UiLanguage, "Switch to Simplified Chinese", "切换到英文");
+		_applyingLanguage = false;
 	}
 
 	private void ResetDefaults()

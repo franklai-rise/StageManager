@@ -10,6 +10,9 @@ internal static class UiText
 		{
 			["Stage_Manager_Lai Settings"] = "Stage_Manager_Lai 设置",
 			["Appearance"] = "外观",
+			["Interface language"] = "界面语言",
+			["English"] = "英文",
+			["Simplified Chinese"] = "简体中文",
 			["Card size"] = "卡片大小",
 			["Use animations"] = "使用动画",
 			["Low-memory renderer (restart required)"] = "低内存渲染器（需重启）",

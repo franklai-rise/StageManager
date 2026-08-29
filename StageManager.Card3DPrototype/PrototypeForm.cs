@@ -21,9 +21,11 @@ internal sealed class PrototypeForm : Form
 	private const int PreviousStageHotkeyId = 0x4C42;
 	private const int NextStageHotkeyId = 0x4C43;
 	private const int EdgeActivationWidth = 8;
+	private const int HoverExpandDelayMilliseconds = 350;
 	private readonly DispatcherQueueHelper _dispatcherQueue = new();
 	private readonly System.Windows.Forms.Timer _stageTimer = new() { Interval = 500 };
 	private readonly System.Windows.Forms.Timer _pointerTimer = new() { Interval = 50 };
+	private readonly System.Windows.Forms.Timer _hoverExpandTimer = new() { Interval = HoverExpandDelayMilliseconds };
 	private readonly System.Windows.Forms.Timer _regionCollapseTimer = new() { Interval = 260 };
 	private readonly System.Windows.Forms.Timer _displayChangeTimer = new() { Interval = 250 };
 	private readonly System.Windows.Forms.Timer _previewReleaseTimer = new() { Interval = 30000 };
@@ -53,6 +55,7 @@ internal sealed class PrototypeForm : Form
 	private volatile bool _closing;
 	private int _hiddenEdgeUiRequestPending;
 	private CardClickContext? _lastCardClick;
+	private string? _hoverExpandStageKey;
 	private UiLanguage CurrentLanguage => _catalog?.Settings.Current.UiLanguage ?? UiLanguage.English;
 	private string L(string english, string chinese) => UiText.Get(CurrentLanguage, english, chinese);
 
@@ -79,7 +82,7 @@ internal sealed class PrototypeForm : Form
 			() => _renderer?.RefreshAllPreviews());
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => RunAfterContextMenuCloses(_contextMenu, Close);
-		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.5.5") { Enabled = false });
+		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v2.5.6") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(refreshItem);
@@ -88,6 +91,7 @@ internal sealed class PrototypeForm : Form
 		_contextMenu.Items.Add(exitItem);
 		_stageTimer.Tick += (_, _) => RefreshStages();
 		_pointerTimer.Tick += (_, _) => PollPointer();
+		_hoverExpandTimer.Tick += (_, _) => ExpandHoveredMultiWindowCard();
 		_regionCollapseTimer.Tick += (_, _) =>
 		{
 			_regionCollapseTimer.Stop();
@@ -184,7 +188,10 @@ internal sealed class PrototypeForm : Form
 			return;
 		var initialTarget = _renderer.HitTest(e.Location);
 		if (initialTarget is null)
+		{
+			CancelHoverExpand();
 			return;
+		}
 
 		_lastSidebarInteractionUtc = DateTime.UtcNow;
 		var wasExpanded = _renderer.HasExpandedStage;
@@ -194,6 +201,7 @@ internal sealed class PrototypeForm : Form
 		UpdateWindowRegion(true);
 
 		var target = _renderer.HitTest(e.Location) ?? initialTarget;
+		UpdateHoverExpandCandidate(target);
 		var toolTipKey = target.Window is { } pointedWindow
 			? $"window:{pointedWindow.Handle}"
 			: target.IsSidebarCollapseButton
@@ -216,6 +224,7 @@ internal sealed class PrototypeForm : Form
 	protected override void OnMouseDown(MouseEventArgs e)
 	{
 		base.OnMouseDown(e);
+		CancelHoverExpand();
 		_lastSidebarInteractionUtc = DateTime.UtcNow;
 		if (e.Button == MouseButtons.Right)
 		{
@@ -349,12 +358,14 @@ internal sealed class PrototypeForm : Form
 		UnregisterHotkeys();
 		_stageTimer.Stop();
 		_pointerTimer.Stop();
+		_hoverExpandTimer.Stop();
 		_hiddenEdgeTimer.Change(Timeout.Infinite, Timeout.Infinite);
 		_regionCollapseTimer.Stop();
 		_displayChangeTimer.Stop();
 		_previewReleaseTimer.Stop();
 		_stageTimer.Dispose();
 		_pointerTimer.Dispose();
+		_hoverExpandTimer.Dispose();
 		_hiddenEdgeTimer.Dispose();
 		_regionCollapseTimer.Dispose();
 		_displayChangeTimer.Dispose();
@@ -711,6 +722,7 @@ internal sealed class PrototypeForm : Form
 		}
 		else
 		{
+			CancelHoverExpand();
 			_edgeRevealSession = false;
 			_pointerTimer.Stop();
 			var largeWindowActive = FullScreenService.UsesTransientSidebarOn(
@@ -837,6 +849,7 @@ internal sealed class PrototypeForm : Form
 		var wasExpanded = _renderer.HasExpandedStage;
 		_renderer.PollPointer(client);
 		var hit = _renderer.HitTest(client);
+		UpdateHoverExpandCandidate(hit);
 		var pointerNearSidebar = client.X >= 0 &&
 			client.X <= _renderer.SidebarInteractionWidth &&
 			client.Y >= 0 &&
@@ -885,6 +898,47 @@ internal sealed class PrototypeForm : Form
 		{
 			SetSidebarVisible(false);
 		}
+	}
+
+	private void UpdateHoverExpandCandidate(CardHitTarget? target)
+	{
+		if (_renderer is null || target is null || !_renderer.CanExpandOnHover(target))
+		{
+			CancelHoverExpand();
+			return;
+		}
+
+		if (string.Equals(_hoverExpandStageKey, target.StageKey, StringComparison.OrdinalIgnoreCase) &&
+			_hoverExpandTimer.Enabled)
+			return;
+
+		_hoverExpandStageKey = target.StageKey;
+		_hoverExpandTimer.Stop();
+		_hoverExpandTimer.Start();
+	}
+
+	private void CancelHoverExpand()
+	{
+		_hoverExpandTimer.Stop();
+		_hoverExpandStageKey = null;
+	}
+
+	private void ExpandHoveredMultiWindowCard()
+	{
+		_hoverExpandTimer.Stop();
+		var stageKey = _hoverExpandStageKey;
+		_hoverExpandStageKey = null;
+		if (_renderer is null || !_sidebarVisible || string.IsNullOrEmpty(stageKey))
+			return;
+
+		var wasExpanded = _renderer.HasExpandedStage;
+		if (!_renderer.TryExpandHoveredPrimaryCard(PointToClient(Cursor.Position), stageKey))
+			return;
+
+		if (!wasExpanded && _renderer.HasExpandedStage)
+			NativeMethods.SetWindowPos(Handle, NativeMethods.HwndTop, 0, 0, 0, 0, NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
+		_lastSidebarInteractionUtc = DateTime.UtcNow;
+		UpdateWindowRegion(true);
 	}
 
 	private void PollHiddenEdgeFromBackground()
@@ -1033,7 +1087,7 @@ internal sealed class PrototypeForm : Form
 		var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 		_trayIcon = new NotifyIcon
 		{
-			Text = "Stage_Manager_Lai v2.5.5",
+			Text = "Stage_Manager_Lai v2.5.6",
 			Icon = icon,
 			ContextMenuStrip = _contextMenu,
 			Visible = true
