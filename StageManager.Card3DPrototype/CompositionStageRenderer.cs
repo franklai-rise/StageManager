@@ -332,7 +332,6 @@ internal sealed class CompositionStageRenderer : IDisposable
 			_expandedStageKey is not null ||
 			target.IsSidebarCollapseButton ||
 			target.PageDelta != 0 ||
-			target.Window is null ||
 			!_stages.TryGetValue(target.StageKey, out var stage))
 			return false;
 

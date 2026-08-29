@@ -377,6 +377,15 @@ internal static class TestRunner
 			"An already-expanded application armed a second hover expansion.");
 		Assert(!MultiWindowCardInteraction.ShouldExpandOnHover(2, false, false),
 			"A child card armed hover expansion.");
+		var groupCard = new CardHitTarget(
+			"example-app",
+			null,
+			new[] { Vector2.Zero, Vector2.UnitX, Vector2.One },
+			0,
+			IsPrimaryCard: true);
+		Assert(groupCard.Window is null && groupCard.IsPrimaryCard &&
+			MultiWindowCardInteraction.ShouldExpandOnHover(2, false, groupCard.IsPrimaryCard),
+			"A synthetic application group card was not eligible for hover expansion.");
 	}
 
 	private static void ExpandedApplicationGroupPaging()

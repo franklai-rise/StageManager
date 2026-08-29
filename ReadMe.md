@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.5.6
+# Stage_Manager_Lai v2.5.7
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -133,6 +133,10 @@ v2.5.6 adds a short 350 ms dwell gesture for collapsed application cards with tw
 primary card and its vertical child list opens without a click. The list still stays open until the primary card is
 clicked. Settings now show an explicit in-page English / Simplified Chinese selector in addition to the compact toggle,
 and the settings window can be resized or maximized with a safe minimum size and adaptive horizontal controls.
+
+v2.5.7 fixes the v2.5.6 hover trigger for real multi-window application groups. Those primary cards are synthetic
+white app-logo cards without a window handle, so they had been incorrectly excluded from the dwell test. They now
+expand reliably after a 350 ms pointer pause just like the visible application stack.
 
 ## What the current 3D build includes
 
