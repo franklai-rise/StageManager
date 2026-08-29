@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v2.5.7
+# Stage_Manager_Lai v4.0.1
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -137,6 +137,10 @@ and the settings window can be resized or maximized with a safe minimum size and
 v2.5.7 fixes the v2.5.6 hover trigger for real multi-window application groups. Those primary cards are synthetic
 white app-logo cards without a window handle, so they had been incorrectly excluded from the dwell test. They now
 expand reliably after a 350 ms pointer pause just like the visible application stack.
+
+v4.0.1 is the formal release designation for the current personal build. It includes the stable multi-window hover
+expansion fix, configurable card sizing, resizable bilingual settings, static low-frequency previews, click-through
+transparent space, and the existing dual-screen left-edge behavior.
 
 ## What the current 3D build includes
 
