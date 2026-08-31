@@ -11,6 +11,7 @@ internal sealed class SettingsForm : Form
 	private readonly CheckBox _lowMemoryRendering;
 	private readonly CheckBox _idleAutoHideEnabled;
 	private readonly NumericUpDown _idleSeconds;
+	private readonly CheckBox _focusEnhancedMode;
 	private readonly NumericUpDown _previewRefreshMinutes;
 	private readonly CheckBox _pausePreviewRefreshWhenHidden;
 	private readonly CheckBox _startWithWindows;
@@ -44,7 +45,7 @@ internal sealed class SettingsForm : Form
 
 		Controls.Add(new Label
 		{
-			Text = "Stage_Manager_Lai v4.0.1",
+			Text = "Stage_Manager_Lai v4.1.0",
 			Font = new Font("Segoe UI", 17f, FontStyle.Bold),
 			AutoSize = true,
 			Location = new Point(22, 18)
@@ -94,7 +95,7 @@ internal sealed class SettingsForm : Form
 		_lowMemoryRendering = CreateCheckBox("Low-memory renderer (restart required)", draft.LowMemoryRendering, 250, 119, 310);
 		appearanceGroup.Controls.AddRange(new Control[] { _cardSizeSlider, _cardSizeValue, _interfaceLanguage, _animationsEnabled, _lowMemoryRendering });
 
-		var behaviorGroup = CreateGroup("Behavior", new Rectangle(20, 239, 580, 166));
+		var behaviorGroup = CreateGroup("Behavior", new Rectangle(20, 239, 580, 204));
 		_idleAutoHideEnabled = CreateCheckBox("Auto-hide after no pointer activity", draft.IdleAutoHideEnabled, 18, 31, 300);
 		behaviorGroup.Controls.Add(_idleAutoHideEnabled);
 		behaviorGroup.Controls.Add(CreateLabel("Idle delay", 325, 33, 78));
@@ -108,8 +109,7 @@ internal sealed class SettingsForm : Form
 			Size = new Size(75, 30)
 		};
 		behaviorGroup.Controls.Add(_idleSeconds);
-		_idleSeconds.Enabled = _idleAutoHideEnabled.Checked;
-		_idleAutoHideEnabled.CheckedChanged += (_, _) => _idleSeconds.Enabled = _idleAutoHideEnabled.Checked;
+		_idleAutoHideEnabled.CheckedChanged += (_, _) => UpdateBehaviorControlState();
 		behaviorGroup.Controls.Add(CreateLabel("seconds", 490, 33, 65));
 		_startWithWindows = CreateCheckBox("Start with Windows", draft.StartWithWindows, 18, 76, 220);
 		behaviorGroup.Controls.Add(_startWithWindows);
@@ -125,15 +125,23 @@ internal sealed class SettingsForm : Form
 		};
 		behaviorGroup.Controls.Add(_previewRefreshMinutes);
 		behaviorGroup.Controls.Add(CreateLabel("min", 510, 78, 45));
+		_focusEnhancedMode = CreateCheckBox(
+			"Focus enhanced mode (reserve the card column)",
+			draft.StageMode == StageMode.Focus,
+			18,
+			116,
+			520);
+		_focusEnhancedMode.CheckedChanged += (_, _) => UpdateBehaviorControlState();
+		behaviorGroup.Controls.Add(_focusEnhancedMode);
 		_pausePreviewRefreshWhenHidden = CreateCheckBox(
 			"Pause preview refresh while the sidebar is hidden",
 			draft.PausePreviewRefreshWhenHidden,
 			18,
-			116,
+			154,
 			430);
 		behaviorGroup.Controls.Add(_pausePreviewRefreshWhenHidden);
 
-		var shortcutsGroup = CreateGroup("Keyboard shortcuts", new Rectangle(20, 415, 580, 190));
+		var shortcutsGroup = CreateGroup("Keyboard shortcuts", new Rectangle(20, 453, 580, 190));
 		_hotkeysEnabled = CreateCheckBox("Enable global shortcuts", draft.HotkeysEnabled, 18, 28, 260);
 		shortcutsGroup.Controls.Add(_hotkeysEnabled);
 		shortcutsGroup.Controls.Add(CreateLabel("Show / hide sidebar", 18, 70, 180));
@@ -147,7 +155,7 @@ internal sealed class SettingsForm : Form
 		_nextStageHotkey.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 		shortcutsGroup.Controls.AddRange(new Control[] { _toggleSidebarHotkey, _previousStageHotkey, _nextStageHotkey });
 
-		var ignoredGroup = CreateGroup("Ignored applications", new Rectangle(20, 615, 580, 192));
+		var ignoredGroup = CreateGroup("Ignored applications", new Rectangle(20, 653, 580, 192));
 		ignoredGroup.Controls.Add(CreateLabel("Check a running app to hide it; no .exe name is required.", 18, 25, 540));
 		_ignoredApplications = new CheckedListBox
 		{
@@ -186,21 +194,21 @@ internal sealed class SettingsForm : Form
 		{
 			Text = "Cancel",
 			DialogResult = DialogResult.Cancel,
-			Location = new Point(412, 841),
+			Location = new Point(412, 879),
 			Size = new Size(88, 34),
 			Anchor = AnchorStyles.Top | AnchorStyles.Right
 		};
 		var resetButton = new Button
 		{
 			Text = "Reset defaults",
-			Location = new Point(20, 841),
+			Location = new Point(20, 879),
 			Size = new Size(120, 34)
 		};
 		resetButton.Click += (_, _) => ResetDefaults();
 		var saveButton = new Button
 		{
 			Text = "Save",
-			Location = new Point(510, 841),
+			Location = new Point(510, 879),
 			Size = new Size(88, 34),
 			Anchor = AnchorStyles.Top | AnchorStyles.Right
 		};
@@ -209,6 +217,7 @@ internal sealed class SettingsForm : Form
 		AcceptButton = saveButton;
 		CancelButton = cancelButton;
 		UpdateCardSizeLabel();
+		UpdateBehaviorControlState();
 		ApplyLanguage();
 	}
 
@@ -244,6 +253,7 @@ internal sealed class SettingsForm : Form
 		Draft.LowMemoryRendering = _lowMemoryRendering.Checked;
 		Draft.IdleAutoHideEnabled = _idleAutoHideEnabled.Checked;
 		Draft.IdleAutoHideSeconds = (int)_idleSeconds.Value;
+		Draft.StageMode = _focusEnhancedMode.Checked ? StageMode.Focus : StageMode.Coexist;
 		Draft.PreviewRefreshMinutes = (int)_previewRefreshMinutes.Value;
 		Draft.PausePreviewRefreshWhenHidden = _pausePreviewRefreshWhenHidden.Checked;
 		Draft.StartWithWindows = _startWithWindows.Checked;
@@ -305,6 +315,12 @@ internal sealed class SettingsForm : Form
 
 	private void UpdateCardSizeLabel() => _cardSizeValue.Text = $"{_cardSizeSlider.Value}%";
 
+	private void UpdateBehaviorControlState()
+	{
+		_idleAutoHideEnabled.Enabled = !_focusEnhancedMode.Checked;
+		_idleSeconds.Enabled = !_focusEnhancedMode.Checked && _idleAutoHideEnabled.Checked;
+	}
+
 	private void ToggleLanguage()
 	{
 		SetLanguage(Draft.UiLanguage == UiLanguage.SimplifiedChinese
@@ -346,6 +362,7 @@ internal sealed class SettingsForm : Form
 		_lowMemoryRendering.Checked = true;
 		_idleAutoHideEnabled.Checked = true;
 		_idleSeconds.Value = 60;
+		_focusEnhancedMode.Checked = false;
 		_previewRefreshMinutes.Value = 5;
 		_pausePreviewRefreshWhenHidden.Checked = true;
 		_startWithWindows.Checked = true;

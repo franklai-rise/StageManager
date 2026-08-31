@@ -21,6 +21,7 @@ internal sealed class PrototypeForm : Form
 	private const int PreviousStageHotkeyId = 0x4C42;
 	private const int NextStageHotkeyId = 0x4C43;
 	private const int EdgeActivationWidth = 8;
+	private const int VirtualKeyLeftButton = 0x01;
 	private const int HoverExpandDelayMilliseconds = 350;
 	private readonly DispatcherQueueHelper _dispatcherQueue = new();
 	private readonly System.Windows.Forms.Timer _stageTimer = new() { Interval = 500 };
@@ -34,6 +35,7 @@ internal sealed class PrototypeForm : Form
 	private readonly ContextMenuStrip _contextMenu = new() { AutoClose = true };
 	private readonly ContextMenuStrip _cardContextMenu = new() { AutoClose = true };
 	private readonly InitialWindowLayoutMemory _initialWindowLayouts = new();
+	private readonly FocusAppBarReservation _focusAppBarReservation = new();
 	private readonly HashSet<int> _registeredHotkeys = new();
 	private Screen _sidebarDisplay;
 	private Rectangle _sidebarScreenBounds;
@@ -46,6 +48,7 @@ internal sealed class PrototypeForm : Form
 	private string? _toolTipKey;
 	private DateTime _lastSidebarInteractionUtc = DateTime.UtcNow;
 	private DateTime _transientRevealUtc = DateTime.MinValue;
+	private DateTime _nextFocusConstraintUtc = DateTime.MinValue;
 	private volatile bool _sidebarVisible = true;
 	private bool _transientSession;
 	private bool _edgeRevealSession;
@@ -54,8 +57,10 @@ internal sealed class PrototypeForm : Form
 	private bool _demoteOverlayAfterHide;
 	private volatile bool _closing;
 	private int _hiddenEdgeUiRequestPending;
+	private bool _appBarReapplyPending;
 	private CardClickContext? _lastCardClick;
 	private string? _hoverExpandStageKey;
+	private bool IsFocusEnhanced => _catalog?.Settings.Current.StageMode == StageMode.Focus;
 	private UiLanguage CurrentLanguage => _catalog?.Settings.Current.UiLanguage ?? UiLanguage.English;
 	private string L(string english, string chinese) => UiText.Get(CurrentLanguage, english, chinese);
 
@@ -67,7 +72,7 @@ internal sealed class PrototypeForm : Form
 		ShowInTaskbar = false;
 		StartPosition = FormStartPosition.Manual;
 		TopMost = false;
-		_sidebarDisplay = SidebarDisplayPolicy.SelectLeftmost(Screen.AllScreens, screen => screen.WorkingArea);
+		_sidebarDisplay = SidebarDisplayPolicy.SelectLeftmost(Screen.AllScreens, screen => screen.Bounds);
 		_sidebarScreenBounds = _sidebarDisplay.WorkingArea;
 		Bounds = new Rectangle(_sidebarDisplay.WorkingArea.Left, _sidebarDisplay.WorkingArea.Top, Math.Min(900, _sidebarDisplay.WorkingArea.Width), _sidebarDisplay.WorkingArea.Height);
 		SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
@@ -82,7 +87,7 @@ internal sealed class PrototypeForm : Form
 			() => _renderer?.RefreshAllPreviews());
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => RunAfterContextMenuCloses(_contextMenu, Close);
-		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v4.0.1") { Enabled = false });
+		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v4.1.0") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(refreshItem);
@@ -106,7 +111,9 @@ internal sealed class PrototypeForm : Form
 		_displayChangeTimer.Tick += (_, _) =>
 		{
 			_displayChangeTimer.Stop();
-			UpdateSidebarDisplay();
+			_focusAppBarReservation.Remove();
+			UpdateSidebarDisplay(force: true);
+			UpdateFocusReservation(force: true);
 		};
 		_previewReleaseTimer.Tick += (_, _) =>
 		{
@@ -319,6 +326,12 @@ internal sealed class PrototypeForm : Form
 		const int htTransparent = -1;
 		const int wmMouseActivate = 0x0021;
 		const int maNoActivate = 3;
+		if (_focusAppBarReservation.IsPositionChangedMessage(message.Msg, message.WParam))
+		{
+			QueueFocusReservationReapply();
+			message.Result = IntPtr.Zero;
+			return;
+		}
 		if (message.Msg == WmHotkey)
 		{
 			switch (message.WParam.ToInt32())
@@ -355,6 +368,7 @@ internal sealed class PrototypeForm : Form
 	protected override void OnFormClosed(FormClosedEventArgs e)
 	{
 		_closing = true;
+		_focusAppBarReservation.Dispose();
 		UnregisterHotkeys();
 		_stageTimer.Stop();
 		_pointerTimer.Stop();
@@ -412,7 +426,10 @@ internal sealed class PrototypeForm : Form
 		var previousRevision = _renderer.LayoutRevision;
 		_renderer.Synchronize(stages);
 		if (_sidebarVisible && previousRevision != _renderer.LayoutRevision)
+		{
 			UpdateWindowRegion(true);
+			UpdateFocusReservation();
+		}
 	}
 
 	private void Settings_SettingsChanged(object? sender, EventArgs e)
@@ -431,8 +448,13 @@ internal sealed class PrototypeForm : Form
 		_renderer.SetPreviewPolicy(settings.PreviewRefreshMinutes, settings.PausePreviewRefreshWhenHidden);
 		UiText.Apply(_contextMenu.Items, settings.UiLanguage);
 		RegisterHotkeys();
-		if (!settings.IdleAutoHideEnabled && !_sidebarVisible)
+		if (settings.StageMode != StageMode.Focus)
+			_focusAppBarReservation.Remove();
+		if ((settings.StageMode == StageMode.Focus || !settings.IdleAutoHideEnabled) && !_sidebarVisible)
+		{
+			_edgeRevealSession = false;
 			SetSidebarVisible(true);
+		}
 		if (updateStartup)
 		{
 			try
@@ -449,7 +471,9 @@ internal sealed class PrototypeForm : Form
 					MessageBoxIcon.Warning);
 			}
 		}
+		UpdateSidebarDisplay(force: true);
 		RefreshStages();
+		UpdateFocusReservation(force: true);
 	}
 
 	private void ShowSettings()
@@ -712,9 +736,15 @@ internal sealed class PrototypeForm : Form
 
 	private void SetSidebarVisible(bool visible)
 	{
-		if (_renderer is null || _sidebarVisible == visible)
+		if (_renderer is null)
 			return;
+		if (_sidebarVisible == visible)
+		{
+			UpdateFocusReservation();
+			return;
+		}
 		_sidebarVisible = visible;
+		UpdateFocusReservation();
 		if (visible)
 		{
 			_hiddenEdgeTimer.Change(Timeout.Infinite, Timeout.Infinite);
@@ -725,9 +755,7 @@ internal sealed class PrototypeForm : Form
 			CancelHoverExpand();
 			_edgeRevealSession = false;
 			_pointerTimer.Stop();
-			var largeWindowActive = FullScreenService.UsesTransientSidebarOn(
-				NativeMethods.GetForegroundWindow(),
-				_sidebarDisplay);
+			var largeWindowActive = UsesTransientSidebar(NativeMethods.GetForegroundWindow());
 			_hiddenEdgeTimer.Change(
 				0,
 				SidebarIdleBehavior.GetHiddenEdgePollingInterval(largeWindowActive));
@@ -748,6 +776,7 @@ internal sealed class PrototypeForm : Form
 				0,
 				NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
 			_renderer.SetSidebarVisible(true, animate: true);
+			UpdateFocusReservation();
 			return;
 		}
 
@@ -798,7 +827,7 @@ internal sealed class PrototypeForm : Form
 		ActivateSelectedWindow(window, allowMinimize: false);
 	}
 
-	private static void ActivateSelectedWindow(StageManager.Native.Window.IWindow window, bool allowMinimize)
+	private void ActivateSelectedWindow(StageManager.Native.Window.IWindow window, bool allowMinimize)
 	{
 		if (!ManagedWindowPresence.ShouldDisplay(
 			NativeMethods.IsWindowVisible(window.Handle),
@@ -820,6 +849,95 @@ internal sealed class PrototypeForm : Form
 		if (window.IsMinimized)
 			NativeMethods.ShowWindowAsync(window.Handle, NativeMethods.SwRestore);
 		window.Focus();
+		QueueFocusWindowPlacement(window);
+	}
+
+	private bool UsesTransientSidebar(IntPtr foregroundWindow)
+	{
+		var mode = _catalog?.Settings.Current.StageMode ?? StageMode.Coexist;
+		if (mode == StageMode.Focus)
+		{
+			var isExclusiveFullScreen = FullScreenService.IsExclusiveFullScreenOn(
+				foregroundWindow,
+				_sidebarDisplay);
+			return FocusEnhancedBehavior.UsesTransientSidebar(
+				mode,
+				maximizedOrFullScreen: isExclusiveFullScreen,
+				exclusiveFullScreen: isExclusiveFullScreen);
+		}
+
+		var isMaximizedOrFullScreen = FullScreenService.UsesTransientSidebarOn(
+			foregroundWindow,
+			_sidebarDisplay);
+		return FocusEnhancedBehavior.UsesTransientSidebar(
+			mode,
+			isMaximizedOrFullScreen,
+			exclusiveFullScreen: false);
+	}
+
+	private void QueueFocusWindowPlacement(StageManager.Native.Window.IWindow window)
+	{
+		if (!IsFocusEnhanced ||
+			!_focusAppBarReservation.IsRegistered ||
+			_transientSession ||
+			_edgeRevealSession ||
+			_closing)
+		{
+			return;
+		}
+
+		try
+		{
+			BeginInvoke(new Action(() =>
+			{
+				if (!IsFocusEnhanced ||
+					!_focusAppBarReservation.IsRegistered ||
+					_transientSession ||
+					FullScreenService.IsExclusiveFullScreenOn(window.Handle, _sidebarDisplay))
+				{
+					return;
+				}
+
+				FocusWindowPlacement.TryKeepOutOfReservedColumn(
+					window,
+					_sidebarDisplay,
+					_focusAppBarReservation.ReservedBounds.Right);
+			}));
+		}
+		catch (InvalidOperationException)
+		{
+		}
+	}
+
+	private void KeepForegroundWindowOutOfFocusColumn(IntPtr foregroundWindow, DateTime nowUtc)
+	{
+		if (!IsFocusEnhanced ||
+			!_focusAppBarReservation.IsRegistered ||
+			_transientSession ||
+			foregroundWindow == IntPtr.Zero ||
+			foregroundWindow == Handle ||
+			nowUtc < _nextFocusConstraintUtc)
+		{
+			return;
+		}
+
+		_nextFocusConstraintUtc = nowUtc.AddMilliseconds(150);
+		if ((NativeMethods.GetAsyncKeyState(VirtualKeyLeftButton) & 0x8000) != 0 ||
+			FullScreenService.IsExclusiveFullScreenOn(foregroundWindow, _sidebarDisplay))
+		{
+			return;
+		}
+
+		var window = _catalog?.GetStages()
+			.SelectMany(stage => stage.Windows)
+			.FirstOrDefault(candidate => candidate.Handle == foregroundWindow);
+		if (window is null)
+			return;
+
+		FocusWindowPlacement.TryKeepOutOfReservedColumn(
+			window,
+			_sidebarDisplay,
+			_focusAppBarReservation.ReservedBounds.Right);
 	}
 
 	private void PollPointer()
@@ -829,9 +947,8 @@ internal sealed class PrototypeForm : Form
 		var screenPoint = Cursor.Position;
 		var nowUtc = DateTime.UtcNow;
 		var pointerAtLeftEdge = IsNearLeftEdge(screenPoint);
-		var largeWindowActive = FullScreenService.UsesTransientSidebarOn(
-			NativeMethods.GetForegroundWindow(),
-			_sidebarDisplay);
+		var foreground = NativeMethods.GetForegroundWindow();
+		var largeWindowActive = UsesTransientSidebar(foreground);
 		UpdateTransientSession(largeWindowActive, nowUtc);
 		if (!_sidebarVisible)
 		{
@@ -890,8 +1007,9 @@ internal sealed class PrototypeForm : Form
 		}
 
 		var settings = _catalog.Settings.Current;
+		KeepForegroundWindowOutOfFocusColumn(foreground, nowUtc);
 		if (SidebarIdleBehavior.ShouldHide(
-			settings.IdleAutoHideEnabled,
+			FocusEnhancedBehavior.ShouldIdleHide(settings.StageMode, settings.IdleAutoHideEnabled),
 			settings.IdleAutoHideSeconds,
 			_lastSidebarInteractionUtc,
 			nowUtc))
@@ -984,6 +1102,7 @@ internal sealed class PrototypeForm : Form
 			_transientSession = true;
 			_sidebarWasVisibleBeforeTransientSession = _sidebarVisible;
 			_transientRevealUtc = nowUtc - TimeSpan.FromSeconds(1);
+			UpdateFocusReservation();
 			return;
 		}
 
@@ -991,9 +1110,14 @@ internal sealed class PrototypeForm : Form
 			return;
 		_transientSession = false;
 		SetTransientOverlayRaised(false);
-		if (_sidebarWasVisibleBeforeTransientSession && !_sidebarVisible)
-			SetSidebarVisible(true);
+		if (_sidebarWasVisibleBeforeTransientSession)
+		{
+			_edgeRevealSession = false;
+			if (!_sidebarVisible)
+				SetSidebarVisible(true);
+		}
 		_sidebarWasVisibleBeforeTransientSession = false;
+		UpdateFocusReservation();
 	}
 
 	private void SetTransientOverlayRaised(bool raised)
@@ -1033,22 +1157,101 @@ internal sealed class PrototypeForm : Form
 		}
 	}
 
-	private void UpdateSidebarDisplay()
+	private void UpdateFocusReservation(bool force = false)
+	{
+		if (_catalog is null || _renderer is null || !IsHandleCreated || _closing)
+			return;
+
+		var shouldReserve = FocusEnhancedBehavior.ShouldReserveSidebar(
+			_catalog.Settings.Current.StageMode,
+			_sidebarVisible,
+			_transientSession,
+			_edgeRevealSession);
+		var wasRegistered = _focusAppBarReservation.IsRegistered;
+		var previousBounds = _focusAppBarReservation.ReservedBounds;
+		if (!shouldReserve)
+		{
+			_focusAppBarReservation.Remove();
+			if (wasRegistered)
+				UpdateSidebarDisplay(force: true);
+			return;
+		}
+
+		var reservedWidth = FocusEnhancedBehavior.CalculateReservedWidth(
+			_renderer.SidebarInteractionWidth,
+			DeviceDpi / 96f,
+			_sidebarDisplay.Bounds.Width);
+		if (!_focusAppBarReservation.SetReservation(Handle, _sidebarDisplay, reservedWidth, force))
+			return;
+
+		if (!wasRegistered || previousBounds != _focusAppBarReservation.ReservedBounds)
+			UpdateSidebarDisplay(force: true);
+	}
+
+	private void QueueFocusReservationReapply()
+	{
+		if (_closing || _appBarReapplyPending || !IsHandleCreated)
+			return;
+
+		_appBarReapplyPending = true;
+		try
+		{
+			BeginInvoke(new Action(() =>
+			{
+				try
+				{
+					UpdateFocusReservation(force: true);
+				}
+				finally
+				{
+					_appBarReapplyPending = false;
+				}
+			}));
+		}
+		catch (InvalidOperationException)
+		{
+			_appBarReapplyPending = false;
+		}
+	}
+
+	private Rectangle GetSidebarArea(Screen display)
+	{
+		var workingArea = display.WorkingArea;
+		var left = workingArea.Left;
+		if (IsFocusEnhanced &&
+			_focusAppBarReservation.IsRegistered &&
+			string.Equals(
+				_focusAppBarReservation.DisplayDeviceName,
+				display.DeviceName,
+				StringComparison.OrdinalIgnoreCase))
+		{
+			left = _focusAppBarReservation.ReservedBounds.Left;
+		}
+
+		var right = Math.Max(left + 1, workingArea.Right);
+		return Rectangle.FromLTRB(left, workingArea.Top, right, workingArea.Bottom);
+	}
+
+	private void UpdateSidebarDisplay(bool force = false)
 	{
 		if (_closing || Screen.AllScreens.Length == 0)
 			return;
-		var selected = SidebarDisplayPolicy.SelectLeftmost(Screen.AllScreens, screen => screen.WorkingArea);
+		var selected = SidebarDisplayPolicy.SelectLeftmost(Screen.AllScreens, screen => screen.Bounds);
+		var sidebarArea = GetSidebarArea(selected);
 		if (string.Equals(selected.DeviceName, _sidebarDisplay.DeviceName, StringComparison.OrdinalIgnoreCase) &&
-			selected.WorkingArea == _sidebarScreenBounds)
+			sidebarArea == _sidebarScreenBounds &&
+			!force)
 			return;
 
 		_sidebarDisplay = selected;
-		_sidebarScreenBounds = selected.WorkingArea;
-		Bounds = new Rectangle(
-			selected.WorkingArea.Left,
-			selected.WorkingArea.Top,
-			Math.Min(900, selected.WorkingArea.Width),
-			selected.WorkingArea.Height);
+		_sidebarScreenBounds = sidebarArea;
+		var targetBounds = new Rectangle(
+			sidebarArea.Left,
+			sidebarArea.Top,
+			Math.Min(900, sidebarArea.Width),
+			sidebarArea.Height);
+		if (Bounds != targetBounds)
+			Bounds = targetBounds;
 		UpdateWindowRegion(_sidebarVisible);
 	}
 
@@ -1087,7 +1290,7 @@ internal sealed class PrototypeForm : Form
 		var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 		_trayIcon = new NotifyIcon
 		{
-			Text = "Stage_Manager_Lai v4.0.1",
+			Text = "Stage_Manager_Lai v4.1.0",
 			Icon = icon,
 			ContextMenuStrip = _contextMenu,
 			Visible = true

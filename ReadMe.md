@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v4.0.1
+# Stage_Manager_Lai v4.1.0
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -142,6 +142,13 @@ v4.0.1 is the formal release designation for the current personal build. It incl
 expansion fix, configurable card sizing, resizable bilingual settings, static low-frequency previews, click-through
 transparent space, and the existing dual-screen left-edge behavior.
 
+v4.1.0 adds an optional Focus enhanced mode. While enabled, the visible card column is registered as a Windows desktop
+work-area reservation on the physical leftmost display, so maximized, snapped, newly opened, and selected normal windows
+stay in the remaining area to its right. The sidebar remains visible and ignores idle auto-hide. A true exclusive
+full-screen window may cover the column; moving the pointer to the left edge temporarily raises the cards above it, and
+clicking the card for that foreground full-screen window minimizes it. Leaving Focus enhanced mode immediately restores
+the original Windows work area. Other displays, Explorer, the taskbar, and desktop icons are never moved or controlled.
+
 ## What the current 3D build includes
 
 - One stable application group per app, with a synthetic logo card when that app has multiple windows.
@@ -150,6 +157,8 @@ transparent space, and the existing dual-screen left-edge behavior.
 - Cards scale from 55% to 125%; long lists scroll without overlap.
 - Static window snapshots refresh on a configurable low-frequency schedule rather than continuously.
 - The sidebar follows the physical leftmost display and supports edge reveal over maximized or full-screen apps.
+- Optional Focus enhanced mode permanently reserves the visible card column for normal and maximized windows while
+  retaining temporary edge reveal over true full-screen applications.
 - Current-public-virtual-desktop filtering prevents windows from other desktops appearing in the sidebar.
 - Settings, ignored applications, appearance, startup behavior, and shortcuts persist in
   `%LocalAppData%\Stage_Manager_Lai\settings.json`.
@@ -169,6 +178,8 @@ overlay is distracting, select Yuanbao in Settings > Ignored applications to hid
 - Right-click a card to bring it forward, recover it, refresh its preview, or ignore its application.
 - Click the bottom arrow or use the tray icon/global shortcut to hide or show the sidebar.
 - Left-click the tray icon to toggle the sidebar; its menu also refreshes all previews and opens Settings.
+- Enable `Focus enhanced mode (reserve the card column)` under Settings > Behavior to keep normal windows to the right
+  of the visible cards. Manual hide/show controls continue to work in this mode.
 
 Default shortcuts:
 

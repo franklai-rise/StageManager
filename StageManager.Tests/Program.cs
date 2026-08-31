@@ -44,6 +44,8 @@ internal static class TestRunner
 		RunTest("Initial window layouts keep the first baseline and reject recycled handles", InitialWindowLayoutMemoryBehavior);
 		RunTest("Idle auto-hide waits one minute and wakes at the left edge", IdleAutoHideBehavior);
 		RunTest("Full-screen or maximized sidebar reveals at the edge and hides after pointer leave", LargeWindowTransientSidebar);
+		RunTest("Focus enhanced mode reserves normal work and overlays only exclusive full-screen", FocusEnhancedSidebarBehavior);
+		RunTest("Focus enhanced placement preserves windows already right of the card column", FocusEnhancedWindowGeometry);
 		Console.WriteLine(_failures == 0 ? "All Stage_Manager_Lai tests passed." : $"{_failures} test(s) failed.");
 		return _failures == 0 ? 0 : 1;
 	}
@@ -122,7 +124,7 @@ internal static class TestRunner
 				}
 				""");
 			var service = new SettingsService(path);
-			Assert(service.Current.SchemaVersion == 7, "Settings schema was not upgraded for low-memory rendering.");
+			Assert(service.Current.SchemaVersion == 8, "Settings schema was not upgraded for Focus enhanced mode.");
 			Assert(service.Current.LowMemoryRendering, "Low-memory rendering should be enabled by default.");
 			Assert(!service.Current.IgnoredProcesses.Contains("explorer", StringComparer.OrdinalIgnoreCase),
 				"The legacy default Explorer ignore entry was not migrated.");
@@ -131,7 +133,7 @@ internal static class TestRunner
 			Assert(service.Current.IgnoredProcesses.Contains("custom-app", StringComparer.OrdinalIgnoreCase),
 				"A user-selected ignored process was lost during migration.");
 			var migratedJson = File.ReadAllText(path);
-			Assert(migratedJson.Contains("\"SchemaVersion\": 7", StringComparison.Ordinal),
+			Assert(migratedJson.Contains("\"SchemaVersion\": 8", StringComparison.Ordinal),
 				"The migrated schema was not written back to disk.");
 			Assert(!migratedJson.Contains("explorer", StringComparison.OrdinalIgnoreCase),
 				"The legacy Explorer ignore entry remained in the persisted settings.");
@@ -514,6 +516,8 @@ internal static class TestRunner
 					"The settings groups did not switch to Chinese.");
 				Assert(Descendants(form).Any(control => control.Text == "界面语言"),
 					"The in-page interface language label did not switch to Chinese.");
+				Assert(Descendants(form).Any(control => control.Text == "Focus 增强模式（保留卡片栏区域）"),
+					"The Focus enhanced mode option was not exposed in Chinese.");
 				var switchButton = Descendants(form)
 					.OfType<Button>()
 					.Single(button => button.Text == "English");
@@ -524,6 +528,23 @@ internal static class TestRunner
 					.Invoke(switchButton, new object[] { EventArgs.Empty });
 				Assert(draft.UiLanguage == UiLanguage.English,
 					"The compact language button did not switch back to English.");
+				var focusToggle = Descendants(form)
+					.OfType<CheckBox>()
+					.Single(checkBox => checkBox.Text == "Focus enhanced mode (reserve the card column)");
+				focusToggle.Checked = true;
+				var idleToggle = Descendants(form)
+					.OfType<CheckBox>()
+					.Single(checkBox => checkBox.Text == "Auto-hide after no pointer activity");
+				Assert(!idleToggle.Enabled,
+					"Idle auto-hide remained editable while Focus enhanced mode was selected.");
+				var saveButton = Descendants(form)
+					.OfType<Button>()
+					.Single(button => button.Text == "Save");
+				typeof(Button)
+					.GetMethod("OnClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+					.Invoke(saveButton, new object[] { EventArgs.Empty });
+				Assert(draft.StageMode == StageMode.Focus,
+					"The settings form did not persist the Focus enhanced mode selection.");
 			}
 			catch (Exception exception)
 			{
@@ -623,6 +644,48 @@ internal static class TestRunner
 			"A transient sidebar did not hide after the pointer left.");
 		Assert(TransientSidebarBehavior.Decide(false, false, true, false, DateTime.MinValue, now) == TransientSidebarAction.None,
 			"Large-window behavior changed the normal sidebar edge policy.");
+	}
+
+	private static void FocusEnhancedSidebarBehavior()
+	{
+		Assert(!FocusEnhancedBehavior.UsesTransientSidebar(StageMode.Focus, maximizedOrFullScreen: true, exclusiveFullScreen: false),
+			"A maximized window incorrectly hid the Focus enhanced sidebar.");
+		Assert(FocusEnhancedBehavior.UsesTransientSidebar(StageMode.Focus, maximizedOrFullScreen: true, exclusiveFullScreen: true),
+			"An exclusive full-screen window did not receive the transient sidebar behavior.");
+		Assert(FocusEnhancedBehavior.UsesTransientSidebar(StageMode.Coexist, maximizedOrFullScreen: true, exclusiveFullScreen: false),
+			"Standard mode lost its maximized-window transient sidebar behavior.");
+		Assert(FocusEnhancedBehavior.ShouldReserveSidebar(StageMode.Focus, true, false, false),
+			"Focus enhanced mode did not reserve the visible card column.");
+		Assert(!FocusEnhancedBehavior.ShouldReserveSidebar(StageMode.Focus, true, true, false),
+			"Focus enhanced mode reserved space over an exclusive full-screen window.");
+		Assert(!FocusEnhancedBehavior.ShouldReserveSidebar(StageMode.Focus, true, false, true),
+			"A temporary edge reveal unexpectedly rearranged the desktop work area.");
+		Assert(!FocusEnhancedBehavior.ShouldIdleHide(StageMode.Focus, true),
+			"Focus enhanced mode still allowed idle auto-hide.");
+		Assert(FocusEnhancedBehavior.ShouldIdleHide(StageMode.Coexist, true),
+			"Standard mode no longer respected its idle auto-hide setting.");
+	}
+
+	private static void FocusEnhancedWindowGeometry()
+	{
+		var workArea = new Rectangle(0, 0, 1920, 1040);
+		var available = FocusEnhancedBehavior.CalculateAvailableWorkArea(workArea, 220);
+		Assert(available == new Rectangle(220, 0, 1700, 1040),
+			"The Focus enhanced work area did not begin after the reserved card column.");
+
+		var overlapping = new Rectangle(80, 120, 900, 700);
+		var moved = FocusEnhancedBehavior.KeepWindowOutOfReservedColumn(overlapping, available);
+		Assert(moved == new Rectangle(220, 120, 900, 700),
+			"An overlapping normal window was not moved to the right without changing its size.");
+
+		var alreadyClear = new Rectangle(360, 90, 1000, 720);
+		Assert(FocusEnhancedBehavior.KeepWindowOutOfReservedColumn(alreadyClear, available) == alreadyClear,
+			"A normal window already clear of the card column was moved unnecessarily.");
+
+		var oversized = new Rectangle(-100, 20, 2200, 900);
+		Assert(FocusEnhancedBehavior.KeepWindowOutOfReservedColumn(oversized, available) ==
+			new Rectangle(220, 20, 1700, 900),
+			"An oversized window was not safely fitted to the remaining desktop width.");
 	}
 
 	private static void RunTest(string name, Action test)

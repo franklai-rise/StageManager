@@ -24,6 +24,7 @@ internal static class UiText
 			["Preview refresh"] = "预览刷新",
 			["min"] = "分钟",
 			["Pause preview refresh while the sidebar is hidden"] = "侧栏隐藏时暂停预览刷新",
+			["Focus enhanced mode (reserve the card column)"] = "Focus 增强模式（保留卡片栏区域）",
 			["Keyboard shortcuts"] = "键盘快捷键",
 			["Enable global shortcuts"] = "启用全局快捷键",
 			["Show / hide sidebar"] = "显示/隐藏侧栏",

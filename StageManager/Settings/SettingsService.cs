@@ -10,7 +10,7 @@ namespace StageManager.Settings;
 
 public sealed class SettingsService
 {
-	private const int CurrentSchemaVersion = 7;
+	private const int CurrentSchemaVersion = 8;
 	private readonly JsonSerializerOptions _jsonOptions = new()
 	{
 		WriteIndented = true,
@@ -103,6 +103,10 @@ public sealed class SettingsService
 	{
 		var sourceSchemaVersion = settings.SchemaVersion;
 		settings.SchemaVersion = CurrentSchemaVersion;
+		if (!Enum.IsDefined(settings.StageMode))
+			settings.StageMode = StageMode.Coexist;
+		if (!Enum.IsDefined(settings.AppWindowsMode))
+			settings.AppWindowsMode = AppWindowsMode.AllAtOnce;
 		if (!Enum.IsDefined(settings.UiLanguage))
 			settings.UiLanguage = UiLanguage.English;
 		settings.CardScale = Math.Clamp(settings.CardScale, 0.55, 1.25);

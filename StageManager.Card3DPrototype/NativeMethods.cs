@@ -56,6 +56,13 @@ internal static class NativeMethods
 
 	[DllImport("user32.dll")]
 	[return: MarshalAs(UnmanagedType.Bool)]
+	public static extern bool IsZoomed(IntPtr windowHandle);
+
+	[DllImport("user32.dll")]
+	public static extern short GetAsyncKeyState(int virtualKey);
+
+	[DllImport("user32.dll")]
+	[return: MarshalAs(UnmanagedType.Bool)]
 	public static extern bool IsWindowVisible(IntPtr windowHandle);
 
 	[DllImport("user32.dll")]
