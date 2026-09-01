@@ -7,6 +7,8 @@ internal sealed class SettingsForm : Form
 {
 	private readonly TrackBar _cardSizeSlider;
 	private readonly Label _cardSizeValue;
+	private readonly NumericUpDown _sidebarVerticalOffset;
+	private readonly CheckBox _showExplorerButton;
 	private readonly CheckBox _animationsEnabled;
 	private readonly CheckBox _lowMemoryRendering;
 	private readonly CheckBox _idleAutoHideEnabled;
@@ -45,7 +47,7 @@ internal sealed class SettingsForm : Form
 
 		Controls.Add(new Label
 		{
-			Text = "Stage_Manager_Lai v4.1.2",
+			Text = "Stage_Manager_Lai v4.2.0",
 			Font = new Font("Segoe UI", 17f, FontStyle.Bold),
 			AutoSize = true,
 			Location = new Point(22, 18)
@@ -61,7 +63,7 @@ internal sealed class SettingsForm : Form
 		_languageButton.Click += (_, _) => ToggleLanguage();
 		Controls.Add(_languageButton);
 
-		var appearanceGroup = CreateGroup("Appearance", new Rectangle(20, 58, 580, 171));
+		var appearanceGroup = CreateGroup("Appearance", new Rectangle(20, 58, 580, 239));
 		appearanceGroup.Controls.Add(CreateLabel("Card size", 18, 31, 105));
 		_cardSizeSlider = new TrackBar
 		{
@@ -93,9 +95,28 @@ internal sealed class SettingsForm : Form
 		_interfaceLanguage.SelectedIndexChanged += (_, _) => SetLanguageFromSelection();
 		_animationsEnabled = CreateCheckBox("Use animations", draft.AnimationsEnabled, 18, 119, 220);
 		_lowMemoryRendering = CreateCheckBox("Low-memory renderer (restart required)", draft.LowMemoryRendering, 250, 119, 310);
+		appearanceGroup.Controls.Add(CreateLabel("Vertical position", 18, 160, 125));
+		_sidebarVerticalOffset = new NumericUpDown
+		{
+			Minimum = -400,
+			Maximum = 400,
+			Increment = 10,
+			Value = Math.Clamp(draft.SidebarVerticalOffset, -400, 400),
+			Location = new Point(150, 157),
+			Size = new Size(75, 30)
+		};
+		appearanceGroup.Controls.Add(_sidebarVerticalOffset);
+		appearanceGroup.Controls.Add(CreateLabel("px (negative = up)", 235, 160, 270));
+		_showExplorerButton = CreateCheckBox(
+			"Show File Explorer button above cards",
+			draft.ShowExplorerButton,
+			18,
+			195,
+			520);
+		appearanceGroup.Controls.Add(_showExplorerButton);
 		appearanceGroup.Controls.AddRange(new Control[] { _cardSizeSlider, _cardSizeValue, _interfaceLanguage, _animationsEnabled, _lowMemoryRendering });
 
-		var behaviorGroup = CreateGroup("Behavior", new Rectangle(20, 239, 580, 204));
+		var behaviorGroup = CreateGroup("Behavior", new Rectangle(20, 307, 580, 204));
 		_idleAutoHideEnabled = CreateCheckBox("Auto-hide after no pointer activity", draft.IdleAutoHideEnabled, 18, 31, 300);
 		behaviorGroup.Controls.Add(_idleAutoHideEnabled);
 		behaviorGroup.Controls.Add(CreateLabel("Idle delay", 325, 33, 78));
@@ -141,7 +162,7 @@ internal sealed class SettingsForm : Form
 			430);
 		behaviorGroup.Controls.Add(_pausePreviewRefreshWhenHidden);
 
-		var shortcutsGroup = CreateGroup("Keyboard shortcuts", new Rectangle(20, 453, 580, 190));
+		var shortcutsGroup = CreateGroup("Keyboard shortcuts", new Rectangle(20, 521, 580, 190));
 		_hotkeysEnabled = CreateCheckBox("Enable global shortcuts", draft.HotkeysEnabled, 18, 28, 260);
 		shortcutsGroup.Controls.Add(_hotkeysEnabled);
 		shortcutsGroup.Controls.Add(CreateLabel("Show / hide sidebar", 18, 70, 180));
@@ -155,7 +176,7 @@ internal sealed class SettingsForm : Form
 		_nextStageHotkey.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 		shortcutsGroup.Controls.AddRange(new Control[] { _toggleSidebarHotkey, _previousStageHotkey, _nextStageHotkey });
 
-		var ignoredGroup = CreateGroup("Ignored applications", new Rectangle(20, 653, 580, 192));
+		var ignoredGroup = CreateGroup("Ignored applications", new Rectangle(20, 721, 580, 192));
 		ignoredGroup.Controls.Add(CreateLabel("Check a running app to hide it; no .exe name is required.", 18, 25, 540));
 		_ignoredApplications = new CheckedListBox
 		{
@@ -194,21 +215,21 @@ internal sealed class SettingsForm : Form
 		{
 			Text = "Cancel",
 			DialogResult = DialogResult.Cancel,
-			Location = new Point(412, 879),
+			Location = new Point(412, 947),
 			Size = new Size(88, 34),
 			Anchor = AnchorStyles.Top | AnchorStyles.Right
 		};
 		var resetButton = new Button
 		{
 			Text = "Reset defaults",
-			Location = new Point(20, 879),
+			Location = new Point(20, 947),
 			Size = new Size(120, 34)
 		};
 		resetButton.Click += (_, _) => ResetDefaults();
 		var saveButton = new Button
 		{
 			Text = "Save",
-			Location = new Point(510, 879),
+			Location = new Point(510, 947),
 			Size = new Size(88, 34),
 			Anchor = AnchorStyles.Top | AnchorStyles.Right
 		};
@@ -249,6 +270,8 @@ internal sealed class SettingsForm : Form
 		}
 
 		Draft.CardScale = _cardSizeSlider.Value / 100d;
+		Draft.SidebarVerticalOffset = (int)_sidebarVerticalOffset.Value;
+		Draft.ShowExplorerButton = _showExplorerButton.Checked;
 		Draft.AnimationsEnabled = _animationsEnabled.Checked;
 		Draft.LowMemoryRendering = _lowMemoryRendering.Checked;
 		Draft.IdleAutoHideEnabled = _idleAutoHideEnabled.Checked;
@@ -358,6 +381,8 @@ internal sealed class SettingsForm : Form
 	private void ResetDefaults()
 	{
 		_cardSizeSlider.Value = 60;
+		_sidebarVerticalOffset.Value = -80;
+		_showExplorerButton.Checked = true;
 		_animationsEnabled.Checked = true;
 		_lowMemoryRendering.Checked = true;
 		_idleAutoHideEnabled.Checked = true;

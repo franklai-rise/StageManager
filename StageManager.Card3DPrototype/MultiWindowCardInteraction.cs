@@ -9,8 +9,13 @@ internal enum MultiWindowCardClickAction
 
 internal static class MultiWindowCardInteraction
 {
+	private static readonly TimeSpan HoverCollapseDelay = TimeSpan.FromMilliseconds(500);
+
 	public static bool ShouldExpandOnHover(int windowCount, bool isExpandedStage, bool isPrimaryCard) =>
 		windowCount > 1 && !isExpandedStage && isPrimaryCard;
+
+	public static bool ShouldCollapseOnPointerLeave(bool expandedByHover, TimeSpan elapsedSinceCard)
+		=> expandedByHover && elapsedSinceCard >= HoverCollapseDelay;
 
 	public static MultiWindowCardClickAction Decide(int windowCount, bool isExpandedStage, bool isPrimaryCard)
 	{

@@ -14,11 +14,15 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private const float BaseCardHeight = 122f;
 	private const float PerspectiveDistance = 1200f;
 	private const int PageSize = 6;
+	private const int DefaultSidebarVerticalOffset = -80;
+	private const int MinSidebarVerticalOffset = -400;
+	private const int MaxSidebarVerticalOffset = 400;
 	private readonly Control _owner;
 	private readonly Compositor _compositor;
 	private readonly ContainerVisual _cameraRoot;
 	private readonly D3DCompositionDevice _graphics;
 	private readonly WindowFrameCapture _capture = new();
+	private readonly SidebarExplorerButtonVisual _explorerButton;
 	private readonly SidebarCollapseButtonVisual _collapseButton;
 	private readonly Dictionary<string, StageCardVisual> _stages = new(StringComparer.OrdinalIgnoreCase);
 	private readonly System.Windows.Forms.Timer _captureTimer;
@@ -28,6 +32,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private readonly List<IReadOnlyList<Vector2>> _passivePolygons = new();
 	private IReadOnlyList<PrototypeStageSnapshot> _snapshots = Array.Empty<PrototypeStageSnapshot>();
 	private string? _expandedStageKey;
+	private bool _expandedByHover;
 	private string? _hoveredStageKey;
 	private IntPtr _hoveredWindowHandle;
 	private bool _hoveredGroupCard;
@@ -42,10 +47,14 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private bool _disposed;
 	private bool _animationsEnabled;
 	private bool _sidebarVisible = true;
+	private bool _explorerButtonEnabled = true;
+	private bool _explorerButtonHovered;
+	private bool _explorerRequested;
 	private bool _collapseButtonEnabled = true;
 	private bool _collapseButtonHovered;
 	private bool _collapseRequested;
 	private float _preferenceScale;
+	private int _sidebarVerticalOffset = DefaultSidebarVerticalOffset;
 	private int _previewRefreshMinutes = WindowCapturePolicy.DefaultRefreshMinutes;
 	private bool _pausePreviewRefreshWhenHidden = true;
 	private bool _manualRefreshPending;
@@ -58,7 +67,9 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_preferenceScale = NormalizeCardScale(cardScale);
 		_animationsEnabled = animationsEnabled;
 		_graphics = new D3DCompositionDevice(lowMemoryRendering);
+		_explorerButton = new SidebarExplorerButtonVisual(_compositor);
 		_collapseButton = new SidebarCollapseButtonVisual(_compositor);
+		_cameraRoot.Children.InsertAtTop(_explorerButton.Root);
 		_cameraRoot.Children.InsertAtTop(_collapseButton.Root);
 		_captureTimer = new System.Windows.Forms.Timer { Interval = 350 };
 		_captureTimer.Tick += (_, _) => ScheduleCaptures();
@@ -67,10 +78,24 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	public bool HasExpandedStage => _expandedStageKey is not null;
 	public double CardScale => _preferenceScale;
+	public int SidebarVerticalOffset => _sidebarVerticalOffset;
 	public bool SidebarVisible => _sidebarVisible;
 	public long LayoutRevision { get; private set; }
 	public float SidebarInteractionWidth => CardSize.X + 48f * _dpiScale;
 	public TimeSpan SidebarAnimationDuration => TimeSpan.FromMilliseconds(220);
+
+	public bool ConsumeExplorerLaunchRequest()
+	{
+		if (!_explorerButtonEnabled)
+		{
+			_explorerRequested = false;
+			return false;
+		}
+		var requested = _explorerRequested;
+		_explorerRequested = false;
+		_explorerButton.SetPressed(false);
+		return requested;
+	}
 
 	public bool ConsumeSidebarCollapseRequest()
 	{
@@ -94,6 +119,20 @@ internal sealed class CompositionStageRenderer : IDisposable
 	}
 
 	public void SetAnimationsEnabled(bool enabled) => _animationsEnabled = enabled;
+
+	public bool SetExplorerButtonEnabled(bool enabled)
+	{
+		if (_explorerButtonEnabled == enabled)
+			return false;
+
+		_explorerButtonEnabled = enabled;
+		_explorerRequested = false;
+		_explorerButton.SetPressed(false);
+		SetExplorerButtonHovered(false);
+		_explorerButton.SetVisible(false);
+		LayoutStages(true);
+		return true;
+	}
 
 	public bool SetCollapseButtonEnabled(bool enabled)
 	{
@@ -154,6 +193,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var previous = _cameraRoot.Offset;
 		var target = new Vector3(visible ? 0 : HiddenOffsetX, 0, 0);
 		_sidebarVisible = visible;
+		_explorerButton.SetPressed(false);
+		SetExplorerButtonHovered(false);
 		_collapseButton.SetPressed(false);
 		SetCollapseButtonHovered(false);
 		_cameraRoot.StopAnimation(nameof(Visual.Offset));
@@ -185,6 +226,17 @@ internal sealed class CompositionStageRenderer : IDisposable
 		Synchronize(_snapshots);
 		if (!_sidebarVisible)
 			_cameraRoot.Offset = new Vector3(HiddenOffsetX, 0, 0);
+	}
+
+	public bool SetSidebarVerticalOffset(int verticalOffset)
+	{
+		var normalized = Math.Clamp(verticalOffset, MinSidebarVerticalOffset, MaxSidebarVerticalOffset);
+		if (_sidebarVerticalOffset == normalized)
+			return false;
+
+		_sidebarVerticalOffset = normalized;
+		LayoutStages(true);
+		return true;
 	}
 
 	public void Resize(float width, float height, float dpiScale)
@@ -235,6 +287,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		{
 			layoutChanged = true;
 			_expandedStageKey = null;
+			_expandedByHover = false;
 			_hoveredWindowHandle = IntPtr.Zero;
 			_hoveredGroupCard = false;
 			_expandedPage = 0;
@@ -245,6 +298,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		{
 			layoutChanged = true;
 			_expandedStageKey = null;
+			_expandedByHover = false;
 			_hoveredWindowHandle = IntPtr.Zero;
 			_hoveredGroupCard = false;
 			_expandedPage = 0;
@@ -294,8 +348,23 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (hit is null)
 			return;
 		_lastPointerInsideUtc = DateTime.UtcNow;
+		SetExplorerButtonHovered(hit.IsExplorerButton);
 		SetCollapseButtonHovered(hit.IsSidebarCollapseButton);
 		if (hit.IsSidebarCollapseButton)
+			return;
+		if (_expandedStageKey is not null &&
+			_expandedByHover &&
+			!string.Equals(_expandedStageKey, hit.StageKey, StringComparison.OrdinalIgnoreCase))
+		{
+			CollapseExpandedStage();
+			hit = HitTest(clientPoint);
+			if (hit is null)
+				return;
+			_lastPointerInsideUtc = DateTime.UtcNow;
+			SetExplorerButtonHovered(hit.IsExplorerButton);
+			SetCollapseButtonHovered(hit.IsSidebarCollapseButton);
+		}
+		if (hit.IsExplorerButton)
 			return;
 		if (_expandedStageKey is null ||
 			!string.Equals(_expandedStageKey, hit.StageKey, StringComparison.OrdinalIgnoreCase))
@@ -323,11 +392,20 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (hit is not null)
 		{
 			_lastPointerInsideUtc = DateTime.UtcNow;
+			SetExplorerButtonHovered(hit.IsExplorerButton);
 			SetCollapseButtonHovered(hit.IsSidebarCollapseButton);
+			if (_expandedStageKey is not null &&
+				_expandedByHover &&
+				!string.Equals(_expandedStageKey, hit.StageKey, StringComparison.OrdinalIgnoreCase))
+			{
+				CollapseExpandedStage();
+			}
 			return;
 		}
+		SetExplorerButtonHovered(false);
 		SetCollapseButtonHovered(false);
-		if (DateTime.UtcNow - _lastPointerInsideUtc < TimeSpan.FromMilliseconds(500))
+		var elapsedSinceCard = DateTime.UtcNow - _lastPointerInsideUtc;
+		if (elapsedSinceCard < TimeSpan.FromMilliseconds(500))
 			return;
 		if (_expandedStageKey is null)
 		{
@@ -336,6 +414,11 @@ internal sealed class CompositionStageRenderer : IDisposable
 				_hoveredStageKey = null;
 				LayoutStages(true);
 			}
+			return;
+		}
+		if (MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(_expandedByHover, elapsedSinceCard))
+		{
+			CollapseExpandedStage();
 			return;
 		}
 		if (_hoveredWindowHandle != IntPtr.Zero || _hoveredGroupCard)
@@ -350,6 +433,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		if (_disposed ||
 			_expandedStageKey is not null ||
+			target.IsExplorerButton ||
 			target.IsSidebarCollapseButton ||
 			target.PageDelta != 0 ||
 			!_stages.TryGetValue(target.StageKey, out var stage))
@@ -372,7 +456,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 			!CanExpandOnHover(hit))
 			return false;
 
-		ExpandStage(hit.StageKey);
+		ExpandStage(hit.StageKey, expandedByHover: true);
 		return true;
 	}
 
@@ -381,6 +465,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var hit = HitTest(clientPoint);
 		if (hit is null)
 			return null;
+		if (hit.IsExplorerButton)
+		{
+			_explorerRequested = true;
+			_explorerButton.SetPressed(true);
+			return null;
+		}
 		if (hit.IsSidebarCollapseButton)
 		{
 			_collapseRequested = true;
@@ -389,6 +479,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		}
 		if (hit.PageDelta != 0)
 		{
+			_expandedByHover = false;
 			ChangeExpandedPage(hit.PageDelta);
 			return null;
 		}
@@ -398,7 +489,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var action = MultiWindowCardInteraction.Decide(stage.Windows.Count, isExpandedStage, hit.IsPrimaryCard);
 		if (action == MultiWindowCardClickAction.Expand)
 		{
-			ExpandStage(hit.StageKey);
+			ExpandStage(hit.StageKey, expandedByHover: false);
 			return null;
 		}
 		if (action == MultiWindowCardClickAction.Collapse)
@@ -406,12 +497,15 @@ internal sealed class CompositionStageRenderer : IDisposable
 			CollapseExpandedStage();
 			return null;
 		}
+		if (hit.Window is not null)
+			_expandedByHover = false;
 		return hit.Window;
 	}
 
-	private void ExpandStage(string stageKey)
+	private void ExpandStage(string stageKey, bool expandedByHover)
 	{
 		_expandedStageKey = stageKey;
+		_expandedByHover = expandedByHover;
 		_hoveredStageKey = stageKey;
 		_expandedPage = 0;
 		_hoveredWindowHandle = IntPtr.Zero;
@@ -432,6 +526,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (_expandedStageKey is null)
 			return;
 		_expandedStageKey = null;
+		_expandedByHover = false;
 		_hoveredStageKey = null;
 		_hoveredWindowHandle = IntPtr.Zero;
 		_hoveredGroupCard = false;
@@ -449,6 +544,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		foreach (var stage in _stages.Values)
 			stage.Dispose();
 		_stages.Clear();
+		_explorerButton.Dispose();
 		_collapseButton.Dispose();
 		lock (_captureGate)
 		{
@@ -477,7 +573,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 		animate &= _animationsEnabled;
 		_hitTargets.Clear();
 		_passivePolygons.Clear();
+		_explorerButton.SetLayout(_dpiScale, CardSize.X);
 		_collapseButton.SetLayout(_dpiScale, CardSize.X);
+		var headerCardGap = 12f * _dpiScale;
+		var headerHeight = _explorerButtonEnabled
+			? _explorerButton.Size.Y + headerCardGap
+			: 0f;
 		var footerMargin = 10f * _dpiScale;
 		var footerCardGap = 12f * _dpiScale;
 		var footerHeight = _collapseButtonEnabled
@@ -486,7 +587,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var cardViewportHeight = Math.Max(CardSize.Y + 24f * _dpiScale, _viewportHeight - footerHeight);
 		var cardSize = CardSize;
 		var stride = cardSize.Y + Gap;
-		var baseTotalHeight = Math.Max(0, _snapshots.Count * stride - Gap);
+		var cardsHeight = Math.Max(0, _snapshots.Count * stride - Gap);
+		var baseTotalHeight = headerHeight + cardsHeight;
 		var expandedExtraHeight = 0f;
 		if (_expandedStageKey is not null && _stages.TryGetValue(_expandedStageKey, out var expandedStage))
 			expandedExtraHeight = GetExpandedExtraHeight(expandedStage);
@@ -494,12 +596,22 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var naturalStartY = baseTotalHeight <= cardViewportHeight - 24 * _dpiScale
 			? (cardViewportHeight - baseTotalHeight) / 2f
 			: 12 * _dpiScale;
-		_maximumScroll = Math.Max(0, naturalStartY + totalHeight - (cardViewportHeight - 12 * _dpiScale));
+		var verticalOffset = _sidebarVerticalOffset * _dpiScale;
+		_maximumScroll = Math.Max(0, naturalStartY + verticalOffset + totalHeight - (cardViewportHeight - 12 * _dpiScale));
 		_scrollOffset = Math.Clamp(_scrollOffset, 0, _maximumScroll);
-		var startY = naturalStartY - _scrollOffset;
+		var startY = naturalStartY + verticalOffset - _scrollOffset;
 		var cameraCenter = new Vector2(_viewportWidth / 2f, _viewportHeight / 2f);
 		var currentY = startY;
 		var lowestVisibleCardBottom = float.NaN;
+		if (_explorerButtonEnabled)
+		{
+			lowestVisibleCardBottom = LayoutExplorerButton(currentY);
+			currentY += headerHeight;
+		}
+		else
+		{
+			_explorerButton.SetVisible(false);
+		}
 
 		for (var stageIndex = 0; stageIndex < _snapshots.Count; stageIndex++)
 		{
@@ -537,6 +649,38 @@ internal sealed class CompositionStageRenderer : IDisposable
 		LayoutRevision++;
 	}
 
+	private float LayoutExplorerButton(float y)
+	{
+		if (!_explorerButtonEnabled)
+		{
+			_explorerButton.SetVisible(false);
+			return float.NaN;
+		}
+
+		_cameraRoot.Children.Remove(_explorerButton.Root);
+		_cameraRoot.Children.InsertAtTop(_explorerButton.Root);
+		var x = 12f * _dpiScale;
+		_explorerButton.SetOffset(new Vector3(x, y, 0));
+		_explorerButton.SetVisible(true);
+		var polygon = Card3DGeometry.ProjectCard(
+			new Vector3(x, y, 0),
+			1f,
+			Vector3.Zero,
+			Vector3.One,
+			_explorerButton.Angle,
+			_explorerButton.Size,
+			_explorerButton.Pivot,
+			new Vector2(_viewportWidth / 2f, _viewportHeight / 2f),
+			PerspectiveDistance * _dpiScale);
+		_hitTargets.Add(new CardHitTarget(
+			"__open_explorer__",
+			null,
+			polygon,
+			int.MaxValue - 1,
+			IsExplorerButton: true));
+		return y + _explorerButton.Size.Y;
+	}
+
 	private void LayoutCollapseButton(float lowestVisibleCardBottom)
 	{
 		if (!_collapseButtonEnabled)
@@ -551,7 +695,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var footerHeight = _collapseButton.Size.Y;
 		var maximumButtonY = Math.Max(margin, _viewportHeight - footerHeight - margin);
 		var preferredButtonY = float.IsNaN(lowestVisibleCardBottom)
-			? maximumButtonY
+			? maximumButtonY + _sidebarVerticalOffset * _dpiScale
 			: lowestVisibleCardBottom + cardGap;
 		var y = Math.Clamp(preferredButtonY, margin, maximumButtonY);
 		var x = 12f * _dpiScale;
@@ -583,6 +727,16 @@ internal sealed class CompositionStageRenderer : IDisposable
 			return;
 		_collapseButtonHovered = hovered;
 		_collapseButton.SetHovered(hovered);
+	}
+
+	private void SetExplorerButtonHovered(bool hovered)
+	{
+		if (!_explorerButtonEnabled)
+			hovered = false;
+		if (_explorerButtonHovered == hovered)
+			return;
+		_explorerButtonHovered = hovered;
+		_explorerButton.SetHovered(hovered);
 	}
 
 	private float GetExpandedExtraHeight(StageCardVisual stage)
@@ -878,7 +1032,8 @@ internal sealed record CardHitTarget(
 	int ZOrder,
 	int PageDelta = 0,
 	bool IsPrimaryCard = false,
-	bool IsSidebarCollapseButton = false);
+	bool IsSidebarCollapseButton = false,
+	bool IsExplorerButton = false);
 
 internal sealed class StageCardVisual : IDisposable
 {
@@ -1214,6 +1369,126 @@ internal sealed class PageButtonVisual : IDisposable
 		stroke.RotationAngleInDegrees = angle;
 		stroke.Brush = _strokeBrush;
 		return stroke;
+	}
+}
+
+internal sealed class SidebarExplorerButtonVisual : IDisposable
+{
+	private readonly SpriteVisual _background;
+	private readonly CompositionColorBrush _backgroundBrush;
+	private readonly CompositionRoundedRectangleGeometry _geometry;
+	private readonly CompositionGeometricClip _clip;
+	private readonly SpriteVisual _folderTab;
+	private readonly SpriteVisual _folderBody;
+	private readonly SpriteVisual _folderLine;
+	private readonly CompositionColorBrush _folderBrush;
+	private readonly CompositionColorBrush _folderLineBrush;
+	private bool _hovered;
+	private bool _pressed;
+	private bool _disposed;
+
+	public SidebarExplorerButtonVisual(Compositor compositor)
+	{
+		Root = compositor.CreateContainerVisual();
+		_backgroundBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(112, 22, 27, 36));
+		_background = compositor.CreateSpriteVisual();
+		_background.Brush = _backgroundBrush;
+		_geometry = compositor.CreateRoundedRectangleGeometry();
+		_clip = compositor.CreateGeometricClip(_geometry);
+		_background.Clip = _clip;
+		_folderBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(238, 242, 185, 67));
+		_folderLineBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(190, 128, 84, 18));
+		_folderTab = compositor.CreateSpriteVisual();
+		_folderTab.Brush = _folderBrush;
+		_folderBody = compositor.CreateSpriteVisual();
+		_folderBody.Brush = _folderBrush;
+		_folderLine = compositor.CreateSpriteVisual();
+		_folderLine.Brush = _folderLineBrush;
+		Root.Children.InsertAtTop(_background);
+		Root.Children.InsertAtTop(_folderTab);
+		Root.Children.InsertAtTop(_folderBody);
+		Root.Children.InsertAtTop(_folderLine);
+		SetLayout(1f, 64f);
+	}
+
+	public ContainerVisual Root { get; }
+	public Vector2 Size { get; private set; }
+	public Vector2 Pivot { get; private set; }
+	public float Angle => -7.5f;
+
+	public void SetLayout(float dpiScale, float cardWidth)
+	{
+		var scale = Math.Max(0.75f, dpiScale);
+		Size = new Vector2(Math.Max(64f * scale, cardWidth), 36f * scale);
+		Root.Size = Size;
+		Root.CenterPoint = new Vector3(Size.X * 0.88f, Size.Y / 2f, 0);
+		Root.RotationAxis = Vector3.UnitY;
+		Root.RotationAngleInDegrees = Angle;
+		Pivot = new Vector2(Root.CenterPoint.X, Root.CenterPoint.Y);
+		_background.Size = Size;
+		_geometry.Size = Size;
+		_geometry.CornerRadius = new Vector2(8f * scale, 8f * scale);
+
+		var folderWidth = 30f * scale;
+		var folderHeight = 17f * scale;
+		var folderX = (Size.X - folderWidth) / 2f + 2f * scale;
+		var folderY = (Size.Y - folderHeight) / 2f + 2f * scale;
+		_folderTab.Size = new Vector2(14f * scale, 7f * scale);
+		_folderTab.Offset = new Vector3(folderX + 2f * scale, folderY - 5f * scale, 0);
+		_folderBody.Size = new Vector2(folderWidth, folderHeight);
+		_folderBody.Offset = new Vector3(folderX, folderY, 0);
+		_folderLine.Size = new Vector2(22f * scale, Math.Max(1f, 1.4f * scale));
+		_folderLine.Offset = new Vector3(folderX + 4f * scale, folderY + 5f * scale, 0);
+		ApplyState();
+	}
+
+	public void SetOffset(Vector3 offset) => Root.Offset = offset;
+
+	public void SetVisible(bool visible) => Root.IsVisible = visible;
+
+	public void SetHovered(bool hovered)
+	{
+		if (_hovered == hovered)
+			return;
+		_hovered = hovered;
+		ApplyState();
+	}
+
+	public void SetPressed(bool pressed)
+	{
+		if (_pressed == pressed)
+			return;
+		_pressed = pressed;
+		ApplyState();
+	}
+
+	public void Dispose()
+	{
+		if (_disposed)
+			return;
+		_disposed = true;
+		Root.Dispose();
+		_folderLine.Dispose();
+		_folderBody.Dispose();
+		_folderTab.Dispose();
+		_clip.Dispose();
+		_geometry.Dispose();
+		_background.Dispose();
+		_folderLineBrush.Dispose();
+		_folderBrush.Dispose();
+		_backgroundBrush.Dispose();
+	}
+
+	private void ApplyState()
+	{
+		if (_disposed)
+			return;
+		var backgroundAlpha = _pressed ? 190 : _hovered ? 160 : 112;
+		var folderAlpha = _pressed ? 255 : _hovered ? 255 : 238;
+		_backgroundBrush.Color = Windows.UI.Color.FromArgb((byte)backgroundAlpha, 22, 27, 36);
+		_folderBrush.Color = Windows.UI.Color.FromArgb((byte)folderAlpha, 242, 185, 67);
+		var visualScale = _pressed ? 0.95f : _hovered ? 1.025f : 1f;
+		Root.Scale = new Vector3(visualScale, visualScale, 1f);
 	}
 }
 

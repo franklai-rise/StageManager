@@ -2,6 +2,7 @@ using StageManager.Services;
 using StageManager.Settings;
 using StageManager.Native.Window;
 using Microsoft.Win32;
+using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Numerics;
 using System.Windows.Forms;
@@ -87,7 +88,7 @@ internal sealed class PrototypeForm : Form
 			() => _renderer?.RefreshAllPreviews());
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => RunAfterContextMenuCloses(_contextMenu, Close);
-		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v4.1.2") { Enabled = false });
+		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v4.2.0") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(refreshItem);
@@ -209,13 +210,15 @@ internal sealed class PrototypeForm : Form
 
 		var target = _renderer.HitTest(e.Location) ?? initialTarget;
 		UpdateHoverExpandCandidate(target);
-		var toolTipKey = target.Window is { } pointedWindow
-			? $"window:{pointedWindow.Handle}"
-			: target.IsSidebarCollapseButton
-				? "sidebar:collapse"
-				: target.PageDelta != 0
-					? $"page:{target.StageKey}:{target.PageDelta}"
-					: $"stage:{target.StageKey}";
+		var toolTipKey = target.IsExplorerButton
+			? "sidebar:explorer"
+			: target.Window is { } pointedWindow
+				? $"window:{pointedWindow.Handle}"
+				: target.IsSidebarCollapseButton
+					? "sidebar:collapse"
+					: target.PageDelta != 0
+						? $"page:{target.StageKey}:{target.PageDelta}"
+						: $"stage:{target.StageKey}";
 		if (!string.Equals(toolTipKey, _toolTipKey, StringComparison.Ordinal))
 		{
 			_toolTipKey = toolTipKey;
@@ -236,7 +239,7 @@ internal sealed class PrototypeForm : Form
 		if (e.Button == MouseButtons.Right)
 		{
 			var target = _renderer?.HitTest(e.Location);
-			if (target is not null && !target.IsSidebarCollapseButton && target.PageDelta == 0)
+			if (target is not null && !target.IsExplorerButton && !target.IsSidebarCollapseButton && target.PageDelta == 0)
 				ShowCardContextMenu(target);
 			else
 				ShowOwnedContextMenu(_contextMenu);
@@ -264,6 +267,11 @@ internal sealed class PrototypeForm : Form
 			NativeMethods.SetWindowPos(Handle, NativeMethods.HwndTop, 0, 0, 0, 0, NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
 		if (wasExpanded != _renderer.HasExpandedStage)
 			UpdateWindowRegion(true);
+		if (_renderer.ConsumeExplorerLaunchRequest())
+		{
+			OpenFileExplorer();
+			return;
+		}
 		if (_renderer.ConsumeSidebarCollapseRequest())
 		{
 			SetSidebarVisible(false);
@@ -445,7 +453,12 @@ internal sealed class PrototypeForm : Form
 		var settings = _catalog.Settings.Current;
 		_renderer.SetAnimationsEnabled(settings.AnimationsEnabled);
 		_renderer.SetCardScale(settings.CardScale);
+		var layoutRegionChanged = _renderer.SetSidebarVerticalOffset(settings.SidebarVerticalOffset);
+		if (_renderer.SetExplorerButtonEnabled(settings.ShowExplorerButton))
+			layoutRegionChanged = true;
 		if (_renderer.SetCollapseButtonEnabled(FocusEnhancedBehavior.ShouldShowCollapseButton(settings.StageMode)))
+			layoutRegionChanged = true;
+		if (layoutRegionChanged)
 			UpdateWindowRegion(_sidebarVisible);
 		_renderer.SetPreviewPolicy(settings.PreviewRefreshMinutes, settings.PausePreviewRefreshWhenHidden);
 		UiText.Apply(_contextMenu.Items, settings.UiLanguage);
@@ -486,6 +499,27 @@ internal sealed class PrototypeForm : Form
 		using var dialog = new SettingsForm(_catalog.Settings.CloneCurrent(), _catalog.GetApplicationChoices());
 		if (dialog.ShowDialog() == DialogResult.OK)
 			_catalog.Settings.Apply(dialog.Draft);
+	}
+
+	private void OpenFileExplorer()
+	{
+		try
+		{
+			Process.Start(new ProcessStartInfo
+			{
+				FileName = "explorer.exe",
+				UseShellExecute = true
+			});
+		}
+		catch (Exception exception)
+		{
+			MessageBox.Show(
+				this,
+				L($"File Explorer could not be opened.\n\n{exception.Message}", $"无法打开文件资源管理器。\n\n{exception.Message}"),
+				L("Open File Explorer", "打开文件资源管理器"),
+				MessageBoxButtons.OK,
+				MessageBoxIcon.Warning);
+		}
 	}
 
 	private void ShowCardContextMenu(CardHitTarget target)
@@ -678,6 +712,8 @@ internal sealed class PrototypeForm : Form
 
 	private string GetToolTipText(CardHitTarget target)
 	{
+		if (target.IsExplorerButton)
+			return L("Open File Explorer", "打开文件资源管理器");
 		if (target.IsSidebarCollapseButton)
 			return L("Hide sidebar", "隐藏侧栏");
 		if (target.PageDelta < 0)
@@ -1292,7 +1328,7 @@ internal sealed class PrototypeForm : Form
 		var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 		_trayIcon = new NotifyIcon
 		{
-			Text = "Stage_Manager_Lai v4.1.2",
+			Text = "Stage_Manager_Lai v4.2.0",
 			Icon = icon,
 			ContextMenuStrip = _contextMenu,
 			Visible = true

@@ -125,7 +125,7 @@ internal static class TestRunner
 				}
 				""");
 			var service = new SettingsService(path);
-			Assert(service.Current.SchemaVersion == 8, "Settings schema was not upgraded for Focus enhanced mode.");
+			Assert(service.Current.SchemaVersion == 10, "Settings schema was not upgraded for the Explorer quick button.");
 			Assert(service.Current.LowMemoryRendering, "Low-memory rendering should be enabled by default.");
 			Assert(!service.Current.IgnoredProcesses.Contains("explorer", StringComparer.OrdinalIgnoreCase),
 				"The legacy default Explorer ignore entry was not migrated.");
@@ -134,11 +134,11 @@ internal static class TestRunner
 			Assert(service.Current.IgnoredProcesses.Contains("custom-app", StringComparer.OrdinalIgnoreCase),
 				"A user-selected ignored process was lost during migration.");
 			var migratedJson = File.ReadAllText(path);
-			Assert(migratedJson.Contains("\"SchemaVersion\": 8", StringComparison.Ordinal),
+			Assert(migratedJson.Contains("\"SchemaVersion\": 10", StringComparison.Ordinal),
 				"The migrated schema was not written back to disk.");
-			Assert(!migratedJson.Contains("explorer", StringComparison.OrdinalIgnoreCase),
+			Assert(!migratedJson.Contains("\"explorer\"", StringComparison.OrdinalIgnoreCase),
 				"The legacy Explorer ignore entry remained in the persisted settings.");
-			Assert(!migratedJson.Contains("yuanbao", StringComparison.OrdinalIgnoreCase),
+			Assert(!migratedJson.Contains("\"yuanbao\"", StringComparison.OrdinalIgnoreCase),
 				"The legacy Yuanbao ignore entry remained in the persisted settings.");
 			Assert(!service.Current.AutoHideSidebar, "Sidebar auto-hide should be disabled by default.");
 			Assert(service.Current.IdleAutoHideEnabled && service.Current.IdleAutoHideSeconds == 60,
@@ -147,21 +147,29 @@ internal static class TestRunner
 				"Smart preview defaults were not preserved during migration.");
 			Assert(service.Current.UsePerspectiveCards, "macOS-style cards should be enabled by default.");
 			Assert(Math.Abs(service.Current.CardScale - 0.60) < 0.001, "Default card scale should be 60%.");
+			Assert(service.Current.SidebarVerticalOffset == -80, "The sidebar should default to 80 pixels above center.");
+			Assert(service.Current.ShowExplorerButton, "The Explorer quick button should be enabled by default.");
 			var settings = service.CloneCurrent();
 			settings.CardScale = 99;
+			settings.SidebarVerticalOffset = 999;
 			settings.SidebarOpacity = 0;
 			settings.IdleAutoHideSeconds = 1;
 			settings.PreviewRefreshMinutes = 0;
 			settings.StageMode = StageMode.Focus;
 			settings.UiLanguage = UiLanguage.SimplifiedChinese;
 			settings.UsePerspectiveCards = false;
+			settings.ShowExplorerButton = false;
 			settings.IgnoredProcesses = new List<string> { "yuanbao", "YuanBao", "  explorer  " };
 			service.Apply(settings);
 			Assert(service.Current.CardScale == 1.25, "Maximum card scale was not clamped.");
+			Assert(service.Current.SidebarVerticalOffset == 400, "Maximum sidebar vertical offset was not clamped.");
+			Assert(!service.Current.ShowExplorerButton, "The Explorer quick button preference was not persisted.");
 			settings = service.CloneCurrent();
 			settings.CardScale = 0;
+			settings.SidebarVerticalOffset = -999;
 			service.Apply(settings);
 			Assert(service.Current.CardScale == 0.55, "Minimum card scale was not clamped.");
+			Assert(service.Current.SidebarVerticalOffset == -400, "Minimum sidebar vertical offset was not clamped.");
 			Assert(service.Current.SidebarOpacity == 0.65, "Opacity was not clamped.");
 			Assert(service.Current.IdleAutoHideSeconds == 15, "Idle auto-hide minimum was not clamped.");
 			Assert(service.Current.PreviewRefreshMinutes == 1, "Preview refresh minimum was not clamped.");
@@ -170,6 +178,7 @@ internal static class TestRunner
 			Assert(reloaded.Current.StageMode == StageMode.Focus, "Enum setting did not persist.");
 			Assert(reloaded.Current.UiLanguage == UiLanguage.SimplifiedChinese, "Interface language did not persist.");
 			Assert(!reloaded.Current.UsePerspectiveCards, "Perspective-card setting did not persist.");
+			Assert(reloaded.Current.SidebarVerticalOffset == -400, "Sidebar vertical position did not persist.");
 			Assert(File.Exists(path) && !File.Exists(path + ".tmp"), "Atomic settings replacement left an invalid temporary file.");
 		}
 		finally
@@ -380,6 +389,12 @@ internal static class TestRunner
 			"An already-expanded application armed a second hover expansion.");
 		Assert(!MultiWindowCardInteraction.ShouldExpandOnHover(2, false, false),
 			"A child card armed hover expansion.");
+		Assert(!MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(true, TimeSpan.FromMilliseconds(499)),
+			"A hover-expanded card collapsed before the leave grace period elapsed.");
+		Assert(MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(true, TimeSpan.FromMilliseconds(500)),
+			"A hover-expanded card did not collapse after the leave grace period.");
+		Assert(!MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(false, TimeSpan.FromSeconds(2)),
+			"A click-pinned expanded card was incorrectly marked for automatic collapse.");
 		var groupCard = new CardHitTarget(
 			"example-app",
 			null,
@@ -519,6 +534,8 @@ internal static class TestRunner
 					"The in-page interface language label did not switch to Chinese.");
 				Assert(Descendants(form).Any(control => control.Text == "Focus 增强模式（保留卡片栏区域）"),
 					"The Focus enhanced mode option was not exposed in Chinese.");
+				Assert(Descendants(form).Any(control => control.Text == "在卡片上方显示文件资源管理器按钮"),
+					"The Explorer quick button option was not exposed in Chinese.");
 				var switchButton = Descendants(form)
 					.OfType<Button>()
 					.Single(button => button.Text == "English");

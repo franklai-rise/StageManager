@@ -10,7 +10,7 @@ namespace StageManager.Settings;
 
 public sealed class SettingsService
 {
-	private const int CurrentSchemaVersion = 8;
+	private const int CurrentSchemaVersion = 10;
 	private readonly JsonSerializerOptions _jsonOptions = new()
 	{
 		WriteIndented = true,
@@ -110,6 +110,7 @@ public sealed class SettingsService
 		if (!Enum.IsDefined(settings.UiLanguage))
 			settings.UiLanguage = UiLanguage.English;
 		settings.CardScale = Math.Clamp(settings.CardScale, 0.55, 1.25);
+		settings.SidebarVerticalOffset = Math.Clamp(settings.SidebarVerticalOffset, -400, 400);
 		settings.IdleAutoHideSeconds = Math.Clamp(settings.IdleAutoHideSeconds, 15, 600);
 		settings.PreviewRefreshMinutes = Math.Clamp(settings.PreviewRefreshMinutes, 1, 60);
 		settings.SidebarOpacity = Math.Clamp(settings.SidebarOpacity, 0.65, 1.0);

@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v4.1.2
+# Stage_Manager_Lai v4.2.0
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -157,12 +157,25 @@ v4.1.2 removes the bottom sidebar-collapse arrow completely while Focus enhanced
 nor clickable and no longer reserves footer space; tray and shortcut controls remain available for an intentional manual
 hide outside the focused workflow. Switching back to the normal mode restores the arrow automatically.
 
+v4.1.3 adds an adjustable sidebar vertical position. The default is 80 pixels above the previous centered layout;
+Settings > Appearance accepts values from -400 to 400 pixels, where negative values move the complete card column upward
+and positive values move it downward. The normal-mode collapse arrow follows the column, while Focus enhanced mode keeps
+the arrow disabled.
+
+v4.1.4 fixes Focus-mode multi-window interaction. Hover-triggered expansion is now transient and collapses about 500 ms
+after the pointer leaves the group, while an explicit click or child-window selection keeps the group expanded until the
+primary card is clicked again. Moving directly to another multi-window group also re-arms its 350 ms hover expansion.
+
+v4.2.0 adds an optional File Explorer quick button above the card column. It follows the sidebar's 3D angle, opens Windows
+File Explorer with one click, and can be removed completely from **Settings > Appearance** without leaving unused top spacing.
+
 ## What the current 3D build includes
 
 - One stable application group per app, with a synthetic logo card when that app has multiple windows.
 - Click-expanded vertical child cards for selecting an exact window; larger groups support paging.
 - macOS-inspired native Composition perspective, shadows, hover feedback, and card-shaped click-through.
 - Cards scale from 55% to 125%; long lists scroll without overlap.
+- The complete card column has an adjustable vertical offset from -400 to 400 pixels; the default is -80 pixels.
 - Static window snapshots refresh on a configurable low-frequency schedule rather than continuously.
 - The sidebar follows the physical leftmost display and supports edge reveal over maximized or full-screen apps.
 - Optional Focus enhanced mode permanently reserves the visible card column for normal and maximized windows while

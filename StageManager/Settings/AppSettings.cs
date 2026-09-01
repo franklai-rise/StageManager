@@ -37,6 +37,8 @@ public sealed class AppSettings
 	public bool PausePreviewRefreshWhenHidden { get; set; } = true;
 	public bool LowMemoryRendering { get; set; } = true;
 	public double CardScale { get; set; } = 0.60;
+	public int SidebarVerticalOffset { get; set; } = -80;
+	public bool ShowExplorerButton { get; set; } = true;
 	public double SidebarOpacity { get; set; } = 0.94;
 	public string ToggleSidebarHotkey { get; set; } = "Win+Alt+S";
 	public string PreviousStageHotkey { get; set; } = "Win+Alt+[";
