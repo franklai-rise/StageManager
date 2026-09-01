@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v4.1.0
+# Stage_Manager_Lai v4.1.1
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -148,6 +148,10 @@ stay in the remaining area to its right. The sidebar remains visible and ignores
 full-screen window may cover the column; moving the pointer to the left edge temporarily raises the cards above it, and
 clicking the card for that foreground full-screen window minimizes it. Leaving Focus enhanced mode immediately restores
 the original Windows work area. Other displays, Explorer, the taskbar, and desktop icons are never moved or controlled.
+
+v4.1.1 fixes a Focus-mode conflict where a maximized window could briefly match the physical display bounds and be
+mistaken for an exclusive full-screen application. Maximized windows now always retain the reserved card column; only a
+non-maximized, borderless window that truly fills the display can use the temporary left-edge reveal behavior.
 
 ## What the current 3D build includes
 

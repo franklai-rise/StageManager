@@ -44,6 +44,7 @@ internal static class TestRunner
 		RunTest("Initial window layouts keep the first baseline and reject recycled handles", InitialWindowLayoutMemoryBehavior);
 		RunTest("Idle auto-hide waits one minute and wakes at the left edge", IdleAutoHideBehavior);
 		RunTest("Full-screen or maximized sidebar reveals at the edge and hides after pointer leave", LargeWindowTransientSidebar);
+		RunTest("Focus mode never treats a maximized window as exclusive full-screen", FocusFullScreenClassification);
 		RunTest("Focus enhanced mode reserves normal work and overlays only exclusive full-screen", FocusEnhancedSidebarBehavior);
 		RunTest("Focus enhanced placement preserves windows already right of the card column", FocusEnhancedWindowGeometry);
 		Console.WriteLine(_failures == 0 ? "All Stage_Manager_Lai tests passed." : $"{_failures} test(s) failed.");
@@ -664,6 +665,22 @@ internal static class TestRunner
 			"Focus enhanced mode still allowed idle auto-hide.");
 		Assert(FocusEnhancedBehavior.ShouldIdleHide(StageMode.Coexist, true),
 			"Standard mode no longer respected its idle auto-hide setting.");
+	}
+
+	private static void FocusFullScreenClassification()
+	{
+		Assert(!FullScreenService.IsExclusiveFullScreenCandidate(
+			isWindow: true,
+			isMinimized: false,
+			isMaximized: true,
+			matchesDisplayBounds: true),
+			"A maximized window was still treated as exclusive full-screen.");
+		Assert(FullScreenService.IsExclusiveFullScreenCandidate(
+			isWindow: true,
+			isMinimized: false,
+			isMaximized: false,
+			matchesDisplayBounds: true),
+			"A non-maximized borderless full-screen window was not recognized.");
 	}
 
 	private static void FocusEnhancedWindowGeometry()

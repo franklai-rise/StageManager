@@ -22,15 +22,30 @@ public static class FullScreenService
 		if (handle == IntPtr.Zero || !Win32.IsWindow(handle) || Win32.IsIconic(handle))
 			return false;
 
+		var isMaximized = Win32.IsZoomed(handle);
 		var rectangle = new Win32.Rect();
 		if (!Win32.GetWindowRect(handle, ref rectangle))
 			return false;
 
 		var bounds = display.Bounds;
 		const int tolerance = 2;
-		return Math.Abs(rectangle.Left - bounds.Left) <= tolerance &&
+		var matchesDisplayBounds = Math.Abs(rectangle.Left - bounds.Left) <= tolerance &&
 			Math.Abs(rectangle.Top - bounds.Top) <= tolerance &&
 			Math.Abs(rectangle.Right - bounds.Right) <= tolerance &&
 			Math.Abs(rectangle.Bottom - bounds.Bottom) <= tolerance;
+		return IsExclusiveFullScreenCandidate(
+			isWindow: true,
+			isMinimized: false,
+			isMaximized: isMaximized,
+			matchesDisplayBounds: matchesDisplayBounds);
+	}
+
+	public static bool IsExclusiveFullScreenCandidate(
+		bool isWindow,
+		bool isMinimized,
+		bool isMaximized,
+		bool matchesDisplayBounds)
+	{
+		return isWindow && !isMinimized && !isMaximized && matchesDisplayBounds;
 	}
 }
