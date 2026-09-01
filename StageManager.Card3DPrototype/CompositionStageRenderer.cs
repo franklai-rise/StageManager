@@ -42,6 +42,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private bool _disposed;
 	private bool _animationsEnabled;
 	private bool _sidebarVisible = true;
+	private bool _collapseButtonEnabled = true;
 	private bool _collapseButtonHovered;
 	private bool _collapseRequested;
 	private float _preferenceScale;
@@ -73,6 +74,11 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	public bool ConsumeSidebarCollapseRequest()
 	{
+		if (!_collapseButtonEnabled)
+		{
+			_collapseRequested = false;
+			return false;
+		}
 		var requested = _collapseRequested;
 		_collapseRequested = false;
 		return requested;
@@ -88,6 +94,20 @@ internal sealed class CompositionStageRenderer : IDisposable
 	}
 
 	public void SetAnimationsEnabled(bool enabled) => _animationsEnabled = enabled;
+
+	public bool SetCollapseButtonEnabled(bool enabled)
+	{
+		if (_collapseButtonEnabled == enabled)
+			return false;
+
+		_collapseButtonEnabled = enabled;
+		_collapseRequested = false;
+		_collapseButton.SetPressed(false);
+		SetCollapseButtonHovered(false);
+		_collapseButton.SetVisible(false);
+		LayoutStages(true);
+		return true;
+	}
 
 	public void SetPreviewPolicy(int refreshMinutes, bool pauseWhenHidden)
 	{
@@ -460,7 +480,9 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_collapseButton.SetLayout(_dpiScale, CardSize.X);
 		var footerMargin = 10f * _dpiScale;
 		var footerCardGap = 12f * _dpiScale;
-		var footerHeight = footerCardGap + _collapseButton.Size.Y + footerMargin;
+		var footerHeight = _collapseButtonEnabled
+			? footerCardGap + _collapseButton.Size.Y + footerMargin
+			: footerMargin;
 		var cardViewportHeight = Math.Max(CardSize.Y + 24f * _dpiScale, _viewportHeight - footerHeight);
 		var cardSize = CardSize;
 		var stride = cardSize.Y + Gap;
@@ -508,12 +530,20 @@ internal sealed class CompositionStageRenderer : IDisposable
 			currentY += stride + (isExpanded ? expandedExtraHeight : 0);
 		}
 
-		LayoutCollapseButton(lowestVisibleCardBottom);
+		if (_collapseButtonEnabled)
+			LayoutCollapseButton(lowestVisibleCardBottom);
+		else
+			_collapseButton.SetVisible(false);
 		LayoutRevision++;
 	}
 
 	private void LayoutCollapseButton(float lowestVisibleCardBottom)
 	{
+		if (!_collapseButtonEnabled)
+		{
+			_collapseButton.SetVisible(false);
+			return;
+		}
 		_cameraRoot.Children.Remove(_collapseButton.Root);
 		_cameraRoot.Children.InsertAtTop(_collapseButton.Root);
 		var margin = 10f * _dpiScale;
@@ -547,6 +577,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	private void SetCollapseButtonHovered(bool hovered)
 	{
+		if (!_collapseButtonEnabled)
+			hovered = false;
 		if (_collapseButtonHovered == hovered)
 			return;
 		_collapseButtonHovered = hovered;

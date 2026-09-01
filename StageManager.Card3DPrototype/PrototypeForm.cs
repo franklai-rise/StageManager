@@ -87,7 +87,7 @@ internal sealed class PrototypeForm : Form
 			() => _renderer?.RefreshAllPreviews());
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => RunAfterContextMenuCloses(_contextMenu, Close);
-		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v4.1.1") { Enabled = false });
+		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v4.1.2") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(refreshItem);
@@ -445,6 +445,8 @@ internal sealed class PrototypeForm : Form
 		var settings = _catalog.Settings.Current;
 		_renderer.SetAnimationsEnabled(settings.AnimationsEnabled);
 		_renderer.SetCardScale(settings.CardScale);
+		if (_renderer.SetCollapseButtonEnabled(FocusEnhancedBehavior.ShouldShowCollapseButton(settings.StageMode)))
+			UpdateWindowRegion(_sidebarVisible);
 		_renderer.SetPreviewPolicy(settings.PreviewRefreshMinutes, settings.PausePreviewRefreshWhenHidden);
 		UiText.Apply(_contextMenu.Items, settings.UiLanguage);
 		RegisterHotkeys();
@@ -1290,7 +1292,7 @@ internal sealed class PrototypeForm : Form
 		var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 		_trayIcon = new NotifyIcon
 		{
-			Text = "Stage_Manager_Lai v4.1.1",
+			Text = "Stage_Manager_Lai v4.1.2",
 			Icon = icon,
 			ContextMenuStrip = _contextMenu,
 			Visible = true

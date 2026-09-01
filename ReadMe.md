@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v4.1.1
+# Stage_Manager_Lai v4.1.2
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -152,6 +152,10 @@ the original Windows work area. Other displays, Explorer, the taskbar, and deskt
 v4.1.1 fixes a Focus-mode conflict where a maximized window could briefly match the physical display bounds and be
 mistaken for an exclusive full-screen application. Maximized windows now always retain the reserved card column; only a
 non-maximized, borderless window that truly fills the display can use the temporary left-edge reveal behavior.
+
+v4.1.2 removes the bottom sidebar-collapse arrow completely while Focus enhanced mode is enabled. It is neither drawn
+nor clickable and no longer reserves footer space; tray and shortcut controls remain available for an intentional manual
+hide outside the focused workflow. Switching back to the normal mode restores the arrow automatically.
 
 ## What the current 3D build includes
 

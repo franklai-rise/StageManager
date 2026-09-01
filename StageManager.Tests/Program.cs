@@ -663,6 +663,10 @@ internal static class TestRunner
 			"A temporary edge reveal unexpectedly rearranged the desktop work area.");
 		Assert(!FocusEnhancedBehavior.ShouldIdleHide(StageMode.Focus, true),
 			"Focus enhanced mode still allowed idle auto-hide.");
+		Assert(!FocusEnhancedBehavior.ShouldShowCollapseButton(StageMode.Focus),
+			"Focus enhanced mode still exposed the accidental-collapse button.");
+		Assert(FocusEnhancedBehavior.ShouldShowCollapseButton(StageMode.Coexist),
+			"Standard mode lost its manual sidebar-collapse button.");
 		Assert(FocusEnhancedBehavior.ShouldIdleHide(StageMode.Coexist, true),
 			"Standard mode no longer respected its idle auto-hide setting.");
 	}

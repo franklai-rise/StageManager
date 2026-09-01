@@ -31,6 +31,11 @@ internal static class FocusEnhancedBehavior
 		return mode != StageMode.Focus && idleAutoHideEnabled;
 	}
 
+	public static bool ShouldShowCollapseButton(StageMode mode)
+	{
+		return mode != StageMode.Focus;
+	}
+
 	public static int CalculateReservedWidth(float sidebarInteractionWidth, float dpiScale, int displayWidth)
 	{
 		var margin = Math.Max(8, (int)Math.Ceiling(12f * Math.Max(0.5f, dpiScale)));
