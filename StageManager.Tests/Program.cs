@@ -125,7 +125,7 @@ internal static class TestRunner
 				}
 				""");
 			var service = new SettingsService(path);
-			Assert(service.Current.SchemaVersion == 10, "Settings schema was not upgraded for the Explorer quick button.");
+			Assert(service.Current.SchemaVersion == 11, "Settings schema was not upgraded for the expanded-card pin button.");
 			Assert(service.Current.LowMemoryRendering, "Low-memory rendering should be enabled by default.");
 			Assert(!service.Current.IgnoredProcesses.Contains("explorer", StringComparer.OrdinalIgnoreCase),
 				"The legacy default Explorer ignore entry was not migrated.");
@@ -134,7 +134,7 @@ internal static class TestRunner
 			Assert(service.Current.IgnoredProcesses.Contains("custom-app", StringComparer.OrdinalIgnoreCase),
 				"A user-selected ignored process was lost during migration.");
 			var migratedJson = File.ReadAllText(path);
-			Assert(migratedJson.Contains("\"SchemaVersion\": 10", StringComparison.Ordinal),
+			Assert(migratedJson.Contains("\"SchemaVersion\": 11", StringComparison.Ordinal),
 				"The migrated schema was not written back to disk.");
 			Assert(!migratedJson.Contains("\"explorer\"", StringComparison.OrdinalIgnoreCase),
 				"The legacy Explorer ignore entry remained in the persisted settings.");
@@ -149,6 +149,7 @@ internal static class TestRunner
 			Assert(Math.Abs(service.Current.CardScale - 0.60) < 0.001, "Default card scale should be 60%.");
 			Assert(service.Current.SidebarVerticalOffset == -80, "The sidebar should default to 80 pixels above center.");
 			Assert(service.Current.ShowExplorerButton, "The Explorer quick button should be enabled by default.");
+			Assert(service.Current.ShowExpandedPinButton, "The expanded-card pin button should be enabled by default.");
 			var settings = service.CloneCurrent();
 			settings.CardScale = 99;
 			settings.SidebarVerticalOffset = 999;
@@ -159,11 +160,13 @@ internal static class TestRunner
 			settings.UiLanguage = UiLanguage.SimplifiedChinese;
 			settings.UsePerspectiveCards = false;
 			settings.ShowExplorerButton = false;
+			settings.ShowExpandedPinButton = false;
 			settings.IgnoredProcesses = new List<string> { "yuanbao", "YuanBao", "  explorer  " };
 			service.Apply(settings);
 			Assert(service.Current.CardScale == 1.25, "Maximum card scale was not clamped.");
 			Assert(service.Current.SidebarVerticalOffset == 400, "Maximum sidebar vertical offset was not clamped.");
 			Assert(!service.Current.ShowExplorerButton, "The Explorer quick button preference was not persisted.");
+			Assert(!service.Current.ShowExpandedPinButton, "The expanded-card pin button preference was not persisted.");
 			settings = service.CloneCurrent();
 			settings.CardScale = 0;
 			settings.SidebarVerticalOffset = -999;
@@ -389,12 +392,14 @@ internal static class TestRunner
 			"An already-expanded application armed a second hover expansion.");
 		Assert(!MultiWindowCardInteraction.ShouldExpandOnHover(2, false, false),
 			"A child card armed hover expansion.");
-		Assert(!MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(true, TimeSpan.FromMilliseconds(499)),
+		Assert(!MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(true, false, TimeSpan.FromMilliseconds(749)),
 			"A hover-expanded card collapsed before the leave grace period elapsed.");
-		Assert(MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(true, TimeSpan.FromMilliseconds(500)),
+		Assert(MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(true, false, TimeSpan.FromMilliseconds(750)),
 			"A hover-expanded card did not collapse after the leave grace period.");
-		Assert(!MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(false, TimeSpan.FromSeconds(2)),
+		Assert(!MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(false, false, TimeSpan.FromSeconds(2)),
 			"A click-pinned expanded card was incorrectly marked for automatic collapse.");
+		Assert(!MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(true, true, TimeSpan.FromSeconds(2)),
+			"An explicitly pinned hover expansion was incorrectly marked for automatic collapse.");
 		var groupCard = new CardHitTarget(
 			"example-app",
 			null,
@@ -404,6 +409,41 @@ internal static class TestRunner
 		Assert(groupCard.Window is null && groupCard.IsPrimaryCard &&
 			MultiWindowCardInteraction.ShouldExpandOnHover(2, false, groupCard.IsPrimaryCard),
 			"A synthetic application group card was not eligible for hover expansion.");
+		var pinOffset = Card3DGeometry.CreateExpandedPinOffset(
+			new Vector2(156.8f, 97.6f),
+			new Vector2(54f, 32f),
+			1f);
+		Assert(Math.Abs((pinOffset.X + 27f) - 78.4f) < 0.01f &&
+			Math.Abs((pinOffset.Y + 16f) - 48.8f) < 0.01f,
+			"The expanded-card pin was not centered on the primary card.");
+		var overlay = Card3DGeometry.ProjectCardOverlay(
+			new Vector3(12f, 40f, 8f),
+			1.008f,
+			Vector3.Zero,
+			Vector3.One,
+			-7.5f,
+			new Vector2(156.8f, 97.6f),
+			new Vector2(138f, 48.8f),
+			pinOffset,
+			new Vector2(54f, 32f),
+			new Vector2(450f, 500f),
+			1200f);
+		Assert(overlay.Length == 4 && overlay.All(point => float.IsFinite(point.X) && float.IsFinite(point.Y)),
+			"The card-attached pin projection produced invalid hit geometry.");
+		var parentCard = Card3DGeometry.ProjectCard(
+			new Vector3(12f, 40f, 8f),
+			1.008f,
+			Vector3.Zero,
+			Vector3.One,
+			-7.5f,
+			new Vector2(156.8f, 97.6f),
+			new Vector2(138f, 48.8f),
+			new Vector2(450f, 500f),
+			1200f);
+		var overlayCenter = new Vector2(overlay.Average(point => point.X), overlay.Average(point => point.Y));
+		var cardCenter = new Vector2(parentCard.Average(point => point.X), parentCard.Average(point => point.Y));
+		Assert(Vector2.Distance(overlayCenter, cardCenter) < 2f,
+			"The pin's projected center drifted away from the tilted primary card center.");
 	}
 
 	private static void ExpandedApplicationGroupPaging()
@@ -536,6 +576,8 @@ internal static class TestRunner
 					"The Focus enhanced mode option was not exposed in Chinese.");
 				Assert(Descendants(form).Any(control => control.Text == "在卡片上方显示文件资源管理器按钮"),
 					"The Explorer quick button option was not exposed in Chinese.");
+				Assert(Descendants(form).Any(control => control.Text == "多窗口卡片展开时显示固定按钮"),
+					"The expanded-card pin button option was not exposed in Chinese.");
 				var switchButton = Descendants(form)
 					.OfType<Button>()
 					.Single(button => button.Text == "English");

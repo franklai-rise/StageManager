@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v4.2.0
+# Stage_Manager_Lai v4.2.6
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -168,6 +168,29 @@ primary card is clicked again. Moving directly to another multi-window group als
 
 v4.2.0 adds an optional File Explorer quick button above the card column. It follows the sidebar's 3D angle, opens Windows
 File Explorer with one click, and can be removed completely from **Settings > Appearance** without leaving unused top spacing.
+
+v4.2.1 adds an optional pin button to the right of an expanded multi-window primary card in both Coexist and Focus modes.
+A hover-expanded group stays open after pinning; clicking the pin again restores leave-to-collapse behavior, while clicking
+the primary card still closes the group immediately. The pin can be disabled in **Settings > Appearance**.
+
+v4.2.2 moves the expanded-card pin onto the primary card's upper-right edge and increases its contrast, preventing the
+3D-projected button from being clipped or becoming difficult to see at scaled display settings.
+
+v4.2.3 refines the pin interaction into a dedicated right-edge rail: it no longer covers preview content, uses a larger
+invisible click target, shows a hand cursor and faster tooltip, and allows 750 ms before an unpinned hover expansion closes.
+The pin is rendered at camera level so card clipping and z-order changes cannot hide it.
+
+v4.2.4 replaces the edge control with a flat pin centered on the expanded primary card. It fades in over 150 ms, brightens
+on hover, compresses while pressed, and changes to a blue-and-gold locked state. The enlarged invisible hit target and
+camera-level rendering remain, so the centered control is both obvious and reliable.
+
+v4.2.5 attaches the pin directly to the primary card visual. The button now inherits the card's real pivot, scale, Y-axis
+tilt and perspective instead of approximating its screen position. A gold status dot and underline appear only while pinned,
+making the selected state explicit in addition to the blue background and press animation.
+
+v4.2.6 adds the segmented label `FIX` to the left of the pin icon. When the card is pinned, `ED` fades in on the right so
+the complete button reads `FIX [pin] ED`; releasing the pin removes `ED`. The existing blue-and-gold state, confirmation
+dot, underline and press animation remain for redundant visual feedback.
 
 ## What the current 3D build includes
 

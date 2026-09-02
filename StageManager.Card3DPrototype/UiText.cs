@@ -17,6 +17,7 @@ internal static class UiText
 			["Vertical position"] = "垂直位置",
 			["px (negative = up)"] = "像素（负数=向上）",
 			["Show File Explorer button above cards"] = "在卡片上方显示文件资源管理器按钮",
+			["Show pin button when multi-window cards are expanded"] = "多窗口卡片展开时显示固定按钮",
 			["Use animations"] = "使用动画",
 			["Low-memory renderer (restart required)"] = "低内存渲染器（需重启）",
 			["Behavior"] = "行为",

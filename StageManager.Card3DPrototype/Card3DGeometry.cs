@@ -49,6 +49,57 @@ internal static class Card3DGeometry
 		return new CardHoverTransform(offset, new Vector3(scale, scale, 1), angle);
 	}
 
+	public static Vector3 CreateExpandedPinOffset(Vector2 cardSize, Vector2 pinSize, float dpiScale)
+	{
+		var safeScale = Math.Max(0.75f, dpiScale);
+		return new Vector3(
+			(cardSize.X - pinSize.X) / 2f,
+			(cardSize.Y - pinSize.Y) / 2f,
+			2f * safeScale);
+	}
+
+	public static Vector2[] ProjectCardOverlay(
+		Vector3 stageOffset,
+		float stageScale,
+		Vector3 cardOffset,
+		Vector3 cardScale,
+		float angleDegrees,
+		Vector2 cardSize,
+		Vector2 cardPivot,
+		Vector3 overlayOffset,
+		Vector2 overlaySize,
+		Vector2 cameraCenter,
+		float perspectiveDistance)
+	{
+		var corners = new[]
+		{
+			Vector2.Zero,
+			new Vector2(overlaySize.X, 0),
+			overlaySize,
+			new Vector2(0, overlaySize.Y)
+		};
+		var angle = MathF.PI * angleDegrees / 180f;
+		var sine = MathF.Sin(angle);
+		var cosine = MathF.Cos(angle);
+		for (var index = 0; index < corners.Length; index++)
+		{
+			var localX = (overlayOffset.X + corners[index].X - cardPivot.X) * cardScale.X;
+			var localY = (overlayOffset.Y + corners[index].Y - cardPivot.Y) * cardScale.Y;
+			var localZ = overlayOffset.Z;
+			var rotatedX = localX * cosine + localZ * sine;
+			var rotatedZ = -localX * sine + localZ * cosine;
+			var worldX = stageOffset.X + (cardPivot.X + rotatedX + cardOffset.X) * stageScale;
+			var worldY = stageOffset.Y + (cardPivot.Y + localY + cardOffset.Y) * stageScale;
+			var worldZ = stageOffset.Z + (rotatedZ + cardOffset.Z) * stageScale;
+			var denominator = Math.Max(120f, perspectiveDistance - worldZ);
+			var factor = perspectiveDistance / denominator;
+			corners[index] = new Vector2(
+				cameraCenter.X + (worldX - cameraCenter.X) * factor,
+				cameraCenter.Y + (worldY - cameraCenter.Y) * factor);
+		}
+		return corners;
+	}
+
 	public static Vector2[] ProjectCard(
 		Vector3 stageOffset,
 		float stageScale,

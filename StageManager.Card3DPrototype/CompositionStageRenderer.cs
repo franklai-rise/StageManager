@@ -33,6 +33,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private IReadOnlyList<PrototypeStageSnapshot> _snapshots = Array.Empty<PrototypeStageSnapshot>();
 	private string? _expandedStageKey;
 	private bool _expandedByHover;
+	private bool _expandedPinned;
 	private string? _hoveredStageKey;
 	private IntPtr _hoveredWindowHandle;
 	private bool _hoveredGroupCard;
@@ -50,6 +51,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private bool _explorerButtonEnabled = true;
 	private bool _explorerButtonHovered;
 	private bool _explorerRequested;
+	private bool _pinButtonEnabled;
+	private bool _pinButtonHovered;
 	private bool _collapseButtonEnabled = true;
 	private bool _collapseButtonHovered;
 	private bool _collapseRequested;
@@ -80,9 +83,16 @@ internal sealed class CompositionStageRenderer : IDisposable
 	public double CardScale => _preferenceScale;
 	public int SidebarVerticalOffset => _sidebarVerticalOffset;
 	public bool SidebarVisible => _sidebarVisible;
+	public bool IsExpandedStagePinned => _expandedPinned;
 	public long LayoutRevision { get; private set; }
 	public float SidebarInteractionWidth => CardSize.X + 48f * _dpiScale;
 	public TimeSpan SidebarAnimationDuration => TimeSpan.FromMilliseconds(220);
+
+	public void ReleasePointerPress()
+	{
+		if (_expandedStageKey is not null && _stages.TryGetValue(_expandedStageKey, out var stage))
+			stage.PinButton.SetPressed(false);
+	}
 
 	public bool ConsumeExplorerLaunchRequest()
 	{
@@ -148,6 +158,22 @@ internal sealed class CompositionStageRenderer : IDisposable
 		return true;
 	}
 
+	public bool SetPinButtonEnabled(bool enabled)
+	{
+		if (_pinButtonEnabled == enabled)
+			return false;
+
+		_pinButtonEnabled = enabled;
+		SetPinButtonHovered(false);
+		if (!enabled)
+		{
+			_expandedPinned = false;
+			_expandedByHover = false;
+		}
+		LayoutStages(true);
+		return true;
+	}
+
 	public void SetPreviewPolicy(int refreshMinutes, bool pauseWhenHidden)
 	{
 		_previewRefreshMinutes = Math.Clamp(refreshMinutes, 1, 60);
@@ -197,6 +223,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		SetExplorerButtonHovered(false);
 		_collapseButton.SetPressed(false);
 		SetCollapseButtonHovered(false);
+		SetPinButtonHovered(false);
 		_cameraRoot.StopAnimation(nameof(Visual.Offset));
 		_cameraRoot.Offset = target;
 		if (!animate || !_animationsEnabled)
@@ -288,6 +315,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 			layoutChanged = true;
 			_expandedStageKey = null;
 			_expandedByHover = false;
+			_expandedPinned = false;
 			_hoveredWindowHandle = IntPtr.Zero;
 			_hoveredGroupCard = false;
 			_expandedPage = 0;
@@ -299,6 +327,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 			layoutChanged = true;
 			_expandedStageKey = null;
 			_expandedByHover = false;
+			_expandedPinned = false;
 			_hoveredWindowHandle = IntPtr.Zero;
 			_hoveredGroupCard = false;
 			_expandedPage = 0;
@@ -350,6 +379,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_lastPointerInsideUtc = DateTime.UtcNow;
 		SetExplorerButtonHovered(hit.IsExplorerButton);
 		SetCollapseButtonHovered(hit.IsSidebarCollapseButton);
+		SetPinButtonHovered(hit.IsPinButton);
 		if (hit.IsSidebarCollapseButton)
 			return;
 		if (_expandedStageKey is not null &&
@@ -363,8 +393,9 @@ internal sealed class CompositionStageRenderer : IDisposable
 			_lastPointerInsideUtc = DateTime.UtcNow;
 			SetExplorerButtonHovered(hit.IsExplorerButton);
 			SetCollapseButtonHovered(hit.IsSidebarCollapseButton);
+			SetPinButtonHovered(hit.IsPinButton);
 		}
-		if (hit.IsExplorerButton)
+		if (hit.IsExplorerButton || hit.IsPinButton)
 			return;
 		if (_expandedStageKey is null ||
 			!string.Equals(_expandedStageKey, hit.StageKey, StringComparison.OrdinalIgnoreCase))
@@ -394,6 +425,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 			_lastPointerInsideUtc = DateTime.UtcNow;
 			SetExplorerButtonHovered(hit.IsExplorerButton);
 			SetCollapseButtonHovered(hit.IsSidebarCollapseButton);
+			SetPinButtonHovered(hit.IsPinButton);
 			if (_expandedStageKey is not null &&
 				_expandedByHover &&
 				!string.Equals(_expandedStageKey, hit.StageKey, StringComparison.OrdinalIgnoreCase))
@@ -404,6 +436,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		}
 		SetExplorerButtonHovered(false);
 		SetCollapseButtonHovered(false);
+		SetPinButtonHovered(false);
 		var elapsedSinceCard = DateTime.UtcNow - _lastPointerInsideUtc;
 		if (elapsedSinceCard < TimeSpan.FromMilliseconds(500))
 			return;
@@ -416,7 +449,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 			}
 			return;
 		}
-		if (MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(_expandedByHover, elapsedSinceCard))
+		if (MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(_expandedByHover, _expandedPinned, elapsedSinceCard))
 		{
 			CollapseExpandedStage();
 			return;
@@ -434,6 +467,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (_disposed ||
 			_expandedStageKey is not null ||
 			target.IsExplorerButton ||
+			target.IsPinButton ||
 			target.IsSidebarCollapseButton ||
 			target.PageDelta != 0 ||
 			!_stages.TryGetValue(target.StageKey, out var stage))
@@ -492,6 +526,19 @@ internal sealed class CompositionStageRenderer : IDisposable
 			ExpandStage(hit.StageKey, expandedByHover: false);
 			return null;
 		}
+		if (hit.IsPinButton)
+		{
+			if (_pinButtonEnabled &&
+				_expandedStageKey is not null &&
+				string.Equals(_expandedStageKey, hit.StageKey, StringComparison.OrdinalIgnoreCase))
+			{
+				stage.PinButton.SetPressed(true);
+				_expandedPinned = !_expandedPinned;
+				_expandedByHover = !_expandedPinned;
+				LayoutStages(true);
+			}
+			return null;
+		}
 		if (action == MultiWindowCardClickAction.Collapse)
 		{
 			CollapseExpandedStage();
@@ -504,8 +551,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	private void ExpandStage(string stageKey, bool expandedByHover)
 	{
+		SetPinButtonHovered(false);
 		_expandedStageKey = stageKey;
 		_expandedByHover = expandedByHover;
+		_expandedPinned = false;
 		_hoveredStageKey = stageKey;
 		_expandedPage = 0;
 		_hoveredWindowHandle = IntPtr.Zero;
@@ -525,8 +574,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		if (_expandedStageKey is null)
 			return;
+		SetPinButtonHovered(false);
 		_expandedStageKey = null;
 		_expandedByHover = false;
+		_expandedPinned = false;
 		_hoveredStageKey = null;
 		_hoveredWindowHandle = IntPtr.Zero;
 		_hoveredGroupCard = false;
@@ -641,7 +692,6 @@ internal sealed class CompositionStageRenderer : IDisposable
 				: Math.Max(lowestVisibleCardBottom, stageOffset.Y + stageVisualHeight * stageScale);
 			currentY += stride + (isExpanded ? expandedExtraHeight : 0);
 		}
-
 		if (_collapseButtonEnabled)
 			LayoutCollapseButton(lowestVisibleCardBottom);
 		else
@@ -739,6 +789,15 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_explorerButton.SetHovered(hovered);
 	}
 
+	private void SetPinButtonHovered(bool hovered)
+	{
+		if (_pinButtonHovered == hovered)
+			return;
+		_pinButtonHovered = hovered;
+		if (_expandedStageKey is not null && _stages.TryGetValue(_expandedStageKey, out var stage))
+			stage.PinButton.SetHovered(hovered);
+	}
+
 	private float GetExpandedExtraHeight(StageCardVisual stage)
 	{
 		var visibleCount = 1 + Math.Min(PageSize - 1, stage.Windows.Count);
@@ -755,6 +814,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private void LayoutCollapsedStage(StageCardVisual stage, Vector3 stageOffset, float stageScale, Vector2 cameraCenter, bool animate, int stageIndex)
 	{
 		var cardSize = CardSize;
+		stage.PinButton.SetVisible(false);
 		stage.SetPaginationVisible(false);
 		stage.HideExpandedConnector();
 		if (stage.Windows.Count > 1 && stage.GroupCard is not null)
@@ -875,6 +935,56 @@ internal sealed class CompositionStageRenderer : IDisposable
 			cameraCenter,
 			PerspectiveDistance * _dpiScale);
 		_hitTargets.Add(new CardHitTarget(stage.Key, null, groupPolygon, 10100, IsPrimaryCard: true));
+
+		if (_pinButtonEnabled)
+		{
+			// The pin is a child of the primary card, so it inherits the exact same
+			// pivot, scale and Y-axis rotation rather than approximating the card's
+			// projected center from the camera root.
+			stage.PinButton.SetLayout(_dpiScale, 0f, _expandedPinned);
+			var pinOffset = Card3DGeometry.CreateExpandedPinOffset(cardSize, stage.PinButton.Size, _dpiScale);
+			stage.PinButton.SetOffset(pinOffset);
+			stage.PinButton.SetVisible(true);
+			stage.PinButton.SetHovered(_pinButtonHovered);
+			var pinPolygon = Card3DGeometry.ProjectCardOverlay(
+				stageOffset,
+				stageScale,
+				groupTransform.Offset,
+				groupTransform.Scale,
+				groupTransform.Angle,
+				cardSize,
+				stage.GroupCard.Pivot,
+				pinOffset,
+				stage.PinButton.Size,
+				cameraCenter,
+				PerspectiveDistance * _dpiScale);
+			var hitPadding = 8f * _dpiScale;
+			var hitSize = stage.PinButton.Size + new Vector2(hitPadding * 2f);
+			var hitOffset = pinOffset - new Vector3(hitPadding, hitPadding, 0);
+			var hitPolygon = Card3DGeometry.ProjectCardOverlay(
+				stageOffset,
+				stageScale,
+				groupTransform.Offset,
+				groupTransform.Scale,
+				groupTransform.Angle,
+				cardSize,
+				stage.GroupCard.Pivot,
+				hitOffset,
+				hitSize,
+				cameraCenter,
+				PerspectiveDistance * _dpiScale);
+			_hitTargets.Add(new CardHitTarget(
+				stage.Key,
+				null,
+				hitPolygon,
+				25000,
+				IsPinButton: true));
+			_passivePolygons.Add(pinPolygon);
+		}
+		else
+		{
+			stage.PinButton.SetVisible(false);
+		}
 
 		for (var index = 0; index < page.Length; index++)
 		{
@@ -1033,7 +1143,8 @@ internal sealed record CardHitTarget(
 	int PageDelta = 0,
 	bool IsPrimaryCard = false,
 	bool IsSidebarCollapseButton = false,
-	bool IsExplorerButton = false);
+	bool IsExplorerButton = false,
+	bool IsPinButton = false);
 
 internal sealed class StageCardVisual : IDisposable
 {
@@ -1057,6 +1168,7 @@ internal sealed class StageCardVisual : IDisposable
 		Root.IsVisible = false;
 		PreviousButton = new PageButtonVisual(compositor, false, cardSize.Y);
 		NextButton = new PageButtonVisual(compositor, true, cardSize.Y);
+		PinButton = new PinButtonVisual(compositor);
 		ExpandedConnector = new ExpandedConnectorVisual(compositor, 5);
 		Root.Children.InsertAtBottom(ExpandedConnector.Root);
 		Root.Children.InsertAtTop(PreviousButton.Root);
@@ -1069,6 +1181,7 @@ internal sealed class StageCardVisual : IDisposable
 	public WindowCardVisual? GroupCard { get; private set; }
 	public PageButtonVisual PreviousButton { get; }
 	public PageButtonVisual NextButton { get; }
+	public PinButtonVisual PinButton { get; }
 	public ExpandedConnectorVisual ExpandedConnector { get; }
 
 	public void Synchronize(PrototypeStageSnapshot snapshot)
@@ -1112,6 +1225,8 @@ internal sealed class StageCardVisual : IDisposable
 		{
 			if (GroupCard is null)
 				return;
+			GroupCard.Root.Children.Remove(PinButton.Root);
+			PinButton.SetVisible(false);
 			Root.Children.Remove(GroupCard.Root);
 			GroupCard.Dispose();
 			GroupCard = null;
@@ -1126,6 +1241,7 @@ internal sealed class StageCardVisual : IDisposable
 		{
 			GroupCard = new WindowCardVisual(_compositor, _graphics, representative, _surfaceWidth, _surfaceHeight, _cardSize, true);
 			Root.Children.InsertAtTop(GroupCard.Root);
+			GroupCard.Root.Children.InsertAtTop(PinButton.Root);
 			GroupCard.SetVisible(false);
 		}
 		else
@@ -1204,6 +1320,7 @@ internal sealed class StageCardVisual : IDisposable
 	public void HideAll()
 	{
 		SetPaginationVisible(false);
+		PinButton.SetVisible(false);
 		HideExpandedConnector();
 		HideGroupCard();
 		foreach (var card in Windows)
@@ -1235,6 +1352,8 @@ internal sealed class StageCardVisual : IDisposable
 		foreach (var window in Windows)
 			window.Dispose();
 		Windows.Clear();
+		GroupCard?.Root.Children.Remove(PinButton.Root);
+		PinButton.Dispose();
 		GroupCard?.Dispose();
 		GroupCard = null;
 		PreviousButton.Dispose();
@@ -1369,6 +1488,278 @@ internal sealed class PageButtonVisual : IDisposable
 		stroke.RotationAngleInDegrees = angle;
 		stroke.Brush = _strokeBrush;
 		return stroke;
+	}
+}
+
+internal sealed class PinButtonVisual : IDisposable
+{
+	private readonly Compositor _compositor;
+	private readonly SpriteVisual _background;
+	private readonly CompositionColorBrush _backgroundBrush;
+	private readonly CompositionRoundedRectangleGeometry _geometry;
+	private readonly CompositionGeometricClip _clip;
+	private readonly SpriteVisual _pinHead;
+	private readonly SpriteVisual _pinStem;
+	private readonly SpriteVisual _pinPoint;
+	private readonly CompositionColorBrush _pinBrush;
+	private readonly SpriteVisual _statusDot;
+	private readonly SpriteVisual _activeBar;
+	private readonly CompositionColorBrush _activeBrush;
+	private readonly CompositionEllipseGeometry _statusGeometry;
+	private readonly CompositionGeometricClip _statusClip;
+	private readonly ContainerVisual _fixLabel;
+	private readonly ContainerVisual _edLabel;
+	private readonly CompositionColorBrush _labelBrush;
+	private readonly List<SpriteVisual> _labelStrokes = new();
+	private bool _hovered;
+	private bool _pinned;
+	private bool _pressed;
+	private bool _visible;
+	private bool _disposed;
+
+	public PinButtonVisual(Compositor compositor)
+	{
+		_compositor = compositor;
+		Root = compositor.CreateContainerVisual();
+		Root.IsVisible = false;
+		Root.Opacity = 0f;
+		_backgroundBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(220, 25, 31, 42));
+		_background = compositor.CreateSpriteVisual();
+		_background.Brush = _backgroundBrush;
+		_geometry = compositor.CreateRoundedRectangleGeometry();
+		_clip = compositor.CreateGeometricClip(_geometry);
+		_background.Clip = _clip;
+		_pinBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(226, 229, 235, 244));
+		_pinHead = compositor.CreateSpriteVisual();
+		_pinHead.Brush = _pinBrush;
+		_pinStem = compositor.CreateSpriteVisual();
+		_pinStem.Brush = _pinBrush;
+		_pinPoint = compositor.CreateSpriteVisual();
+		_pinPoint.Brush = _pinBrush;
+		_activeBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(255, 255, 201, 76));
+		_statusDot = compositor.CreateSpriteVisual();
+		_statusDot.Brush = _activeBrush;
+		_statusGeometry = compositor.CreateEllipseGeometry();
+		_statusClip = compositor.CreateGeometricClip(_statusGeometry);
+		_statusDot.Clip = _statusClip;
+		_activeBar = compositor.CreateSpriteVisual();
+		_activeBar.Brush = _activeBrush;
+		_labelBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(255, 241, 245, 252));
+		_fixLabel = CreateLabel(compositor, "FIX", _labelBrush);
+		_edLabel = CreateLabel(compositor, "ED", _activeBrush);
+		_edLabel.IsVisible = false;
+		_edLabel.Opacity = 0f;
+		Root.Children.InsertAtTop(_background);
+		Root.Children.InsertAtTop(_pinStem);
+		Root.Children.InsertAtTop(_pinPoint);
+		Root.Children.InsertAtTop(_pinHead);
+		Root.Children.InsertAtTop(_statusDot);
+		Root.Children.InsertAtTop(_activeBar);
+		Root.Children.InsertAtTop(_fixLabel);
+		Root.Children.InsertAtTop(_edLabel);
+		SetLayout(1f, 0f, false);
+	}
+
+	public ContainerVisual Root { get; }
+	public Vector2 Size { get; private set; }
+	public Vector2 Pivot { get; private set; }
+
+	public void SetLayout(float dpiScale, float angle, bool pinned)
+	{
+		var scale = Math.Max(0.75f, dpiScale);
+		Size = new Vector2(104f * scale, 34f * scale);
+		Root.Size = Size;
+		Root.CenterPoint = new Vector3(Size.X / 2f, Size.Y / 2f, 0);
+		Root.RotationAxis = Vector3.UnitY;
+		Root.RotationAngleInDegrees = angle;
+		Pivot = new Vector2(Root.CenterPoint.X, Root.CenterPoint.Y);
+		_background.Size = Size;
+		_geometry.Size = Size;
+		_geometry.CornerRadius = new Vector2(12f * scale, 12f * scale);
+		_pinHead.Size = new Vector2(11f * scale, 6f * scale);
+		_pinHead.Offset = new Vector3(46.5f * scale, 7f * scale, 0);
+		_pinStem.Size = new Vector2(2.4f * scale, 9f * scale);
+		_pinStem.Offset = new Vector3(50.8f * scale, 12f * scale, 0);
+		_pinPoint.Size = new Vector2(5f * scale, 5f * scale);
+		_pinPoint.Offset = new Vector3(49.5f * scale, 19f * scale, 0);
+		_pinPoint.CenterPoint = new Vector3(2.5f * scale, 2.5f * scale, 0);
+		_pinPoint.RotationAngleInDegrees = 45f;
+		_statusDot.Size = new Vector2(6f * scale, 6f * scale);
+		_statusDot.Offset = new Vector3(94f * scale, 4f * scale, 0);
+		_statusGeometry.Center = new Vector2(3f * scale, 3f * scale);
+		_statusGeometry.Radius = new Vector2(3f * scale, 3f * scale);
+		_activeBar.Size = new Vector2(30f * scale, 3f * scale);
+		_activeBar.Offset = new Vector3(37f * scale, 29f * scale, 0);
+		_fixLabel.Offset = new Vector3(8f * scale, 10f * scale, 0);
+		_fixLabel.Scale = new Vector3(scale, scale, 1f);
+		_edLabel.Offset = new Vector3(77f * scale, 10f * scale, 0);
+		_edLabel.Scale = new Vector3(scale, scale, 1f);
+		var pinnedChanged = _pinned != pinned;
+		_pinned = pinned;
+		ApplyState();
+		if (pinnedChanged && _visible && _pinned)
+			AnimateEdReveal();
+	}
+
+	public void SetOffset(Vector3 offset) => Root.Offset = offset;
+
+	public void SetVisible(bool visible)
+	{
+		if (_visible == visible)
+			return;
+		_visible = visible;
+		Root.StopAnimation(nameof(Visual.Opacity));
+		if (!visible)
+		{
+			_pressed = false;
+			Root.Opacity = 0f;
+			Root.IsVisible = false;
+			ApplyState();
+			return;
+		}
+
+		Root.IsVisible = true;
+		Root.Opacity = 0f;
+		using var animation = _compositor.CreateScalarKeyFrameAnimation();
+		animation.Duration = TimeSpan.FromMilliseconds(150);
+		animation.InsertKeyFrame(0f, 0f);
+		animation.InsertKeyFrame(1f, 1f);
+		Root.StartAnimation(nameof(Visual.Opacity), animation);
+	}
+
+	public void SetHovered(bool hovered)
+	{
+		if (_hovered == hovered)
+			return;
+		_hovered = hovered;
+		ApplyState();
+	}
+
+	public void SetPressed(bool pressed)
+	{
+		if (_pressed == pressed)
+			return;
+		_pressed = pressed;
+		ApplyState();
+	}
+
+	public void Dispose()
+	{
+		if (_disposed)
+			return;
+		_disposed = true;
+		Root.Dispose();
+		foreach (var stroke in _labelStrokes)
+			stroke.Dispose();
+		_labelStrokes.Clear();
+		_edLabel.Dispose();
+		_fixLabel.Dispose();
+		_activeBar.Dispose();
+		_statusDot.Dispose();
+		_statusClip.Dispose();
+		_statusGeometry.Dispose();
+		_pinPoint.Dispose();
+		_pinStem.Dispose();
+		_pinHead.Dispose();
+		_clip.Dispose();
+		_geometry.Dispose();
+		_background.Dispose();
+		_pinBrush.Dispose();
+		_activeBrush.Dispose();
+		_labelBrush.Dispose();
+		_backgroundBrush.Dispose();
+	}
+
+	private void ApplyState()
+	{
+		if (_disposed)
+			return;
+		_backgroundBrush.Color = _pinned
+			? Windows.UI.Color.FromArgb((byte)(_pressed ? 255 : 242), 30, 91, 157)
+			: Windows.UI.Color.FromArgb((byte)(_pressed ? 252 : _hovered ? 238 : 220), 25, 31, 42);
+		_pinBrush.Color = _pinned
+			? Windows.UI.Color.FromArgb(255, 255, 201, 76)
+			: _hovered
+				? Windows.UI.Color.FromArgb(255, 255, 214, 112)
+				: Windows.UI.Color.FromArgb(255, 241, 245, 252);
+		_statusDot.IsVisible = _pinned;
+		_activeBar.IsVisible = _pinned;
+		_edLabel.IsVisible = _pinned;
+		if (!_pinned)
+			_edLabel.Opacity = 0f;
+		var scale = _pressed ? 0.92f : _hovered ? 1.045f : 1f;
+		Root.Scale = new Vector3(scale, scale, 1f);
+	}
+
+	private ContainerVisual CreateLabel(Compositor compositor, string text, CompositionBrush brush)
+	{
+		var root = compositor.CreateContainerVisual();
+		var x = 0f;
+		foreach (var character in text)
+		{
+			CreateLetter(compositor, root, character, x, brush);
+			x += 9f;
+		}
+		root.Size = new Vector2(Math.Max(0, x - 2f), 12f);
+		return root;
+	}
+
+	private void CreateLetter(Compositor compositor, ContainerVisual root, char character, float x, CompositionBrush brush)
+	{
+		void Stroke(float left, float top, float width, float height, float angle = 0f)
+		{
+			var visual = compositor.CreateSpriteVisual();
+			visual.Size = new Vector2(width, height);
+			visual.Offset = new Vector3(x + left, top, 0);
+			visual.CenterPoint = new Vector3(width / 2f, height / 2f, 0);
+			visual.RotationAngleInDegrees = angle;
+			visual.Brush = brush;
+			root.Children.InsertAtTop(visual);
+			_labelStrokes.Add(visual);
+		}
+
+		const float thickness = 1.5f;
+		switch (character)
+		{
+			case 'F':
+				Stroke(0, 0, thickness, 11);
+				Stroke(0, 0, 7, thickness);
+				Stroke(0, 5, 5.5f, thickness);
+				break;
+			case 'I':
+				Stroke(0, 0, 7, thickness);
+				Stroke(2.75f, 0, thickness, 11);
+				Stroke(0, 9.5f, 7, thickness);
+				break;
+			case 'X':
+				Stroke(2.7f, -0.2f, thickness, 11.6f, -32f);
+				Stroke(2.7f, -0.2f, thickness, 11.6f, 32f);
+				break;
+			case 'E':
+				Stroke(0, 0, thickness, 11);
+				Stroke(0, 0, 7, thickness);
+				Stroke(0, 5, 5.5f, thickness);
+				Stroke(0, 9.5f, 7, thickness);
+				break;
+			case 'D':
+				Stroke(0, 0, thickness, 11);
+				Stroke(0, 0, 5.5f, thickness);
+				Stroke(0, 9.5f, 5.5f, thickness);
+				Stroke(5.5f, 1f, thickness, 9f);
+				break;
+		}
+	}
+
+	private void AnimateEdReveal()
+	{
+		_edLabel.StopAnimation(nameof(Visual.Opacity));
+		_edLabel.IsVisible = true;
+		_edLabel.Opacity = 0f;
+		using var animation = _compositor.CreateScalarKeyFrameAnimation();
+		animation.Duration = TimeSpan.FromMilliseconds(140);
+		animation.InsertKeyFrame(0f, 0f);
+		animation.InsertKeyFrame(1f, 1f);
+		_edLabel.StartAnimation(nameof(Visual.Opacity), animation);
 	}
 }
 
