@@ -55,6 +55,21 @@ internal sealed class PrototypeStageCatalog : IDisposable
 
 	public SettingsService Settings => _settings;
 
+	public bool IsManagedWindow(IntPtr handle)
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		if (handle == IntPtr.Zero)
+			return false;
+
+		return _windows.Windows.Any(window =>
+			window.Handle == handle &&
+			NativeMethods.IsWindow(window.Handle) &&
+			ManagedWindowPresence.ShouldDisplay(
+				NativeMethods.IsWindowVisible(window.Handle),
+				NativeMethods.IsIconic(window.Handle)) &&
+			_virtualDesktops.IsWindowOnCurrentDesktop(window.Handle));
+	}
+
 	public void ReevaluateWindows()
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
@@ -92,14 +107,13 @@ internal sealed class PrototypeStageCatalog : IDisposable
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		var foreground = NativeMethods.GetForegroundWindow();
-		var ignoredProcesses = _settings.Current.IgnoredProcesses.ToHashSet(StringComparer.OrdinalIgnoreCase);
 		var candidates = _windows.Windows
 			.Where(window => NativeMethods.IsWindow(window.Handle) &&
 				ManagedWindowPresence.ShouldDisplay(
 					NativeMethods.IsWindowVisible(window.Handle),
 					NativeMethods.IsIconic(window.Handle)) &&
 				_virtualDesktops.IsWindowOnCurrentDesktop(window.Handle) &&
-				!ignoredProcesses.Contains(window.ProcessName))
+				IgnoredApplicationPolicy.ShouldShowCard(window.ProcessName, _settings.Current.IgnoredProcesses))
 			.ToArray();
 		var foregroundWindow = candidates.FirstOrDefault(window => window.Handle == foreground);
 		var foregroundKey = foregroundWindow is null ? null : Stage.GetAppKey(foregroundWindow);

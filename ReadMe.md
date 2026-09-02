@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v4.2.6
+# Stage_Manager_Lai v4.2.10
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -191,6 +191,24 @@ making the selected state explicit in addition to the blue background and press 
 v4.2.6 adds the segmented label `FIX` to the left of the pin icon. When the card is pinned, `ED` fades in on the right so
 the complete button reads `FIX [pin] ED`; releasing the pin removes `ED`. The existing blue-and-gold state, confirmation
 dot, underline and press animation remain for redundant visual feedback.
+
+v4.2.10 permanently anchors the Focus host window to the physical left edge instead of the AppBar-reduced work area,
+and adds a one-second invariant check that restores the sidebar after full-screen transitions move it aside.
+
+v4.2.9 makes Focus persistent after long exclusive full-screen sessions, moves user-ignored applications to a
+card-only filter so their windows remain launchable and usable, fixes a window-tracker disposal race, and uses a
+Windows Startup-folder shortcut so Explorer launches the app independently from Codex or a terminal.
+
+v4.2.8 keeps the Focus sidebar visible while Windows' Alt+Tab task switcher is active. System overlays are no longer
+mistaken for managed exclusive full-screen applications, while real managed full-screen windows retain edge reveal.
+It also adds a matching 3D button above File Explorer that expands every multi-window card vertically; pressing it
+again collapses the groups, and an existing `FIXED` expansion is restored afterward. The button mirrors the card pin
+language: it shows `FIX` at rest and reveals `ED` with the active colour when all groups are held open.
+
+v4.2.7 makes `FIXED` a strict expansion lock. A fixed multi-window group cannot be replaced by another group's click or
+hover, its primary card cannot collapse it, and temporarily hiding the sidebar preserves the fixed expansion. Only clicking
+the centered `FIXED` control releases the lock. Every expanded group that is not fixed now closes automatically after the
+pointer leaves, including groups originally opened by clicking rather than hovering.
 
 ## What the current 3D build includes
 

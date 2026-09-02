@@ -22,6 +22,7 @@ internal static class TestRunner
 		RunTest("Composite preview exposes three thumbnails and overflow count", CompositePreview);
 		RunTest("Adaptive cards fit or scroll at 2, 6, 10, and 20 stages", AdaptiveCards);
 		RunTest("Settings are normalized and persisted atomically", SettingsPersistence);
+		RunTest("Independent startup shortcut is owned by Windows Explorer", IndependentStartupShortcut);
 		RunTest("Default and custom hotkeys parse", HotkeyParsing);
 		RunTest("3D projection recedes toward the left edge", PerspectiveProjection);
 		RunTest("Collapsed cards retain subtle hover feedback without expanding", CollapsedHoverFeedback);
@@ -317,6 +318,15 @@ internal static class TestRunner
 			"Latin title runs do not select Times New Roman.");
 	}
 
+	private static void IndependentStartupShortcut()
+	{
+		var shortcut = AutoStart.GetStartupShortcutPath();
+		Assert(shortcut.EndsWith(AutoStart.StartupShortcutName, StringComparison.OrdinalIgnoreCase),
+			"The independent startup shortcut did not use the stable Stage Manager name.");
+		Assert(shortcut.Contains("Startup", StringComparison.OrdinalIgnoreCase) || shortcut.Contains("\u542f\u52a8", StringComparison.OrdinalIgnoreCase),
+			"The independent launcher was not placed in the signed-in user's Startup folder.");
+	}
+
 	private static void PrototypeStageSlotsStayStable()
 	{
 		var slots = new StableStageOrder();
@@ -380,6 +390,10 @@ internal static class TestRunner
 			"Selecting an expanded child card did not preserve the expanded list.");
 		Assert(MultiWindowCardInteraction.Decide(4, true, true) == MultiWindowCardClickAction.Collapse,
 			"Clicking the expanded primary card did not collapse the child list.");
+		Assert(MultiWindowCardInteraction.Decide(4, true, true, true) == MultiWindowCardClickAction.KeepExpanded,
+			"Clicking a fixed primary card was allowed to collapse the fixed child list.");
+		Assert(MultiWindowCardInteraction.Decide(4, false, true, true) == MultiWindowCardClickAction.SelectWindow,
+			"Another application was allowed to replace the fixed expanded group.");
 	}
 
 	private static void MultiWindowHoverExpansion()
@@ -392,14 +406,18 @@ internal static class TestRunner
 			"An already-expanded application armed a second hover expansion.");
 		Assert(!MultiWindowCardInteraction.ShouldExpandOnHover(2, false, false),
 			"A child card armed hover expansion.");
-		Assert(!MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(true, false, TimeSpan.FromMilliseconds(749)),
-			"A hover-expanded card collapsed before the leave grace period elapsed.");
-		Assert(MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(true, false, TimeSpan.FromMilliseconds(750)),
-			"A hover-expanded card did not collapse after the leave grace period.");
-		Assert(!MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(false, false, TimeSpan.FromSeconds(2)),
-			"A click-pinned expanded card was incorrectly marked for automatic collapse.");
-		Assert(!MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(true, true, TimeSpan.FromSeconds(2)),
+		Assert(!MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(false, TimeSpan.FromMilliseconds(749)),
+			"An unfixed card collapsed before the leave grace period elapsed.");
+		Assert(MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(false, TimeSpan.FromMilliseconds(750)),
+			"An unfixed card did not collapse after the leave grace period.");
+		Assert(!MultiWindowCardInteraction.ShouldCollapseOnPointerLeave(true, TimeSpan.FromSeconds(2)),
 			"An explicitly pinned hover expansion was incorrectly marked for automatic collapse.");
+		Assert(!MultiWindowCardInteraction.CanCollapseExpandedStage(true, false),
+			"A normal sidebar hide was allowed to discard the fixed expanded group.");
+		Assert(MultiWindowCardInteraction.CanCollapseExpandedStage(false, false),
+			"A normal unfixed group could no longer collapse.");
+		Assert(MultiWindowCardInteraction.CanCollapseExpandedStage(true, true),
+			"A forced cleanup could not release a stale fixed group.");
 		var groupCard = new CardHitTarget(
 			"example-app",
 			null,
@@ -712,6 +730,12 @@ internal static class TestRunner
 			"A maximized window incorrectly hid the Focus enhanced sidebar.");
 		Assert(FocusEnhancedBehavior.UsesTransientSidebar(StageMode.Focus, maximizedOrFullScreen: true, exclusiveFullScreen: true),
 			"An exclusive full-screen window did not receive the transient sidebar behavior.");
+		Assert(!FocusEnhancedBehavior.UsesTransientSidebar(
+			StageMode.Focus,
+			maximizedOrFullScreen: true,
+			exclusiveFullScreen: true,
+			managedForeground: false),
+			"An unmanaged full-screen shell overlay such as Alt+Tab hid the Focus sidebar.");
 		Assert(FocusEnhancedBehavior.UsesTransientSidebar(StageMode.Coexist, maximizedOrFullScreen: true, exclusiveFullScreen: false),
 			"Standard mode lost its maximized-window transient sidebar behavior.");
 		Assert(FocusEnhancedBehavior.ShouldReserveSidebar(StageMode.Focus, true, false, false),
@@ -728,6 +752,20 @@ internal static class TestRunner
 			"Standard mode lost its manual sidebar-collapse button.");
 		Assert(FocusEnhancedBehavior.ShouldIdleHide(StageMode.Coexist, true),
 			"Standard mode no longer respected its idle auto-hide setting.");
+		Assert(FocusEnhancedBehavior.ShouldRestoreAfterTransientSession(StageMode.Focus, false),
+			"Focus mode failed to restore its sidebar after a long full-screen session lost the transient visibility marker.");
+		Assert(!FocusEnhancedBehavior.ShouldRestoreAfterTransientSession(StageMode.Coexist, false),
+			"Standard mode restored a sidebar that was intentionally hidden before the transient session.");
+		var physicalDisplay = new Rectangle(0, 0, 2560, 1440);
+		var appBarReducedWorkArea = new Rectangle(271, 0, 2289, 1440);
+		Assert(FocusEnhancedBehavior.GetSidebarHostArea(StageMode.Focus, physicalDisplay, appBarReducedWorkArea) == physicalDisplay,
+			"Focus mode anchored its own sidebar to the AppBar-reduced work area instead of the physical left edge.");
+		Assert(FocusEnhancedBehavior.GetSidebarHostArea(StageMode.Coexist, physicalDisplay, appBarReducedWorkArea) == appBarReducedWorkArea,
+			"Standard mode stopped respecting the ordinary desktop work area.");
+		Assert(IgnoredApplicationPolicy.ShouldShowCard("demo", Array.Empty<string>()),
+			"A normal application was incorrectly removed from the card catalog.");
+		Assert(!IgnoredApplicationPolicy.ShouldShowCard("demo", new[] { "DEMO" }),
+			"An ignored application still generated a card.");
 	}
 
 	private static void FocusFullScreenClassification()

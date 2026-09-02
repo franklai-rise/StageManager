@@ -26,6 +26,7 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 	private readonly List<IntPtr> _winEventHooks = new();
 	private readonly object _hooksLock = new();
 	private readonly object _mouseMoveLock = new();
+	private readonly object _lifetimeLock = new();
 	private readonly IWindowClassifier _classifier;
 	private readonly VirtualDesktopService _virtualDesktops;
 	private readonly WinEventDelegate _hookDelegate;
@@ -56,12 +57,17 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 
 	public Task Start()
 	{
-		ObjectDisposedException.ThrowIf(_disposed, this);
-		if (_active)
-			return Task.CompletedTask;
-
-		_active = true;
-		_lifetime = new CancellationTokenSource();
+		CancellationTokenSource previousLifetime;
+		lock (_lifetimeLock)
+		{
+			ObjectDisposedException.ThrowIf(_disposed, this);
+			if (_active)
+				return Task.CompletedTask;
+			_active = true;
+			previousLifetime = _lifetime;
+			_lifetime = new CancellationTokenSource();
+		}
+		previousLifetime.Dispose();
 		_currentProcessId = Environment.ProcessId;
 
 		RegisterWinEventHook(Win32.EVENT_CONSTANTS.EVENT_OBJECT_DESTROY, Win32.EVENT_CONSTANTS.EVENT_OBJECT_HIDE);
@@ -79,13 +85,17 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 
 	public void Stop()
 	{
-		if (!_active)
-			return;
-
-		_active = false;
-		_lifetime.Cancel();
+		CancellationTokenSource lifetime;
+		lock (_lifetimeLock)
+		{
+			if (!_active)
+				return;
+			_active = false;
+			lifetime = _lifetime;
+		}
+		TryCancel(lifetime);
 		foreach (var pending in _pendingRegistrations.Values)
-			pending.Cancel();
+			TryCancel(pending);
 		_pendingRegistrations.Clear();
 
 		lock (_hooksLock)
@@ -100,11 +110,19 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 
 	public void Dispose()
 	{
-		if (_disposed)
-			return;
-		_disposed = true;
+		lock (_lifetimeLock)
+		{
+			if (_disposed)
+				return;
+		}
 		Stop();
-		_lifetime.Dispose();
+		lock (_lifetimeLock)
+		{
+			if (_disposed)
+				return;
+			_disposed = true;
+			_lifetime.Dispose();
+		}
 	}
 
 	public void ReevaluateWindows()
@@ -287,7 +305,18 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 	private void CancelRegistration(IntPtr handle)
 	{
 		if (_pendingRegistrations.TryRemove(handle, out var source))
+			TryCancel(source);
+	}
+
+	private static void TryCancel(CancellationTokenSource source)
+	{
+		try
+		{
 			source.Cancel();
+		}
+		catch (ObjectDisposedException)
+		{
+		}
 	}
 
 	private bool EventWindowIsValid(int idChild, Win32.OBJID idObject, IntPtr hwnd) =>

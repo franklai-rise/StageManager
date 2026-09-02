@@ -9,9 +9,12 @@ internal static class FocusEnhancedBehavior
 	public static bool UsesTransientSidebar(
 		StageMode mode,
 		bool maximizedOrFullScreen,
-		bool exclusiveFullScreen)
+		bool exclusiveFullScreen,
+		bool managedForeground = true)
 	{
-		return mode == StageMode.Focus ? exclusiveFullScreen : maximizedOrFullScreen;
+		return mode == StageMode.Focus
+			? managedForeground && exclusiveFullScreen
+			: maximizedOrFullScreen;
 	}
 
 	public static bool ShouldReserveSidebar(
@@ -34,6 +37,16 @@ internal static class FocusEnhancedBehavior
 	public static bool ShouldShowCollapseButton(StageMode mode)
 	{
 		return mode != StageMode.Focus;
+	}
+
+	public static bool ShouldRestoreAfterTransientSession(StageMode mode, bool wasVisibleBeforeSession)
+	{
+		return mode == StageMode.Focus || wasVisibleBeforeSession;
+	}
+
+	public static Rectangle GetSidebarHostArea(StageMode mode, Rectangle displayBounds, Rectangle workingArea)
+	{
+		return mode == StageMode.Focus ? displayBounds : workingArea;
 	}
 
 	public static int CalculateReservedWidth(float sidebarInteractionWidth, float dpiScale, int displayWidth)

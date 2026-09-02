@@ -4,7 +4,8 @@ internal enum MultiWindowCardClickAction
 {
 	SelectWindow,
 	Expand,
-	Collapse
+	Collapse,
+	KeepExpanded
 }
 
 internal static class MultiWindowCardInteraction
@@ -14,13 +15,27 @@ internal static class MultiWindowCardInteraction
 	public static bool ShouldExpandOnHover(int windowCount, bool isExpandedStage, bool isPrimaryCard) =>
 		windowCount > 1 && !isExpandedStage && isPrimaryCard;
 
-	public static bool ShouldCollapseOnPointerLeave(bool expandedByHover, bool pinned, TimeSpan elapsedSinceCard)
-		=> expandedByHover && !pinned && elapsedSinceCard >= HoverCollapseDelay;
+	public static bool ShouldCollapseOnPointerLeave(bool pinned, TimeSpan elapsedSinceCard)
+		=> !pinned && elapsedSinceCard >= HoverCollapseDelay;
 
-	public static MultiWindowCardClickAction Decide(int windowCount, bool isExpandedStage, bool isPrimaryCard)
+	public static bool CanCollapseExpandedStage(bool pinned, bool force)
+		=> !pinned || force;
+
+	public static MultiWindowCardClickAction Decide(
+		int windowCount,
+		bool isExpandedStage,
+		bool isPrimaryCard,
+		bool hasPinnedExpandedStage = false)
 	{
 		if (windowCount <= 1)
 			return MultiWindowCardClickAction.SelectWindow;
+		if (hasPinnedExpandedStage)
+		{
+			if (isExpandedStage && isPrimaryCard)
+				return MultiWindowCardClickAction.KeepExpanded;
+			if (!isExpandedStage)
+				return MultiWindowCardClickAction.SelectWindow;
+		}
 		if (!isExpandedStage)
 			return MultiWindowCardClickAction.Expand;
 		return isPrimaryCard

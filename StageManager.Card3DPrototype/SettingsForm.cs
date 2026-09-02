@@ -48,7 +48,7 @@ internal sealed class SettingsForm : Form
 
 		Controls.Add(new Label
 		{
-			Text = "Stage_Manager_Lai v4.2.6",
+			Text = "Stage_Manager_Lai v4.2.10",
 			Font = new Font("Segoe UI", 17f, FontStyle.Bold),
 			AutoSize = true,
 			Location = new Point(22, 18)
@@ -185,7 +185,7 @@ internal sealed class SettingsForm : Form
 		shortcutsGroup.Controls.AddRange(new Control[] { _toggleSidebarHotkey, _previousStageHotkey, _nextStageHotkey });
 
 		var ignoredGroup = CreateGroup("Ignored applications", new Rectangle(20, 753, 580, 192));
-		ignoredGroup.Controls.Add(CreateLabel("Check a running app to hide it; no .exe name is required.", 18, 25, 540));
+		ignoredGroup.Controls.Add(CreateLabel("Check an app to hide its card only; the app remains fully usable.", 18, 25, 540));
 		_ignoredApplications = new CheckedListBox
 		{
 			CheckOnClick = true,

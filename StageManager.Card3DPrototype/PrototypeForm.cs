@@ -50,6 +50,7 @@ internal sealed class PrototypeForm : Form
 	private DateTime _lastSidebarInteractionUtc = DateTime.UtcNow;
 	private DateTime _transientRevealUtc = DateTime.MinValue;
 	private DateTime _nextFocusConstraintUtc = DateTime.MinValue;
+	private DateTime _nextFocusAnchorCheckUtc = DateTime.MinValue;
 	private volatile bool _sidebarVisible = true;
 	private bool _transientSession;
 	private bool _edgeRevealSession;
@@ -88,7 +89,7 @@ internal sealed class PrototypeForm : Form
 			() => _renderer?.RefreshAllPreviews());
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => RunAfterContextMenuCloses(_contextMenu, Close);
-		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v4.2.6") { Enabled = false });
+		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v4.2.10") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(refreshItem);
@@ -210,11 +211,13 @@ internal sealed class PrototypeForm : Form
 		UpdateWindowRegion(true);
 
 		var target = _renderer.HitTest(e.Location) ?? initialTarget;
-		Cursor = target.IsPinButton || target.IsExplorerButton || target.IsSidebarCollapseButton || target.PageDelta != 0
+		Cursor = target.IsPinButton || target.IsExplorerButton || target.IsExpandAllButton || target.IsSidebarCollapseButton || target.PageDelta != 0
 			? Cursors.Hand
 			: Cursors.Default;
 		UpdateHoverExpandCandidate(target);
-		var toolTipKey = target.IsExplorerButton
+		var toolTipKey = target.IsExpandAllButton
+			? "sidebar:expand-all"
+			: target.IsExplorerButton
 			? "sidebar:explorer"
 			: target.IsPinButton
 				? $"pin:{target.StageKey}:{_renderer.IsExpandedStagePinned}"
@@ -245,7 +248,7 @@ internal sealed class PrototypeForm : Form
 		if (e.Button == MouseButtons.Right)
 		{
 			var target = _renderer?.HitTest(e.Location);
-			if (target is not null && !target.IsExplorerButton && !target.IsPinButton && !target.IsSidebarCollapseButton && target.PageDelta == 0)
+			if (target is not null && !target.IsExplorerButton && !target.IsExpandAllButton && !target.IsPinButton && !target.IsSidebarCollapseButton && target.PageDelta == 0)
 				ShowCardContextMenu(target);
 			else
 				ShowOwnedContextMenu(_contextMenu);
@@ -735,6 +738,8 @@ internal sealed class PrototypeForm : Form
 	{
 		if (target.IsExplorerButton)
 			return L("Open File Explorer", "打开文件资源管理器");
+		if (target.IsExpandAllButton)
+			return L("Expand or collapse all multi-window cards", "展开或收起全部多窗口卡片");
 		if (target.IsPinButton)
 			return _renderer?.IsExpandedStagePinned == true
 				? L("FIXED · Click to release", "FIXED · 点击解除固定")
@@ -920,13 +925,15 @@ internal sealed class PrototypeForm : Form
 		var mode = _catalog?.Settings.Current.StageMode ?? StageMode.Coexist;
 		if (mode == StageMode.Focus)
 		{
+			var managedForeground = _catalog?.IsManagedWindow(foregroundWindow) == true;
 			var isExclusiveFullScreen = FullScreenService.IsExclusiveFullScreenOn(
 				foregroundWindow,
 				_sidebarDisplay);
 			return FocusEnhancedBehavior.UsesTransientSidebar(
 				mode,
 				maximizedOrFullScreen: isExclusiveFullScreen,
-				exclusiveFullScreen: isExclusiveFullScreen);
+				exclusiveFullScreen: isExclusiveFullScreen,
+				managedForeground: managedForeground);
 		}
 
 		var isMaximizedOrFullScreen = FullScreenService.UsesTransientSidebarOn(
@@ -1013,6 +1020,7 @@ internal sealed class PrototypeForm : Form
 		var foreground = NativeMethods.GetForegroundWindow();
 		var largeWindowActive = UsesTransientSidebar(foreground);
 		UpdateTransientSession(largeWindowActive, nowUtc);
+		EnsureFocusSidebarAnchored(largeWindowActive, nowUtc);
 		if (!_sidebarVisible)
 		{
 			if (pointerAtLeftEdge)
@@ -1173,7 +1181,8 @@ internal sealed class PrototypeForm : Form
 			return;
 		_transientSession = false;
 		SetTransientOverlayRaised(false);
-		if (_sidebarWasVisibleBeforeTransientSession)
+		var mode = _catalog?.Settings.Current.StageMode ?? StageMode.Coexist;
+		if (FocusEnhancedBehavior.ShouldRestoreAfterTransientSession(mode, _sidebarWasVisibleBeforeTransientSession))
 		{
 			_edgeRevealSession = false;
 			if (!_sidebarVisible)
@@ -1279,20 +1288,20 @@ internal sealed class PrototypeForm : Form
 
 	private Rectangle GetSidebarArea(Screen display)
 	{
-		var workingArea = display.WorkingArea;
-		var left = workingArea.Left;
-		if (IsFocusEnhanced &&
-			_focusAppBarReservation.IsRegistered &&
-			string.Equals(
-				_focusAppBarReservation.DisplayDeviceName,
-				display.DeviceName,
-				StringComparison.OrdinalIgnoreCase))
-		{
-			left = _focusAppBarReservation.ReservedBounds.Left;
-		}
+		var mode = _catalog?.Settings.Current.StageMode ?? StageMode.Coexist;
+		return FocusEnhancedBehavior.GetSidebarHostArea(mode, display.Bounds, display.WorkingArea);
+	}
 
-		var right = Math.Max(left + 1, workingArea.Right);
-		return Rectangle.FromLTRB(left, workingArea.Top, right, workingArea.Bottom);
+	private void EnsureFocusSidebarAnchored(bool largeWindowActive, DateTime nowUtc)
+	{
+		if (!IsFocusEnhanced || largeWindowActive || nowUtc < _nextFocusAnchorCheckUtc)
+			return;
+		_nextFocusAnchorCheckUtc = nowUtc.AddSeconds(1);
+		var physicalBounds = _sidebarDisplay.Bounds;
+		if (Left != physicalBounds.Left || Top != physicalBounds.Top || Height != physicalBounds.Height)
+			UpdateSidebarDisplay(force: true);
+		if (!_sidebarVisible)
+			SetSidebarVisible(true);
 	}
 
 	private void UpdateSidebarDisplay(bool force = false)
@@ -1353,7 +1362,7 @@ internal sealed class PrototypeForm : Form
 		var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 		_trayIcon = new NotifyIcon
 		{
-			Text = "Stage_Manager_Lai v4.2.6",
+			Text = "Stage_Manager_Lai v4.2.10",
 			Icon = icon,
 			ContextMenuStrip = _contextMenu,
 			Visible = true

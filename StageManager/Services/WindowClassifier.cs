@@ -72,8 +72,6 @@ public sealed class WindowClassifier : IWindowClassifier
 			return Reject($"protected class {window.Class}", out reason);
 		if (ProtectedProcesses.Contains(window.ProcessName) && !IsExplorerFolderWindow(window))
 			return Reject($"protected process {window.ProcessName}", out reason);
-		if (_settings.Current.IgnoredProcesses.Exists(name => string.Equals(name, window.ProcessName, StringComparison.OrdinalIgnoreCase)))
-			return Reject($"user ignored process {window.ProcessName}", out reason);
 		if (!Win32Helper.IsAppWindow(window.Handle) || !Win32Helper.IsAltTabWindow(window.Handle))
 			return Reject("tool, owned, child, or non-activating window", out reason);
 		if (Win32Helper.IsCloaked(window.Handle) && _virtualDesktops.IsWindowOnCurrentDesktop(window.Handle))

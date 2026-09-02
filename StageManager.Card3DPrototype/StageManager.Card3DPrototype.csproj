@@ -7,14 +7,14 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 	<ApplicationIcon>..\StageManager\StageManager.ico</ApplicationIcon>
-		<AssemblyName>Stage_Manager_Lai_v4.2.6</AssemblyName>
+		<AssemblyName>Stage_Manager_Lai_v4.2.10</AssemblyName>
     <RootNamespace>StageManager.Card3DPrototype</RootNamespace>
-		<Version>4.2.6</Version>
-		<AssemblyVersion>4.2.6.0</AssemblyVersion>
-		<FileVersion>4.2.6.0</FileVersion>
-		<InformationalVersion>Stage_Manager_Lai_v4.2.6</InformationalVersion>
+		<Version>4.2.10</Version>
+		<AssemblyVersion>4.2.10.0</AssemblyVersion>
+		<FileVersion>4.2.10.0</FileVersion>
+		<InformationalVersion>Stage_Manager_Lai_v4.2.10</InformationalVersion>
 	<IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-		<Product>Stage_Manager_Lai_v4.2.6</Product>
+		<Product>Stage_Manager_Lai_v4.2.10</Product>
 	<Authors>Andreas Wäscher; Frank Lai (modified fork)</Authors>
 	<Description>Stage Manager for Windows with low-memory 3D window cards, Focus enhanced workspace reservation, stable click targeting, adjustable card positioning, and optional Explorer and expanded-card pin buttons.</Description>
 	<Copyright>Original copyright (c) 2022 Andreas Wäscher; Lai modifications (c) 2026 Frank Lai</Copyright>

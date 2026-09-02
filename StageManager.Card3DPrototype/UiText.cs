@@ -35,7 +35,7 @@ internal static class UiText
 			["Previous card"] = "上一张卡片",
 			["Next card"] = "下一张卡片",
 			["Ignored applications"] = "已忽略的应用",
-			["Check a running app to hide it; no .exe name is required."] = "勾选正在运行的应用即可隐藏，无需填写 .exe 文件名。",
+			["Check an app to hide its card only; the app remains fully usable."] = "勾选后只隐藏该应用的卡片，应用本身仍可正常打开和使用。",
 			["Advanced: process names (optional)"] = "高级：进程名称（可选）",
 			["Reset defaults"] = "恢复默认设置",
 			["Cancel"] = "取消",
