@@ -1,5 +1,6 @@
 using StageManager.Native.Window;
 using StageManager.Settings;
+using StageManager.Card3DPrototype.NotificationArea;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Numerics;
@@ -25,6 +26,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private readonly SidebarExpandAllButtonVisual _expandAllButton;
 	private readonly SidebarExplorerButtonVisual _explorerButton;
 	private readonly SidebarCollapseButtonVisual _collapseButton;
+	private readonly NotificationTrayCardVisual _notificationAreaCard;
 	private readonly Dictionary<string, StageCardVisual> _stages = new(StringComparer.OrdinalIgnoreCase);
 	private readonly System.Windows.Forms.Timer _captureTimer;
 	private readonly object _captureGate = new();
@@ -59,6 +61,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private bool _collapseButtonEnabled = true;
 	private bool _collapseButtonHovered;
 	private bool _collapseRequested;
+	// Start disabled and let persisted settings explicitly attach the footer.
+	// This avoids relying on the constructor/first-resize ordering of the
+	// DesktopWindowTarget visual tree after a cold launch.
+	private bool _notificationAreaCardEnabled;
+	private bool _notificationAreaOpenRequested;
+	private NotificationIconActivation? _notificationIconActivationRequest;
 	private float _preferenceScale;
 	private int _sidebarVerticalOffset = DefaultSidebarVerticalOffset;
 	private int _previewRefreshMinutes = WindowCapturePolicy.DefaultRefreshMinutes;
@@ -76,9 +84,11 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_expandAllButton = new SidebarExpandAllButtonVisual(_compositor);
 		_explorerButton = new SidebarExplorerButtonVisual(_compositor);
 		_collapseButton = new SidebarCollapseButtonVisual(_compositor);
+		_notificationAreaCard = new NotificationTrayCardVisual(_compositor, _graphics);
 		_cameraRoot.Children.InsertAtTop(_expandAllButton.Root);
 		_cameraRoot.Children.InsertAtTop(_explorerButton.Root);
 		_cameraRoot.Children.InsertAtTop(_collapseButton.Root);
+		_cameraRoot.Children.InsertAtTop(_notificationAreaCard.Root);
 		_captureTimer = new System.Windows.Forms.Timer { Interval = 350 };
 		_captureTimer.Tick += (_, _) => ScheduleCaptures();
 		_captureTimer.Start();
@@ -96,8 +106,25 @@ internal sealed class CompositionStageRenderer : IDisposable
 	public void ReleasePointerPress()
 	{
 		_expandAllButton.SetPressed(false);
+		_notificationAreaCard.SetPressed(false);
 		if (_expandedStageKey is not null && _stages.TryGetValue(_expandedStageKey, out var stage))
 			stage.PinButton.SetPressed(false);
+	}
+
+	public NotificationIconActivation? ConsumeNotificationIconActivationRequest()
+	{
+		var request = _notificationIconActivationRequest;
+		_notificationIconActivationRequest = null;
+		_notificationAreaCard.SetPressed(false);
+		return request;
+	}
+
+	public bool ConsumeNotificationAreaOpenRequest()
+	{
+		var requested = _notificationAreaOpenRequested;
+		_notificationAreaOpenRequested = false;
+		_notificationAreaCard.SetPressed(false);
+		return requested;
 	}
 
 	public bool ConsumeExplorerLaunchRequest()
@@ -162,6 +189,26 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_collapseButton.SetVisible(false);
 		LayoutStages(true);
 		return true;
+	}
+
+	public bool SetNotificationAreaCardEnabled(bool enabled)
+	{
+		if (_notificationAreaCardEnabled == enabled)
+			return false;
+		_notificationAreaCardEnabled = enabled;
+		_notificationAreaOpenRequested = false;
+		_notificationIconActivationRequest = null;
+		_notificationAreaCard.SetPressed(false);
+		_notificationAreaCard.SetHovered(null);
+		_notificationAreaCard.SetVisible(false);
+		LayoutStages(true);
+		return true;
+	}
+
+	public void UpdateNotificationAreaIcons(IReadOnlyList<NotificationIconSnapshot> icons)
+	{
+		_notificationAreaCard.UpdateIcons(icons);
+		LayoutStages(true);
 	}
 
 	public bool SetPinButtonEnabled(bool enabled)
@@ -231,6 +278,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 		SetExplorerButtonHovered(false);
 		_collapseButton.SetPressed(false);
 		SetCollapseButtonHovered(false);
+		_notificationAreaCard.SetPressed(false);
+		_notificationAreaCard.SetHovered(null);
 		SetPinButtonHovered(false);
 		_cameraRoot.StopAnimation(nameof(Visual.Offset));
 		_cameraRoot.Offset = target;
@@ -389,7 +438,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 		SetExpandAllButtonHovered(hit.IsExpandAllButton);
 		SetCollapseButtonHovered(hit.IsSidebarCollapseButton);
 		SetPinButtonHovered(hit.IsPinButton);
-		if (hit.IsSidebarCollapseButton || hit.IsExpandAllButton)
+		SetNotificationAreaHovered(hit);
+		if (hit.IsSidebarCollapseButton || hit.IsExpandAllButton || hit.IsNotificationAreaCard)
 			return;
 		if (!_expandAllStages && _expandedStageKey is not null &&
 			!_expandedPinned &&
@@ -404,8 +454,9 @@ internal sealed class CompositionStageRenderer : IDisposable
 			SetExpandAllButtonHovered(hit.IsExpandAllButton);
 			SetCollapseButtonHovered(hit.IsSidebarCollapseButton);
 			SetPinButtonHovered(hit.IsPinButton);
+			SetNotificationAreaHovered(hit);
 		}
-		if (hit.IsExplorerButton || hit.IsExpandAllButton || hit.IsPinButton)
+		if (hit.IsExplorerButton || hit.IsExpandAllButton || hit.IsPinButton || hit.IsNotificationAreaCard)
 			return;
 		if (_expandedStageKey is null ||
 			!string.Equals(_expandedStageKey, hit.StageKey, StringComparison.OrdinalIgnoreCase))
@@ -437,6 +488,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 			SetExpandAllButtonHovered(hit.IsExpandAllButton);
 			SetCollapseButtonHovered(hit.IsSidebarCollapseButton);
 			SetPinButtonHovered(hit.IsPinButton);
+			SetNotificationAreaHovered(hit);
 			if (!_expandAllStages && _expandedStageKey is not null &&
 				!_expandedPinned &&
 				!string.Equals(_expandedStageKey, hit.StageKey, StringComparison.OrdinalIgnoreCase))
@@ -449,6 +501,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		SetExpandAllButtonHovered(false);
 		SetCollapseButtonHovered(false);
 		SetPinButtonHovered(false);
+		_notificationAreaCard.SetHovered(null);
 		var elapsedSinceCard = DateTime.UtcNow - _lastPointerInsideUtc;
 		if (elapsedSinceCard < TimeSpan.FromMilliseconds(500))
 			return;
@@ -481,6 +534,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 			target.IsExpandAllButton ||
 			target.IsExplorerButton ||
 			target.IsPinButton ||
+			target.IsNotificationAreaCard ||
 			target.IsSidebarCollapseButton ||
 			target.PageDelta != 0 ||
 			!_stages.TryGetValue(target.StageKey, out var stage))
@@ -528,6 +582,15 @@ internal sealed class CompositionStageRenderer : IDisposable
 		{
 			_collapseRequested = true;
 			_collapseButton.SetPressed(true);
+			return null;
+		}
+		if (hit.IsNotificationAreaCard)
+		{
+			_notificationAreaCard.SetPressed(true);
+			if (hit.NotificationIcon is { } activation)
+				_notificationIconActivationRequest = activation;
+			else
+				_notificationAreaOpenRequested = true;
 			return null;
 		}
 		if (hit.PageDelta != 0)
@@ -640,6 +703,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_expandAllButton.Dispose();
 		_explorerButton.Dispose();
 		_collapseButton.Dispose();
+		_notificationAreaCard.Dispose();
 		lock (_captureGate)
 		{
 			if (_capturesInFlight.Count == 0)
@@ -670,14 +734,18 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_expandAllButton.SetLayout(_dpiScale, CardSize.X);
 		_explorerButton.SetLayout(_dpiScale, CardSize.X);
 		_collapseButton.SetLayout(_dpiScale, CardSize.X);
+		_notificationAreaCard.SetLayout(_dpiScale, CardSize.X);
 		var headerCardGap = 12f * _dpiScale;
 		var headerHeight = _expandAllButton.Size.Y + headerCardGap +
 			(_explorerButtonEnabled ? _explorerButton.Size.Y + headerCardGap : 0f);
 		var footerMargin = 10f * _dpiScale;
 		var footerCardGap = 12f * _dpiScale;
-		var footerHeight = _collapseButtonEnabled
-			? footerCardGap + _collapseButton.Size.Y + footerMargin
-			: footerMargin;
+		var notificationFooterHeight = _notificationAreaCardEnabled
+			? _notificationAreaCard.Size.Y + footerCardGap
+			: 0f;
+		var footerHeight = footerMargin + notificationFooterHeight + (_collapseButtonEnabled
+			? footerCardGap + _collapseButton.Size.Y
+			: 0f);
 		var cardViewportHeight = Math.Max(CardSize.Y + 24f * _dpiScale, _viewportHeight - footerHeight);
 		var cardSize = CardSize;
 		var stride = cardSize.Y + Gap;
@@ -740,8 +808,13 @@ internal sealed class CompositionStageRenderer : IDisposable
 				: Math.Max(lowestVisibleCardBottom, stageOffset.Y + stageVisualHeight * stageScale);
 			currentY += stride + stageExpandedExtraHeight;
 		}
+		var notificationAreaTop = _notificationAreaCardEnabled
+			? LayoutNotificationAreaCard()
+			: float.NaN;
+		if (!_notificationAreaCardEnabled)
+			_notificationAreaCard.SetVisible(false);
 		if (_collapseButtonEnabled)
-			LayoutCollapseButton(lowestVisibleCardBottom);
+			LayoutCollapseButton(lowestVisibleCardBottom, notificationAreaTop);
 		else
 			_collapseButton.SetVisible(false);
 		LayoutRevision++;
@@ -805,7 +878,55 @@ internal sealed class CompositionStageRenderer : IDisposable
 		return y + _explorerButton.Size.Y;
 	}
 
-	private void LayoutCollapseButton(float lowestVisibleCardBottom)
+	private float LayoutNotificationAreaCard()
+	{
+		_cameraRoot.Children.Remove(_notificationAreaCard.Root);
+		_cameraRoot.Children.InsertAtTop(_notificationAreaCard.Root);
+		var margin = 10f * _dpiScale;
+		var x = 12f * _dpiScale;
+		var y = Math.Max(margin, _viewportHeight - _notificationAreaCard.Size.Y - margin);
+		_notificationAreaCard.SetOffset(new Vector3(x, y, 0));
+		_notificationAreaCard.SetVisible(true);
+		var cameraCenter = new Vector2(_viewportWidth / 2f, _viewportHeight / 2f);
+		var polygon = Card3DGeometry.ProjectCard(
+			new Vector3(x, y, 0),
+			1f,
+			Vector3.Zero,
+			Vector3.One,
+			_notificationAreaCard.Angle,
+			_notificationAreaCard.Size,
+			_notificationAreaCard.Pivot,
+			cameraCenter,
+			PerspectiveDistance * _dpiScale);
+		_hitTargets.Add(new CardHitTarget(
+			"__notification_area__",
+			null,
+			polygon,
+			int.MaxValue - 4,
+			IsNotificationAreaCard: true));
+		foreach (var slot in _notificationAreaCard.Slots)
+		{
+			var bounds = slot.Bounds;
+			var iconPolygon = new[]
+			{
+				new Vector2(x + bounds.Left, y + bounds.Top),
+				new Vector2(x + bounds.Right, y + bounds.Top),
+				new Vector2(x + bounds.Right, y + bounds.Bottom),
+				new Vector2(x + bounds.Left, y + bounds.Bottom)
+			};
+			_hitTargets.Add(new CardHitTarget(
+				"__notification_area__",
+				null,
+				iconPolygon,
+				int.MaxValue - 3,
+				IsNotificationAreaCard: true,
+				NotificationIcon: slot.Activation,
+				NotificationIconName: slot.Name));
+		}
+		return y;
+	}
+
+	private void LayoutCollapseButton(float lowestVisibleCardBottom, float notificationAreaTop)
 	{
 		if (!_collapseButtonEnabled)
 		{
@@ -817,7 +938,9 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var margin = 10f * _dpiScale;
 		var cardGap = 12f * _dpiScale;
 		var footerHeight = _collapseButton.Size.Y;
-		var maximumButtonY = Math.Max(margin, _viewportHeight - footerHeight - margin);
+		var maximumButtonY = float.IsNaN(notificationAreaTop)
+			? Math.Max(margin, _viewportHeight - footerHeight - margin)
+			: Math.Max(margin, notificationAreaTop - cardGap - footerHeight);
 		var preferredButtonY = float.IsNaN(lowestVisibleCardBottom)
 			? maximumButtonY + _sidebarVerticalOffset * _dpiScale
 			: lowestVisibleCardBottom + cardGap;
@@ -869,6 +992,14 @@ internal sealed class CompositionStageRenderer : IDisposable
 			return;
 		_expandAllButtonHovered = hovered;
 		_expandAllButton.SetHovered(hovered);
+	}
+
+	private void SetNotificationAreaHovered(CardHitTarget? target)
+	{
+		var activation = target is { IsNotificationAreaCard: true }
+			? target.NotificationIcon
+			: null;
+		_notificationAreaCard.SetHovered(activation);
 	}
 
 	private void SetPinButtonHovered(bool hovered)
@@ -1227,7 +1358,10 @@ internal sealed record CardHitTarget(
 	bool IsSidebarCollapseButton = false,
 	bool IsExplorerButton = false,
 	bool IsExpandAllButton = false,
-	bool IsPinButton = false);
+	bool IsPinButton = false,
+	bool IsNotificationAreaCard = false,
+	NotificationIconActivation? NotificationIcon = null,
+	string? NotificationIconName = null);
 
 internal sealed class StageCardVisual : IDisposable
 {

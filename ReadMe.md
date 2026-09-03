@@ -1,4 +1,4 @@
-# Stage_Manager_Lai v4.2.10
+# Stage_Manager_Lai v4.3.1
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -194,6 +194,16 @@ dot, underline and press animation remain for redundant visual feedback.
 
 v4.2.10 permanently anchors the Focus host window to the physical left edge instead of the AppBar-reduced work area,
 and adds a one-second invariant check that restores the sidebar after full-screen transitions move it aside.
+
+v4.2.11 closes card and tray menus when the user clicks anywhere outside them, including another application's window.
+Double-clicking a real window card now restores and maximizes that exact window; centering remains an explicit card-menu
+command, and the same menu includes a new maximize command for individual windows or complete application groups.
+
+v4.3.1 rebuilds the optional bottom hidden-icons card around the real Windows 11 overflow panel instead of registry history
+or executable-file icons. A short-lived isolated worker captures each native icon at its current system pixel size, while
+the fixed square frame follows the same rounded `-7.5 degree` perspective as the main cards. Icons stay upright and are
+placed on a clean adaptive grid without circular badges or forced resizing. Clicking a named icon invokes that exact
+accessible tray item; the card menu can refresh the snapshot or open the native Windows panel.
 
 v4.2.9 makes Focus persistent after long exclusive full-screen sessions, moves user-ignored applications to a
 card-only filter so their windows remain launchable and usable, fixes a window-tracker disposal race, and uses a

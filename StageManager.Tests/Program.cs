@@ -1,5 +1,6 @@
 using StageManager;
 using StageManager.Card3DPrototype;
+using StageManager.Card3DPrototype.NotificationArea;
 using StageManager.Model;
 using StageManager.Native.Window;
 using StageManager.Services;
@@ -31,6 +32,8 @@ internal static class TestRunner
 		RunTest("Prototype stage slots do not jump after activation", PrototypeStageSlotsStayStable);
 		RunTest("Prototype child-window slots do not jump after activation", PrototypeChildWindowSlotsStayStableAfterActivation);
 		RunTest("Prototype card click toggles only the selected foreground window", PrototypeClickToggle);
+		RunTest("Pointer button transitions detect outside clicks without repeating held input", PointerButtonTransitions);
+		RunTest("Notification-area icons keep native sizes in a non-overlapping grid", NotificationTrayIconLayout);
 		RunTest("Multi-window child selection stays expanded until the primary card is clicked", MultiWindowCardClicking);
 		RunTest("Only collapsed multi-window primary cards arm hover expansion", MultiWindowHoverExpansion);
 		RunTest("Expanded application groups keep every real window available", ExpandedApplicationGroupPaging);
@@ -126,7 +129,7 @@ internal static class TestRunner
 				}
 				""");
 			var service = new SettingsService(path);
-			Assert(service.Current.SchemaVersion == 11, "Settings schema was not upgraded for the expanded-card pin button.");
+			Assert(service.Current.SchemaVersion == 12, "Settings schema was not upgraded for the notification-area card.");
 			Assert(service.Current.LowMemoryRendering, "Low-memory rendering should be enabled by default.");
 			Assert(!service.Current.IgnoredProcesses.Contains("explorer", StringComparer.OrdinalIgnoreCase),
 				"The legacy default Explorer ignore entry was not migrated.");
@@ -135,7 +138,7 @@ internal static class TestRunner
 			Assert(service.Current.IgnoredProcesses.Contains("custom-app", StringComparer.OrdinalIgnoreCase),
 				"A user-selected ignored process was lost during migration.");
 			var migratedJson = File.ReadAllText(path);
-			Assert(migratedJson.Contains("\"SchemaVersion\": 11", StringComparison.Ordinal),
+			Assert(migratedJson.Contains("\"SchemaVersion\": 12", StringComparison.Ordinal),
 				"The migrated schema was not written back to disk.");
 			Assert(!migratedJson.Contains("\"explorer\"", StringComparison.OrdinalIgnoreCase),
 				"The legacy Explorer ignore entry remained in the persisted settings.");
@@ -151,6 +154,7 @@ internal static class TestRunner
 			Assert(service.Current.SidebarVerticalOffset == -80, "The sidebar should default to 80 pixels above center.");
 			Assert(service.Current.ShowExplorerButton, "The Explorer quick button should be enabled by default.");
 			Assert(service.Current.ShowExpandedPinButton, "The expanded-card pin button should be enabled by default.");
+			Assert(service.Current.ShowNotificationAreaCard, "The notification-area card should be enabled by default.");
 			var settings = service.CloneCurrent();
 			settings.CardScale = 99;
 			settings.SidebarVerticalOffset = 999;
@@ -162,12 +166,14 @@ internal static class TestRunner
 			settings.UsePerspectiveCards = false;
 			settings.ShowExplorerButton = false;
 			settings.ShowExpandedPinButton = false;
+			settings.ShowNotificationAreaCard = false;
 			settings.IgnoredProcesses = new List<string> { "yuanbao", "YuanBao", "  explorer  " };
 			service.Apply(settings);
 			Assert(service.Current.CardScale == 1.25, "Maximum card scale was not clamped.");
 			Assert(service.Current.SidebarVerticalOffset == 400, "Maximum sidebar vertical offset was not clamped.");
 			Assert(!service.Current.ShowExplorerButton, "The Explorer quick button preference was not persisted.");
 			Assert(!service.Current.ShowExpandedPinButton, "The expanded-card pin button preference was not persisted.");
+			Assert(!service.Current.ShowNotificationAreaCard, "The notification-area card preference was not persisted.");
 			settings = service.CloneCurrent();
 			settings.CardScale = 0;
 			settings.SidebarVerticalOffset = -999;
@@ -378,6 +384,41 @@ internal static class TestRunner
 			"A minimized window should be restored instead of minimized again.");
 		Assert(WindowClickBehavior.Decide(selected, IntPtr.Zero, false, false) == WindowClickAction.Ignore,
 			"A destroyed window should not trigger another application.");
+	}
+
+	private static void PointerButtonTransitions()
+	{
+		var wasDown = false;
+		Assert(PointerButtonTransition.DidStart(unchecked((short)0x8000), ref wasDown),
+			"The first button-down sample was not detected.");
+		Assert(!PointerButtonTransition.DidStart(unchecked((short)0x8000), ref wasDown),
+			"A held pointer button generated repeated clicks.");
+		Assert(!PointerButtonTransition.DidStart(0, ref wasDown) && !wasDown,
+			"The pointer button release was not recorded.");
+		Assert(PointerButtonTransition.DidStart(1, ref wasDown),
+			"A short click occurring between timer samples was not detected.");
+	}
+
+	private static void NotificationTrayIconLayout()
+	{
+		var sizes = Enumerable.Range(0, 16)
+			.Select(index => index % 2 == 0 ? new Size(20, 20) : new Size(24, 24))
+			.ToArray();
+		var rectangles = NotificationTrayLayout.Arrange(new Size(156, 156), sizes);
+		Assert(rectangles.Count == 16, "The bottom card did not retain all 16 supported icons.");
+		for (var index = 0; index < rectangles.Count; index++)
+		{
+			Assert(rectangles[index].Size == sizes[index], "A notification icon was resized by the card layout.");
+			Assert(new Rectangle(Point.Empty, new Size(156, 156)).Contains(rectangles[index]),
+				"A notification icon escaped the bottom card.");
+			for (var previous = 0; previous < index; previous++)
+				Assert(!rectangles[index].IntersectsWith(rectangles[previous]), "Notification icons overlap.");
+		}
+		var incompleteGrid = NotificationTrayLayout.Arrange(new Size(156, 156), sizes.Take(14).ToArray());
+		Assert(incompleteGrid[12].Left > incompleteGrid[8].Left,
+			"The incomplete final icon row was not centered.");
+		Assert(NotificationTrayLayout.Arrange(new Size(156, 156), []).Count == 0,
+			"An empty notification area produced phantom icon slots.");
 	}
 
 	private static void MultiWindowCardClicking()

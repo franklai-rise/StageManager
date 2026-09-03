@@ -10,7 +10,7 @@ namespace StageManager.Settings;
 
 public sealed class SettingsService
 {
-	private const int CurrentSchemaVersion = 11;
+	private const int CurrentSchemaVersion = 12;
 	private readonly JsonSerializerOptions _jsonOptions = new()
 	{
 		WriteIndented = true,

@@ -1,6 +1,7 @@
 using StageManager.Services;
 using StageManager.Settings;
 using StageManager.Native.Window;
+using StageManager.Card3DPrototype.NotificationArea;
 using Microsoft.Win32;
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
@@ -23,6 +24,8 @@ internal sealed class PrototypeForm : Form
 	private const int NextStageHotkeyId = 0x4C43;
 	private const int EdgeActivationWidth = 8;
 	private const int VirtualKeyLeftButton = 0x01;
+	private const int VirtualKeyRightButton = 0x02;
+	private const int VirtualKeyMiddleButton = 0x04;
 	private const int HoverExpandDelayMilliseconds = 350;
 	private readonly DispatcherQueueHelper _dispatcherQueue = new();
 	private readonly System.Windows.Forms.Timer _stageTimer = new() { Interval = 500 };
@@ -37,6 +40,8 @@ internal sealed class PrototypeForm : Form
 	private readonly ContextMenuStrip _cardContextMenu = new() { AutoClose = true };
 	private readonly InitialWindowLayoutMemory _initialWindowLayouts = new();
 	private readonly FocusAppBarReservation _focusAppBarReservation = new();
+	private readonly NotificationAreaClient _notificationAreaClient = new();
+	private readonly CancellationTokenSource _notificationAreaCancellation = new();
 	private readonly HashSet<int> _registeredHotkeys = new();
 	private Screen _sidebarDisplay;
 	private Rectangle _sidebarScreenBounds;
@@ -60,7 +65,9 @@ internal sealed class PrototypeForm : Form
 	private volatile bool _closing;
 	private int _hiddenEdgeUiRequestPending;
 	private bool _appBarReapplyPending;
-	private CardClickContext? _lastCardClick;
+	private bool _leftPointerButtonDown;
+	private bool _rightPointerButtonDown;
+	private bool _middlePointerButtonDown;
 	private string? _hoverExpandStageKey;
 	private bool IsFocusEnhanced => _catalog?.Settings.Current.StageMode == StageMode.Focus;
 	private UiLanguage CurrentLanguage => _catalog?.Settings.Current.UiLanguage ?? UiLanguage.English;
@@ -89,7 +96,7 @@ internal sealed class PrototypeForm : Form
 			() => _renderer?.RefreshAllPreviews());
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => RunAfterContextMenuCloses(_contextMenu, Close);
-		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v4.2.10") { Enabled = false });
+		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v4.3.1") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(refreshItem);
@@ -166,6 +173,7 @@ internal sealed class PrototypeForm : Form
 			ApplyRuntimeSettings(updateStartup: false);
 			RefreshStages();
 			UpdateWindowRegion(true);
+			_ = RefreshNotificationAreaAsync(initialDelay: true);
 			_stageTimer.Start();
 			_pointerTimer.Start();
 		}
@@ -211,7 +219,7 @@ internal sealed class PrototypeForm : Form
 		UpdateWindowRegion(true);
 
 		var target = _renderer.HitTest(e.Location) ?? initialTarget;
-		Cursor = target.IsPinButton || target.IsExplorerButton || target.IsExpandAllButton || target.IsSidebarCollapseButton || target.PageDelta != 0
+		Cursor = target.IsPinButton || target.IsExplorerButton || target.IsExpandAllButton || target.IsSidebarCollapseButton || target.IsNotificationAreaCard || target.PageDelta != 0
 			? Cursors.Hand
 			: Cursors.Default;
 		UpdateHoverExpandCandidate(target);
@@ -219,6 +227,8 @@ internal sealed class PrototypeForm : Form
 			? "sidebar:expand-all"
 			: target.IsExplorerButton
 			? "sidebar:explorer"
+			: target.IsNotificationAreaCard
+				? $"notification:{target.NotificationIcon?.Ordinal}:{target.NotificationIconName}"
 			: target.IsPinButton
 				? $"pin:{target.StageKey}:{_renderer.IsExpandedStagePinned}"
 				: target.Window is { } pointedWindow
@@ -248,7 +258,9 @@ internal sealed class PrototypeForm : Form
 		if (e.Button == MouseButtons.Right)
 		{
 			var target = _renderer?.HitTest(e.Location);
-			if (target is not null && !target.IsExplorerButton && !target.IsExpandAllButton && !target.IsPinButton && !target.IsSidebarCollapseButton && target.PageDelta == 0)
+			if (target?.IsNotificationAreaCard == true)
+				ShowNotificationAreaContextMenu(target);
+			else if (target is not null && !target.IsExplorerButton && !target.IsExpandAllButton && !target.IsPinButton && !target.IsSidebarCollapseButton && target.PageDelta == 0)
 				ShowCardContextMenu(target);
 			else
 				ShowOwnedContextMenu(_contextMenu);
@@ -257,19 +269,11 @@ internal sealed class PrototypeForm : Form
 		if (e.Button != MouseButtons.Left || _renderer is null)
 			return;
 		var clickTarget = _renderer.HitTest(e.Location);
-		if (e.Clicks >= 2 && clickTarget?.IsPinButton != true)
+		if (e.Clicks >= 2 && clickTarget?.Window is not null && clickTarget.IsPinButton != true)
 		{
 			HandleCardDoubleClick(clickTarget);
 			return;
 		}
-		_lastCardClick = clickTarget?.Window is { } clickedWindow
-			? new CardClickContext(
-				clickedWindow.Handle,
-				OffscreenWindowRecovery.IsOffscreen(clickedWindow),
-				clickedWindow.Handle == NativeMethods.GetForegroundWindow(),
-				NativeMethods.IsIconic(clickedWindow.Handle),
-				clickedWindow.IsMaximized)
-			: null;
 		var wasExpanded = _renderer.HasExpandedStage;
 		var window = _renderer.ActivateAt(e.Location);
 		if (!wasExpanded && _renderer.HasExpandedStage)
@@ -286,6 +290,16 @@ internal sealed class PrototypeForm : Form
 			SetSidebarVisible(false);
 			return;
 		}
+		if (_renderer.ConsumeNotificationIconActivationRequest() is { } notificationIcon)
+		{
+			_ = ActivateNotificationIconAsync(notificationIcon);
+			return;
+		}
+		if (_renderer.ConsumeNotificationAreaOpenRequest())
+		{
+			_ = _notificationAreaClient.ShowNativeOverflowAsync(_notificationAreaCancellation.Token);
+			return;
+		}
 		if (window is null)
 			return;
 		ActivateSelectedWindow(window, allowMinimize: true);
@@ -295,37 +309,9 @@ internal sealed class PrototypeForm : Form
 	private void HandleCardDoubleClick(CardHitTarget? target)
 	{
 		if (target?.Window is not { } window)
-		{
-			_lastCardClick = null;
 			return;
-		}
 
-		var context = _lastCardClick;
-		_lastCardClick = null;
-		var sameWindow = context is { } previous && previous.Handle == window.Handle;
-		var wasOffscreen = sameWindow ? context!.Value.WasOffscreen : OffscreenWindowRecovery.IsOffscreen(window);
-		if (wasOffscreen)
-		{
-			var targetDisplay = Screen.FromPoint(Cursor.Position);
-			if (OffscreenWindowRecovery.TryCenterIfOffscreen(
-				window,
-				targetDisplay,
-				restoreMaximized: sameWindow && context!.Value.WasMaximized))
-			{
-				ActivateSelectedWindow(window, allowMinimize: false);
-				BeginInvoke(new Action(RefreshStages));
-			}
-			return;
-		}
-
-		if (sameWindow && context!.Value.WasForeground && !context.Value.WasMinimized && NativeMethods.IsIconic(window.Handle))
-		{
-			NativeMethods.ShowWindowAsync(
-				window.Handle,
-				context.Value.WasMaximized ? NativeMethods.SwShowMaximized : NativeMethods.SwRestore);
-			window.Focus();
-			BeginInvoke(new Action(RefreshStages));
-		}
+		MaximizeWindows([window]);
 	}
 
 	protected override void OnMouseWheel(MouseEventArgs e)
@@ -385,6 +371,7 @@ internal sealed class PrototypeForm : Form
 	protected override void OnFormClosed(FormClosedEventArgs e)
 	{
 		_closing = true;
+		_notificationAreaCancellation.Cancel();
 		_focusAppBarReservation.Dispose();
 		UnregisterHotkeys();
 		_stageTimer.Stop();
@@ -405,6 +392,8 @@ internal sealed class PrototypeForm : Form
 		_contextMenu.Dispose();
 		_cardContextMenu.Dispose();
 		_initialWindowLayouts.Clear();
+		_notificationAreaClient.Dispose();
+		_notificationAreaCancellation.Dispose();
 		SystemEvents.DisplaySettingsChanged -= SystemEvents_DisplaySettingsChanged;
 		if (_trayIcon is not null)
 		{
@@ -469,6 +458,12 @@ internal sealed class PrototypeForm : Form
 			layoutRegionChanged = true;
 		if (_renderer.SetCollapseButtonEnabled(FocusEnhancedBehavior.ShouldShowCollapseButton(settings.StageMode)))
 			layoutRegionChanged = true;
+		if (_renderer.SetNotificationAreaCardEnabled(settings.ShowNotificationAreaCard))
+		{
+			layoutRegionChanged = true;
+			if (settings.ShowNotificationAreaCard)
+				_ = RefreshNotificationAreaAsync(initialDelay: false);
+		}
 		if (layoutRegionChanged)
 			UpdateWindowRegion(_sidebarVisible);
 		_renderer.SetPreviewPolicy(settings.PreviewRefreshMinutes, settings.PausePreviewRefreshWhenHidden);
@@ -577,6 +572,17 @@ internal sealed class PrototypeForm : Form
 			var appliesToGroup = target.Window is null && actionWindows.Count > 1;
 			_cardContextMenu.Items.Add(new ToolStripSeparator());
 
+			var maximizeItem = new ToolStripMenuItem(appliesToGroup
+				? L("Maximize all windows in this card", "最大化此卡片中的全部窗口")
+				: L("Maximize this window", "最大化此窗口"))
+			{
+				Enabled = actionWindows.Any(candidate => NativeMethods.IsWindow(candidate.Handle))
+			};
+			maximizeItem.Click += (_, _) => RunAfterContextMenuCloses(
+				_cardContextMenu,
+				() => MaximizeWindows(actionWindows));
+			_cardContextMenu.Items.Add(maximizeItem);
+
 			var restoreLayoutItem = new ToolStripMenuItem(appliesToGroup
 				? L("Restore all windows to initial size and position", "恢复全部窗口的初始大小和位置")
 				: L("Restore initial size and position", "恢复初始大小和位置"))
@@ -647,11 +653,115 @@ internal sealed class PrototypeForm : Form
 		ShowOwnedContextMenu(_cardContextMenu);
 	}
 
+	private void ShowNotificationAreaContextMenu(CardHitTarget target)
+	{
+		while (_cardContextMenu.Items.Count > 0)
+		{
+			var item = _cardContextMenu.Items[0];
+			_cardContextMenu.Items.RemoveAt(0);
+			item.Dispose();
+		}
+		var title = string.IsNullOrWhiteSpace(target.NotificationIconName)
+			? L("Windows hidden icons", "Windows 隐藏图标")
+			: target.NotificationIconName;
+		_cardContextMenu.Items.Add(new ToolStripMenuItem(title) { Enabled = false });
+		_cardContextMenu.Items.Add(new ToolStripSeparator());
+		var openItem = new ToolStripMenuItem(L("Open the Windows hidden-icons panel", "打开 Windows 隐藏图标面板"));
+		openItem.Click += (_, _) => RunAfterContextMenuCloses(
+			_cardContextMenu,
+			() => _ = _notificationAreaClient.ShowNativeOverflowAsync(_notificationAreaCancellation.Token));
+		_cardContextMenu.Items.Add(openItem);
+		var refreshItem = new ToolStripMenuItem(L("Refresh hidden icons", "刷新隐藏图标"));
+		refreshItem.Click += (_, _) => RunAfterContextMenuCloses(
+			_cardContextMenu,
+			() => _ = RefreshNotificationAreaAsync(initialDelay: false));
+		_cardContextMenu.Items.Add(refreshItem);
+		ShowOwnedContextMenu(_cardContextMenu);
+	}
+
+	private async Task RefreshNotificationAreaAsync(bool initialDelay)
+	{
+		try
+		{
+			if (initialDelay)
+				await Task.Delay(1200, _notificationAreaCancellation.Token);
+			if (_closing || _catalog?.Settings.Current.ShowNotificationAreaCard != true)
+				return;
+			var icons = await _notificationAreaClient.CaptureAsync(_notificationAreaCancellation.Token);
+			try
+			{
+				if (_closing || _renderer is null)
+					return;
+				_renderer.UpdateNotificationAreaIcons(icons);
+				UpdateWindowRegion(_sidebarVisible);
+			}
+			finally
+			{
+				foreach (var icon in icons)
+					icon.Dispose();
+			}
+		}
+		catch (OperationCanceledException)
+		{
+		}
+	}
+
+	private async Task ActivateNotificationIconAsync(NotificationIconActivation activation)
+	{
+		try
+		{
+			var activated = await _notificationAreaClient.InvokeAsync(activation, _notificationAreaCancellation.Token);
+			if (!activated && !_closing)
+			{
+				_trayIcon?.ShowBalloonTip(
+					3000,
+					L("Hidden icon changed", "隐藏图标已变化"),
+					L("Refresh the bottom card and try again.", "请刷新底部卡片后重试。"),
+					ToolTipIcon.Info);
+			}
+		}
+		catch (OperationCanceledException)
+		{
+		}
+	}
+
 	private void ShowOwnedContextMenu(ContextMenuStrip menu)
 	{
 		if (menu.Visible)
 			menu.Close(ToolStripDropDownCloseReason.CloseCalled);
+		PrimePointerButtonState();
 		menu.Show(this, PointToClient(Cursor.Position));
+	}
+
+	private void PrimePointerButtonState()
+	{
+		_leftPointerButtonDown = IsPointerButtonDown(VirtualKeyLeftButton);
+		_rightPointerButtonDown = IsPointerButtonDown(VirtualKeyRightButton);
+		_middlePointerButtonDown = IsPointerButtonDown(VirtualKeyMiddleButton);
+	}
+
+	private void DismissContextMenusOnOutsideClick(Point screenPoint)
+	{
+		var leftStarted = PointerButtonStarted(VirtualKeyLeftButton, ref _leftPointerButtonDown);
+		var rightStarted = PointerButtonStarted(VirtualKeyRightButton, ref _rightPointerButtonDown);
+		var middleStarted = PointerButtonStarted(VirtualKeyMiddleButton, ref _middlePointerButtonDown);
+		if (!leftStarted && !rightStarted && !middleStarted)
+			return;
+
+		CloseIfClickedOutside(_cardContextMenu, screenPoint);
+		CloseIfClickedOutside(_contextMenu, screenPoint);
+	}
+
+	private static bool PointerButtonStarted(int virtualKey, ref bool wasDown)
+		=> PointerButtonTransition.DidStart(NativeMethods.GetAsyncKeyState(virtualKey), ref wasDown);
+
+	private static bool IsPointerButtonDown(int virtualKey) =>
+		(NativeMethods.GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+
+	private static void CloseIfClickedOutside(ContextMenuStrip menu, Point screenPoint)
+	{
+		if (menu.Visible && !menu.Bounds.Contains(screenPoint))
+			menu.Close(ToolStripDropDownCloseReason.AppClicked);
 	}
 
 	private void RunAfterContextMenuCloses(ContextMenuStrip menu, Action action)
@@ -691,6 +801,18 @@ internal sealed class PrototypeForm : Form
 		foreach (var window in windows)
 			restored |= _initialWindowLayouts.TryRestore(window);
 		if (restored)
+			CompleteWindowCardAction(windows, activate: true);
+	}
+
+	private void MaximizeWindows(IReadOnlyList<IWindow> windows)
+	{
+		var maximized = false;
+		foreach (var window in windows.Where(candidate => NativeMethods.IsWindow(candidate.Handle)))
+		{
+			NativeMethods.ShowWindowAsync(window.Handle, NativeMethods.SwShowMaximized);
+			maximized = true;
+		}
+		if (maximized)
 			CompleteWindowCardAction(windows, activate: true);
 	}
 
@@ -736,6 +858,10 @@ internal sealed class PrototypeForm : Form
 
 	private string GetToolTipText(CardHitTarget target)
 	{
+		if (target.IsNotificationAreaCard)
+			return string.IsNullOrWhiteSpace(target.NotificationIconName)
+				? L("Windows hidden icons · Right-click to refresh", "Windows 隐藏图标 · 右键刷新")
+				: target.NotificationIconName;
 		if (target.IsExplorerButton)
 			return L("Open File Explorer", "打开文件资源管理器");
 		if (target.IsExpandAllButton)
@@ -754,8 +880,8 @@ internal sealed class PrototypeForm : Form
 		{
 			var state = window.IsMinimized ? L(" (minimized)", "（已最小化）") : string.Empty;
 			return L(
-				$"{window.Title}{state}\nDouble-click to recover an off-screen window · Right-click for options",
-				$"{window.Title}{state}\n双击可找回屏幕外窗口 · 右键查看更多选项");
+				$"{window.Title}{state}\nDouble-click to maximize · Right-click for more options",
+				$"{window.Title}{state}\n双击最大化 · 右键查看更多选项");
 		}
 
 		var stage = _catalog?.GetStages().FirstOrDefault(snapshot =>
@@ -1012,9 +1138,12 @@ internal sealed class PrototypeForm : Form
 
 	private void PollPointer()
 	{
-		if (_closing || _renderer is null || _catalog is null)
+		if (_closing)
 			return;
 		var screenPoint = Cursor.Position;
+		DismissContextMenusOnOutsideClick(screenPoint);
+		if (_renderer is null || _catalog is null)
+			return;
 		var nowUtc = DateTime.UtcNow;
 		var pointerAtLeftEdge = IsNearLeftEdge(screenPoint);
 		var foreground = NativeMethods.GetForegroundWindow();
@@ -1362,7 +1491,7 @@ internal sealed class PrototypeForm : Form
 		var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 		_trayIcon = new NotifyIcon
 		{
-			Text = "Stage_Manager_Lai v4.2.10",
+			Text = "Stage_Manager_Lai v4.3.1",
 			Icon = icon,
 			ContextMenuStrip = _contextMenu,
 			Visible = true
@@ -1374,10 +1503,3 @@ internal sealed class PrototypeForm : Form
 		};
 	}
 }
-
-internal readonly record struct CardClickContext(
-	IntPtr Handle,
-	bool WasOffscreen,
-	bool WasForeground,
-	bool WasMinimized,
-	bool WasMaximized);
