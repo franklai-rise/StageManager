@@ -4,10 +4,20 @@ namespace StageManager.Card3DPrototype;
 
 internal static class NativeMethods
 {
+	public static bool ClientAreaAnimationsEnabled =>
+		!SystemParametersInfo(0x1042, 0, out var enabled, 0) || enabled;
+
+	[DllImport("user32.dll", CharSet = CharSet.Unicode)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static extern bool SystemParametersInfo(uint action, uint parameter,
+		[MarshalAs(UnmanagedType.Bool)] out bool value, uint flags);
+
 	public const uint PwRenderFullContent = 0x00000002;
 	public const int DibRgbColors = 0;
 	public const uint Srccopy = 0x00CC0020;
 	public const int SwShowMaximized = 3;
+	public const int SwHide = 0;
+	public const int SwShowNoActivate = 4;
 	public const int SwMinimize = 6;
 	public const int SwRestore = 9;
 	public static readonly IntPtr HwndTop = IntPtr.Zero;

@@ -1,4 +1,103 @@
-# Stage_Manager_Lai v4.3.1
+# Stage_Manager_Lai v4.4.7
+
+v4.4.7 adds a desktop-icons card directly below the minimize / restore card.
+It reads the real Windows desktop-icon setting, toggles the native Explorer
+desktop view without restarting Explorer, and follows changes made from the
+desktop context menu. The card can be enabled or disabled in Settings.
+
+## v4.4.6
+
+v4.4.6 makes Focus enhanced mode persistent across long idle and exclusive
+full-screen sessions. A hidden Focus sidebar now keeps a lightweight foreground
+check running, restores immediately when full-screen ends, and rejects stale
+idle or delayed hide requests unless an exclusive full-screen window is active.
+
+## v4.4.5
+
+v4.4.5 fixes the minimize/restore shortcut for applications that become hidden
+while processing minimize. Restore now applies to every surviving window from
+the recorded desktop session, validates that each handle still belongs to its
+original process, and explicitly reapplies its normal or maximized placement.
+The asynchronous minimize state is no longer sampled to decide whether a
+window should be skipped. Exiting while the shortcut is active first restores
+the recorded desktop session.
+
+v4.4.4 keeps the column anchored to its collapsed layout when groups expand by
+hover or click. The main card and everything above stay in place; child windows
+and subsequent groups extend downward, with scrolling available for overflow.
+150 ms ease-out motion shares its geometry with hit testing. Toolbar layout and
+visual ordering are reused when unchanged, and preview uploads wait for motion
+to finish. Recently hidden child previews are retained for up to eight seconds,
+with at most eight surfaces and a 4 MiB estimated double-buffer pixel budget.
+
+v4.4.3 restyles the minimize/restore shortcut to match the File Explorer shortcut:
+the same adaptive card width, compact height, translucent charcoal background, rounded
+corners and perspective. A centered blue desktop icon changes to stacked windows when
+the desktop is shown, with a small active indicator and matching hover/press feedback.
+The existing minimize/restore behavior is preserved.
+
+v4.4.2 redesigns the Show Desktop control as a card-aligned rounded glass rectangle with a layered-window glyph and persistent active-state indicator.
+
+v4.4.1 replaces the Windows Shell Show Desktop toggle used briefly in v4.4.0.
+Stage Manager now records and minimizes only visible application windows while explicitly
+excluding its own process, desktop, taskbars, tool windows and cloaked system windows. A
+second click restores the recorded window states and foreground window, while the sidebar
+remains visible. The glass control now uses a restrained dark translucent finish and a clean
+outlined-monitor glyph instead of the former bright solid icon.
+
+v4.4.0 adds an optional circular Show Desktop control below the window cards. Its
+translucent glass layers, rim, highlight, shadow and compact monitor glyph provide hover,
+press and active feedback without allocating another capture surface. The first click uses
+the Windows Shell Show Desktop command; the next restores the same desktop session.
+
+The hidden-icons card is now part of the main scrolling card column instead of a separately
+positioned fixed layer. Its obsolete drag handle and independent vertical offset are removed;
+refresh remains available from its context menu. Hidden icons and Show Desktop have separate
+bilingual switches in Settings. Both follow the last window card and scroll with the column.
+
+v4.3.8 responds as soon as a window-card click is released. The system double-click
+interval no longer delays single clicks: a double-click now counts as ONE single click,
+with its second press ignored even if window activation resets native click reporting.
+Clicking a background window preserves its size, clicking the foreground window minimizes
+it, and a later single click restores it. Double-clicking does not perform an additional
+maximize, resize, restore, or minimize action. Press feedback and drag/capture-loss
+cancellation remain, and separate cards can be clicked in quick succession.
+
+v4.3.7 adds immediate, perspective-aligned click feedback: a subtle blue press highlight,
+a lighter pending outline, and a 140 ms release fade. Window-card actions require a release
+on the original card; dragging, scrolling, double-clicking, opening a menu, or hiding the
+sidebar cancels pending input. Confirmed clicks retain the system double-click interval
+and the originally selected activate/minimize intent. Explicit menu and keyboard activation
+never minimize a foreground window.
+
+Hover hints now appear after a 500 ms dwell beside the card. Bilingual hints reflect the
+current window action and group pin/expand state, shorten long titles, update on state
+changes, and disappear on leaving or clicking. Removed double-click commands are no
+longer advertised. Press feedback uses small Composition shapes without new capture surfaces.
+
+v4.3.6 makes double-clicking a window card a true no-op. The first click is held for
+the Windows double-click interval and runs only when no second click arrives; a second
+click cancels the pending activation/minimize action. This prevents double-click races
+from restoring applications into an invalid tiny normal-window rectangle.
+
+v4.3.5 restores the intended foreground-window toggle without reintroducing the
+maximize-to-normal bug. A background window is brought forward without changing its
+placement; clicking the current foreground window minimizes it; clicking that minimized
+card restores its previous Windows state. The restore path now performs one native restore
+instead of racing two asynchronous restore commands, preserving restore-to-maximized state.
+
+v4.3.4 makes a card's primary click a placement-preserving activation. Clicking a
+normal or maximized window only brings that exact window forward; it no longer minimizes
+the current foreground window or issues a restore command that could unmaximize it. Only
+a window confirmed by Windows to be minimized is restored. Size and position commands
+remain explicit actions in the card's context menu.
+
+v4.3.3 refines wheel scrolling: each notch moves one quarter of the former distance,
+precision-wheel deltas accumulate without losing steps, and the main column gains up to
+40 logical pixels of extra travel at each end. A short damped spring provides smooth
+direction changes and a bounded edge rebound. Scrolling translates the main visual layer
+and its cached hit region; the hidden-icons layer remains fixed. The animation timer stops
+at rest, and turning off animations uses immediate scrolling without bounce.
 
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
@@ -109,7 +208,6 @@ directly from the native DIB into the card bitmap and reuses pooled pixel buffer
 on the managed large-object heap. The low-memory renderer uses Windows' software composition path to avoid loading a
 large vendor GPU driver into this small utility; it can be disabled in Settings if a particular machine prefers GPU
 rendering. On the development machine, steady private memory fell from roughly 84–104 MB to about 37–40 MB.
-
 v2.5.1 makes left-edge reveal independent of the currently focused application, including maximized and full-screen
 windows, without leaving the sidebar permanently topmost.
 
@@ -198,6 +296,8 @@ and adds a one-second invariant check that restores the sidebar after full-scree
 v4.2.11 closes card and tray menus when the user clicks anywhere outside them, including another application's window.
 Double-clicking a real window card now restores and maximizes that exact window; centering remains an explicit card-menu
 command, and the same menu includes a new maximize command for individual windows or complete application groups.
+
+v4.3.2 places compact controls outside the hidden-icons card: drag the vertical double-arrow to move only that card, or click the curved cycle arrow to refresh the hidden-icon mapping immediately. Their input paths are isolated: dragging can never invoke refresh, and refresh runs only after a complete press-and-release on its own button. Dragging updates only this card's transform and commits the full hit-test layout once on release, avoiding whole-sidebar work on every pointer pixel. The card position is persisted without moving the main application column. It also adds optional Google Chrome and Microsoft Edge quick-launch cards beneath File Explorer, using each browser's installed icon. Mouse-wheel scrolling now moves the whole visible main card column even when all cards already fit, works across transparent gaps, and leaves the separate hidden-icons card untouched; global wheel events are coalesced onto the UI queue so Windows cannot silently remove a slow hook. Double-click-specific card commands are disabled; maximize remains available from the card's context menu.
 
 v4.3.1 rebuilds the optional bottom hidden-icons card around the real Windows 11 overflow panel instead of registry history
 or executable-file icons. A short-lived isolated worker captures each native icon at its current system pixel size, while

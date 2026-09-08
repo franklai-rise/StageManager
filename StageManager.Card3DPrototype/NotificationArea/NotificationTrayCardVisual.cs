@@ -24,6 +24,7 @@ internal sealed class NotificationTrayCardVisual : IDisposable
 	private readonly CompositionRoundedRectangleGeometry _hoverGeometry;
 	private readonly CompositionGeometricClip _hoverClip;
 	private readonly SpriteVisual _content;
+	private readonly NotificationTrayControlsVisual _controls;
 	private CardSwapChain? _surface;
 	private CompositionSurfaceBrush? _surfaceBrush;
 	private readonly List<NotificationIconSnapshot> _icons = new();
@@ -58,10 +59,14 @@ internal sealed class NotificationTrayCardVisual : IDisposable
 		_hoverHighlight.Clip = _hoverClip;
 		_hoverHighlight.IsVisible = false;
 		_content = compositor.CreateSpriteVisual();
+		_controls = new NotificationTrayControlsVisual(compositor);
 
 		Root.Children.InsertAtBottom(_background);
 		Root.Children.InsertAtTop(_hoverHighlight);
 		Root.Children.InsertAtTop(_content);
+		// The card now belongs to the scrolling main column. Refresh remains in
+		// its context menu; the former external drag/refresh controls are hidden.
+		_controls.Root.IsVisible = false;
 		SetLayout(1f, 196f);
 	}
 
@@ -70,6 +75,9 @@ internal sealed class NotificationTrayCardVisual : IDisposable
 	public Vector2 Pivot { get; private set; }
 	public float Angle => -7.5f;
 	public IReadOnlyList<NotificationTrayIconSlot> Slots => _slots;
+	public Rectangle DragHandleBounds => _controls.DragHandleBounds;
+	public Rectangle RefreshButtonBounds => _controls.RefreshButtonBounds;
+	public float ExternalControlsHeight => 0;
 
 	public void SetLayout(float dpiScale, float cardWidth)
 	{
@@ -88,6 +96,7 @@ internal sealed class NotificationTrayCardVisual : IDisposable
 		_backgroundGeometry.Size = Size;
 		_backgroundGeometry.CornerRadius = new Vector2(Math.Max(9f, Size.Y * 0.105f));
 		_content.Size = Size;
+		_controls.SetLayout(scale);
 		if (surfaceChanged || _surface is null)
 			RecreateSurface();
 		RenderIcons();
@@ -138,6 +147,12 @@ internal sealed class NotificationTrayCardVisual : IDisposable
 		_pressed = pressed;
 		ApplyState();
 	}
+
+	public void SetControlHovered(bool dragHovered, bool refreshHovered) =>
+		_controls.SetHovered(dragHovered, refreshHovered);
+
+	public void SetControlPressed(bool dragPressed, bool refreshPressed) =>
+		_controls.SetPressed(dragPressed, refreshPressed);
 
 	private void ApplyState()
 	{
@@ -223,6 +238,7 @@ internal sealed class NotificationTrayCardVisual : IDisposable
 		_content.Brush = null;
 		_surfaceBrush?.Dispose();
 		_surface?.Dispose();
+		_controls.Dispose();
 		_content.Dispose();
 		_hoverClip.Dispose();
 		_hoverGeometry.Dispose();
@@ -233,6 +249,164 @@ internal sealed class NotificationTrayCardVisual : IDisposable
 		_backgroundGeometry.Dispose();
 		_background.Dispose();
 		_backgroundBrush.Dispose();
+		Root.Dispose();
+	}
+}
+
+internal sealed class NotificationTrayControlsVisual : IDisposable
+{
+	private readonly SpriteVisual _dragBackground;
+	private readonly CompositionColorBrush _dragBackgroundBrush;
+	private readonly CompositionRoundedRectangleGeometry _dragGeometry;
+	private readonly CompositionGeometricClip _dragClip;
+	private readonly SpriteVisual _refreshBackground;
+	private readonly CompositionColorBrush _refreshBackgroundBrush;
+	private readonly CompositionRoundedRectangleGeometry _refreshGeometry;
+	private readonly CompositionGeometricClip _refreshClip;
+	private readonly CompositionColorBrush _iconBrush;
+	private readonly SpriteVisual[] _dragStrokes;
+	private readonly SpriteVisual[] _refreshStrokes;
+	private bool _dragHovered;
+	private bool _refreshHovered;
+	private bool _dragPressed;
+	private bool _refreshPressed;
+
+	public NotificationTrayControlsVisual(Compositor compositor)
+	{
+		Root = compositor.CreateContainerVisual();
+		_dragBackgroundBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(100, 35, 42, 54));
+		_dragBackground = compositor.CreateSpriteVisual();
+		_dragBackground.Brush = _dragBackgroundBrush;
+		_dragGeometry = compositor.CreateRoundedRectangleGeometry();
+		_dragClip = compositor.CreateGeometricClip(_dragGeometry);
+		_dragBackground.Clip = _dragClip;
+		_refreshBackgroundBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(100, 35, 42, 54));
+		_refreshBackground = compositor.CreateSpriteVisual();
+		_refreshBackground.Brush = _refreshBackgroundBrush;
+		_refreshGeometry = compositor.CreateRoundedRectangleGeometry();
+		_refreshClip = compositor.CreateGeometricClip(_refreshGeometry);
+		_refreshBackground.Clip = _refreshClip;
+		_iconBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(225, 215, 226, 244));
+		_dragStrokes = Enumerable.Range(0, 5).Select(_ =>
+		{
+			var stroke = compositor.CreateSpriteVisual();
+			stroke.Brush = _iconBrush;
+			Root.Children.InsertAtTop(stroke);
+			return stroke;
+		}).ToArray();
+		_refreshStrokes = Enumerable.Range(0, 10).Select(_ =>
+		{
+			var stroke = compositor.CreateSpriteVisual();
+			stroke.Brush = _iconBrush;
+			Root.Children.InsertAtTop(stroke);
+			return stroke;
+		}).ToArray();
+		Root.Children.InsertAtBottom(_dragBackground);
+		Root.Children.InsertAtBottom(_refreshBackground);
+		SetLayout(1f);
+	}
+
+	public ContainerVisual Root { get; }
+	public Rectangle DragHandleBounds { get; private set; }
+	public Rectangle RefreshButtonBounds { get; private set; }
+	public float ExternalHeight { get; private set; }
+
+	public void SetLayout(float scale)
+	{
+		var buttonWidth = 30f * scale;
+		var buttonHeight = 26f * scale;
+		var left = 12f * scale;
+		var gap = 7f * scale;
+		var top = -(buttonHeight + 8f * scale);
+		DragHandleBounds = Rectangle.Round(new RectangleF(left, top, buttonWidth, buttonHeight));
+		RefreshButtonBounds = Rectangle.Round(new RectangleF(left + buttonWidth + gap, top, buttonWidth, buttonHeight));
+		ExternalHeight = -top;
+		_dragBackground.Size = new Vector2(buttonWidth, buttonHeight);
+		_dragBackground.Offset = new Vector3(left, top, 1);
+		_dragGeometry.Size = _dragBackground.Size;
+		_dragGeometry.CornerRadius = new Vector2(6f * scale);
+		_refreshBackground.Size = new Vector2(buttonWidth, buttonHeight);
+		_refreshBackground.Offset = new Vector3(left + buttonWidth + gap, top, 1);
+		_refreshGeometry.Size = _refreshBackground.Size;
+		_refreshGeometry.CornerRadius = new Vector2(6f * scale);
+		var dragCenterX = left + buttonWidth / 2f;
+		var dragCenterY = top + buttonHeight / 2f;
+		ConfigureStroke(_dragStrokes[0], dragCenterX, dragCenterY, 2f * scale, 13f * scale, 0f);
+		ConfigureStroke(_dragStrokes[1], dragCenterX - 2.1f * scale, dragCenterY - 5.7f * scale, 6f * scale, 1.8f * scale, -38f);
+		ConfigureStroke(_dragStrokes[2], dragCenterX + 2.1f * scale, dragCenterY - 5.7f * scale, 6f * scale, 1.8f * scale, 38f);
+		ConfigureStroke(_dragStrokes[3], dragCenterX - 2.1f * scale, dragCenterY + 5.7f * scale, 6f * scale, 1.8f * scale, 38f);
+		ConfigureStroke(_dragStrokes[4], dragCenterX + 2.1f * scale, dragCenterY + 5.7f * scale, 6f * scale, 1.8f * scale, -38f);
+
+		var refreshCenterX = left + buttonWidth + gap + buttonWidth / 2f;
+		var refreshCenterY = dragCenterY;
+		var radius = 7f * scale;
+		var arcAngles = new[] { -150f, -105f, -60f, -15f, 30f, 75f, 120f, 165f };
+		for (var index = 0; index < arcAngles.Length; index++)
+		{
+			var radians = arcAngles[index] * MathF.PI / 180f;
+			ConfigureStroke(
+				_refreshStrokes[index],
+				refreshCenterX + MathF.Cos(radians) * radius,
+				refreshCenterY + MathF.Sin(radians) * radius,
+				4.5f * scale,
+				1.8f * scale,
+				arcAngles[index] + 90f);
+		}
+		var headRadians = 165f * MathF.PI / 180f;
+		var headX = refreshCenterX + MathF.Cos(headRadians) * radius;
+		var headY = refreshCenterY + MathF.Sin(headRadians) * radius;
+		ConfigureStroke(_refreshStrokes[8], headX - 1.4f * scale, headY + 1.5f * scale, 5.5f * scale, 1.8f * scale, 220f);
+		ConfigureStroke(_refreshStrokes[9], headX + 1.1f * scale, headY + 2.2f * scale, 5.5f * scale, 1.8f * scale, 285f);
+		Root.Size = new Vector2(RefreshButtonBounds.Right + 4f * scale, buttonHeight);
+		ApplyState();
+	}
+
+	public void SetHovered(bool dragHovered, bool refreshHovered)
+	{
+		_dragHovered = dragHovered;
+		_refreshHovered = refreshHovered;
+		ApplyState();
+	}
+
+	public void SetPressed(bool dragPressed, bool refreshPressed)
+	{
+		_dragPressed = dragPressed;
+		_refreshPressed = refreshPressed;
+		ApplyState();
+	}
+
+	private static void ConfigureStroke(SpriteVisual stroke, float centerX, float centerY, float width, float height, float angle)
+	{
+		stroke.Size = new Vector2(width, height);
+		stroke.Offset = new Vector3(centerX - width / 2f, centerY - height / 2f, 2);
+		stroke.CenterPoint = new Vector3(width / 2f, height / 2f, 0);
+		stroke.RotationAngleInDegrees = angle;
+	}
+
+	private void ApplyState()
+	{
+		_dragBackgroundBrush.Color = Windows.UI.Color.FromArgb(
+			(byte)(_dragPressed ? 200 : _dragHovered ? 155 : 100), 35, 42, 54);
+		_refreshBackgroundBrush.Color = Windows.UI.Color.FromArgb(
+			(byte)(_refreshPressed ? 200 : _refreshHovered ? 155 : 100), 35, 42, 54);
+		_iconBrush.Color = _dragPressed || _refreshPressed
+			? Windows.UI.Color.FromArgb(255, 112, 190, 255)
+			: Windows.UI.Color.FromArgb(235, 215, 226, 244);
+	}
+
+	public void Dispose()
+	{
+		foreach (var stroke in _dragStrokes) stroke.Dispose();
+		foreach (var stroke in _refreshStrokes) stroke.Dispose();
+		_iconBrush.Dispose();
+		_dragClip.Dispose();
+		_dragGeometry.Dispose();
+		_dragBackground.Dispose();
+		_dragBackgroundBrush.Dispose();
+		_refreshClip.Dispose();
+		_refreshGeometry.Dispose();
+		_refreshBackground.Dispose();
+		_refreshBackgroundBrush.Dispose();
 		Root.Dispose();
 	}
 }

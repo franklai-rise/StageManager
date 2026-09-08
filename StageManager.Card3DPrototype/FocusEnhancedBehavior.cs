@@ -34,6 +34,18 @@ internal static class FocusEnhancedBehavior
 		return mode != StageMode.Focus && idleAutoHideEnabled;
 	}
 
+	public static bool CanHideSidebar(StageMode mode, bool exclusiveFullScreenActive)
+	{
+		return mode != StageMode.Focus || exclusiveFullScreenActive;
+	}
+
+	public static bool ShouldPollHiddenSidebar(StageMode mode, bool pointerAtLeftEdge)
+	{
+		// A hidden Focus sidebar must continue observing the foreground window so it
+		// can restore itself as soon as an exclusive full-screen session ends.
+		return mode == StageMode.Focus || pointerAtLeftEdge;
+	}
+
 	public static bool ShouldShowCollapseButton(StageMode mode)
 	{
 		return mode != StageMode.Focus;

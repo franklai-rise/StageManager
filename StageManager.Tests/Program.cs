@@ -10,6 +10,23 @@ using System.IO;
 using System.Numerics;
 using System.Windows.Forms;
 
+if (args is ["--desktop-toggle-probe", var probeMode])
+{
+	ApplicationConfiguration.Initialize();
+	Application.Run(new Form
+	{
+		Text = $"Stage Manager desktop toggle probe - {probeMode}",
+		Width = 620,
+		Height = 420,
+		ShowInTaskbar = true,
+		StartPosition = FormStartPosition.CenterScreen,
+		WindowState = probeMode.Equals("maximized", StringComparison.OrdinalIgnoreCase)
+			? FormWindowState.Maximized
+			: FormWindowState.Normal
+	});
+	return 0;
+}
+
 return TestRunner.Run();
 
 internal static class TestRunner
@@ -22,6 +39,15 @@ internal static class TestRunner
 		RunTest("Stage window cycling is deterministic", StageCycling);
 		RunTest("Composite preview exposes three thumbnails and overflow count", CompositePreview);
 		RunTest("Adaptive cards fit or scroll at 2, 6, 10, and 20 stages", AdaptiveCards);
+		RunTest("Main card column scrolls even when its content already fits", MainColumnAlwaysScrolls);
+		RunTest("Precision wheel input preserves small and coalesced deltas", PrecisionScrollInput);
+		RunTest("Elastic scrolling reverses, respects bounds and comes to rest", ElasticScrollSettling);
+		RunTest("Scrolling keeps hidden-icons and desktop controls attached to the card column", ScrollRendererLayers);
+		RunTest("Expansion grows down without moving the primary or upper cards at mixed DPI", ExpansionRegressionTests.AnchoredExpansion);
+		RunTest("Moving card hits use the same easing and snap correctly when animations stop", ExpansionRegressionTests.MotionAndHits);
+		RunTest("Expansion preserves an in-flight wheel spring", ExpansionRegressionTests.ScrollDuringExpansion);
+		RunTest("Rapid expansion remains anchored and targets its own child windows", ExpansionRegressionTests.RapidExpansion);
+		RunTest("Recently hidden previews are reused within a bounded expiring cache", ExpansionRegressionTests.WarmPreviews);
 		RunTest("Settings are normalized and persisted atomically", SettingsPersistence);
 		RunTest("Independent startup shortcut is owned by Windows Explorer", IndependentStartupShortcut);
 		RunTest("Default and custom hotkeys parse", HotkeyParsing);
@@ -31,8 +57,17 @@ internal static class TestRunner
 		RunTest("Capture fallback produces a light gray placeholder card", CaptureFallback);
 		RunTest("Prototype stage slots do not jump after activation", PrototypeStageSlotsStayStable);
 		RunTest("Prototype child-window slots do not jump after activation", PrototypeChildWindowSlotsStayStableAfterActivation);
-		RunTest("Prototype card click toggles only the selected foreground window", PrototypeClickToggle);
+		RunTest("Prototype card click preserves placement and toggles the foreground window", PrototypeClickPreservesPlacement);
+		RunTest("Card clicks execute immediately on valid release", CardClicksAreImmediate);
+		RunTest("A card double-click executes only its first click", CardDoubleClickRunsOnce);
+		RunTest("Cancelled card presses never execute or swallow the next click", CancelledCardClicksDoNothing);
+		RunTest("Card hints describe the current action in both languages", CardHintsMatchActions);
 		RunTest("Pointer button transitions detect outside clicks without repeating held input", PointerButtonTransitions);
+		RunTest("Vertical drag changes only the hidden-icons card height and clamps safely", NotificationAreaVerticalDragging);
+		RunTest("Hidden-icons drag and refresh controls cannot trigger each other", NotificationAreaControlsAreSeparated);
+		RunTest("Show Desktop toggle changes state only after a successful desktop operation", DesktopToggleState);
+		RunTest("Desktop-icons toggle follows Windows state and changes only after success", DesktopIconVisibilityState);
+		RunTest("Show Desktop restores normal, maximized and hidden application windows", DesktopToggleIntegrationTests.RestoresNativeWindows);
 		RunTest("Notification-area icons keep native sizes in a non-overlapping grid", NotificationTrayIconLayout);
 		RunTest("Multi-window child selection stays expanded until the primary card is clicked", MultiWindowCardClicking);
 		RunTest("Only collapsed multi-window primary cards arm hover expansion", MultiWindowHoverExpansion);
@@ -53,6 +88,67 @@ internal static class TestRunner
 		RunTest("Focus enhanced placement preserves windows already right of the card column", FocusEnhancedWindowGeometry);
 		Console.WriteLine(_failures == 0 ? "All Stage_Manager_Lai tests passed." : $"{_failures} test(s) failed.");
 		return _failures == 0 ? 0 : 1;
+	}
+
+	private static void NotificationAreaVerticalDragging()
+	{
+		Assert(NotificationAreaVerticalDragBehavior.CalculateOffset(-180, 125, 1.25f) == -80,
+			"Vertical movement was not converted from device pixels.");
+		Assert(NotificationAreaVerticalDragBehavior.CalculateOffset(-20, 100, 1f) == 0,
+			"Downward dragging moved the card below its bottom anchor.");
+		Assert(NotificationAreaVerticalDragBehavior.CalculateOffset(-1990, -100, 1f) == -2000,
+			"Upward dragging exceeded the upper position limit.");
+	}
+
+	private static void NotificationAreaControlsAreSeparated()
+	{
+		Assert(!NotificationAreaControlBehavior.ShouldRefresh(true, true, dragActive: true),
+			"Dragging incorrectly triggered a refresh.");
+		Assert(!NotificationAreaControlBehavior.ShouldRefresh(true, false, dragActive: false),
+			"Releasing outside the refresh button incorrectly triggered a refresh.");
+		Assert(NotificationAreaControlBehavior.ShouldRefresh(true, true, dragActive: false),
+			"A deliberate refresh click was rejected.");
+	}
+
+	private static void DesktopToggleState()
+	{
+		var invocations = 0;
+		var requests = new List<bool>();
+		var toggle = new DesktopToggleService(showDesktop => { invocations++; requests.Add(showDesktop); return true; });
+		Assert(toggle.TryToggle(out var error) && error is null && toggle.IsDesktopShown,
+			"The first successful click did not enter Show Desktop state.");
+		Assert(toggle.TryToggle(out error) && error is null && !toggle.IsDesktopShown && invocations == 2 && requests.SequenceEqual([true, false]),
+			"The second successful click did not restore the desktop state.");
+		toggle.TryToggle(out _);
+		toggle.MarkDesktopDismissed();
+		Assert(!toggle.IsDesktopShown, "Opening a window did not clear the stale active indicator.");
+		var failed = new DesktopToggleService(_ => false);
+		Assert(!failed.TryToggle(out error) && !failed.IsDesktopShown && !string.IsNullOrWhiteSpace(error),
+			"A rejected Windows Shell command changed the desktop state.");
+		var restoredOnExit = new List<bool>();
+		var exiting = new DesktopToggleService(showDesktop => { restoredOnExit.Add(showDesktop); return true; });
+		Assert(exiting.TryToggle(out _) && exiting.TryRestore(out _) &&
+			restoredOnExit.SequenceEqual([true, false]) && !exiting.IsDesktopShown,
+			"Shutdown protection did not restore an active desktop session.");
+	}
+
+	private static void DesktopIconVisibilityState()
+	{
+		var systemVisible = false;
+		var toggles = 0;
+		var service = new DesktopIconVisibilityService(
+			() => systemVisible,
+			() => { toggles++; systemVisible = !systemVisible; return true; });
+		Assert(!service.IconsVisible, "The desktop-icons card did not read the current Windows hidden state.");
+		Assert(service.TryToggle(out var error) && error is null && service.IconsVisible && toggles == 1,
+			"The desktop-icons card did not expose the successful Windows toggle state.");
+		systemVisible = false;
+		Assert(service.Refresh() && !service.IconsVisible,
+			"An external Windows desktop-icon setting change did not update the card state.");
+
+		var failed = new DesktopIconVisibilityService(() => false, () => false);
+		Assert(!failed.TryToggle(out var failedError) && !failed.IconsVisible && !string.IsNullOrWhiteSpace(failedError),
+			"A failed desktop-icon request incorrectly changed the card state.");
 	}
 
 	private static void StageGrouping()
@@ -129,7 +225,7 @@ internal static class TestRunner
 				}
 				""");
 			var service = new SettingsService(path);
-			Assert(service.Current.SchemaVersion == 12, "Settings schema was not upgraded for the notification-area card.");
+			Assert(service.Current.SchemaVersion == 16, "Settings schema was not upgraded for the desktop-icons card.");
 			Assert(service.Current.LowMemoryRendering, "Low-memory rendering should be enabled by default.");
 			Assert(!service.Current.IgnoredProcesses.Contains("explorer", StringComparer.OrdinalIgnoreCase),
 				"The legacy default Explorer ignore entry was not migrated.");
@@ -138,7 +234,7 @@ internal static class TestRunner
 			Assert(service.Current.IgnoredProcesses.Contains("custom-app", StringComparer.OrdinalIgnoreCase),
 				"A user-selected ignored process was lost during migration.");
 			var migratedJson = File.ReadAllText(path);
-			Assert(migratedJson.Contains("\"SchemaVersion\": 12", StringComparison.Ordinal),
+			Assert(migratedJson.Contains("\"SchemaVersion\": 16", StringComparison.Ordinal),
 				"The migrated schema was not written back to disk.");
 			Assert(!migratedJson.Contains("\"explorer\"", StringComparison.OrdinalIgnoreCase),
 				"The legacy Explorer ignore entry remained in the persisted settings.");
@@ -153,8 +249,13 @@ internal static class TestRunner
 			Assert(Math.Abs(service.Current.CardScale - 0.60) < 0.001, "Default card scale should be 60%.");
 			Assert(service.Current.SidebarVerticalOffset == -80, "The sidebar should default to 80 pixels above center.");
 			Assert(service.Current.ShowExplorerButton, "The Explorer quick button should be enabled by default.");
+			Assert(service.Current.ShowChromeQuickLaunch && service.Current.ShowEdgeQuickLaunch,
+				"Browser quick-launch cards should be enabled by default.");
 			Assert(service.Current.ShowExpandedPinButton, "The expanded-card pin button should be enabled by default.");
 			Assert(service.Current.ShowNotificationAreaCard, "The notification-area card should be enabled by default.");
+			Assert(service.Current.ShowDesktopButton, "The Show Desktop button should be enabled by default.");
+			Assert(service.Current.ShowDesktopIconsButton, "The desktop-icons button should be enabled by default.");
+			Assert(service.Current.NotificationAreaVerticalOffset == 0, "The obsolete notification-area offset was not removed.");
 			var settings = service.CloneCurrent();
 			settings.CardScale = 99;
 			settings.SidebarVerticalOffset = 999;
@@ -165,15 +266,25 @@ internal static class TestRunner
 			settings.UiLanguage = UiLanguage.SimplifiedChinese;
 			settings.UsePerspectiveCards = false;
 			settings.ShowExplorerButton = false;
+			settings.ShowChromeQuickLaunch = false;
+			settings.ShowEdgeQuickLaunch = false;
 			settings.ShowExpandedPinButton = false;
 			settings.ShowNotificationAreaCard = false;
+			settings.ShowDesktopButton = false;
+			settings.ShowDesktopIconsButton = false;
+			settings.NotificationAreaVerticalOffset = -250;
 			settings.IgnoredProcesses = new List<string> { "yuanbao", "YuanBao", "  explorer  " };
 			service.Apply(settings);
 			Assert(service.Current.CardScale == 1.25, "Maximum card scale was not clamped.");
 			Assert(service.Current.SidebarVerticalOffset == 400, "Maximum sidebar vertical offset was not clamped.");
 			Assert(!service.Current.ShowExplorerButton, "The Explorer quick button preference was not persisted.");
+			Assert(!service.Current.ShowChromeQuickLaunch && !service.Current.ShowEdgeQuickLaunch,
+				"Browser quick-launch preferences were not persisted.");
 			Assert(!service.Current.ShowExpandedPinButton, "The expanded-card pin button preference was not persisted.");
 			Assert(!service.Current.ShowNotificationAreaCard, "The notification-area card preference was not persisted.");
+			Assert(!service.Current.ShowDesktopButton, "The Show Desktop button preference was not persisted.");
+			Assert(!service.Current.ShowDesktopIconsButton, "The desktop-icons button preference was not persisted.");
+			Assert(service.Current.NotificationAreaVerticalOffset == 0, "An obsolete independent notification-card position was retained.");
 			settings = service.CloneCurrent();
 			settings.CardScale = 0;
 			settings.SidebarVerticalOffset = -999;
@@ -188,6 +299,8 @@ internal static class TestRunner
 			Assert(reloaded.Current.StageMode == StageMode.Focus, "Enum setting did not persist.");
 			Assert(reloaded.Current.UiLanguage == UiLanguage.SimplifiedChinese, "Interface language did not persist.");
 			Assert(!reloaded.Current.UsePerspectiveCards, "Perspective-card setting did not persist.");
+			Assert(!reloaded.Current.ShowChromeQuickLaunch && !reloaded.Current.ShowEdgeQuickLaunch,
+				"Browser quick-launch preferences were lost after reload.");
 			Assert(reloaded.Current.SidebarVerticalOffset == -400, "Sidebar vertical position did not persist.");
 			Assert(File.Exists(path) && !File.Exists(path + ".tmp"), "Atomic settings replacement left an invalid temporary file.");
 		}
@@ -324,6 +437,164 @@ internal static class TestRunner
 			"Latin title runs do not select Times New Roman.");
 	}
 
+	private static void MainColumnAlwaysScrolls()
+	{
+		var fitting = SidebarScrollBehavior.Calculate(300, 240, 900, 12);
+		Assert(fitting.Minimum < 0 && fitting.Maximum > 0,
+			"Fitting content did not receive a usable two-way scroll range.");
+		var overflowing = SidebarScrollBehavior.Calculate(12, 1200, 900, 12);
+		Assert(overflowing.Minimum == 0 && overflowing.Maximum >= 324,
+			"Overflowing content cannot reach its final cards.");
+		var extended = SidebarScrollBehavior.Calculate(300, 240, 900, 12, 40);
+		Assert(extended.Minimum == fitting.Minimum - 40 && extended.Maximum == fitting.Maximum + 40,
+			"The main column did not gain extra travel in both directions.");
+	}
+
+	private static void PrecisionScrollInput()
+	{
+		var whole = new SidebarScrollMotion();
+		var partial = new SidebarScrollMotion();
+		var batched = new SidebarScrollMotion();
+		foreach (var motion in new[] { whole, partial, batched })
+			motion.SetRange(new SidebarScrollRange(-1000, 1000), 1f);
+		whole.AddWheel(-120, 50, animated: true);
+		for (var index = 0; index < 4; index++)
+			partial.AddWheel(-30, 50, animated: true);
+		batched.AddWheel(-360, 50, animated: true);
+		Assert(whole.Target == 50 && partial.Target == whole.Target && batched.Target == 150,
+			"Precision deltas or batched wheel notches were lost.");
+		Assert(whole.Position == 0, "An animated wheel notch jumped straight to its target.");
+		whole.Advance(1.0 / 60);
+		Assert(whole.Position > 0 && whole.Position < 50, "The first frame did not interpolate toward the target.");
+		whole.AddWheel(120, 50, animated: false);
+		Assert(whole.Position == 0 && !whole.IsMoving, "Disabling animation left residual movement.");
+	}
+
+	private static void ElasticScrollSettling()
+	{
+		foreach (var dpi in new[] { 1f, 1.25f, 1.5f, 2f })
+		{
+			var spring = new SidebarScrollMotion();
+			var range = new SidebarScrollRange(-200 * dpi, 200 * dpi);
+			spring.SetRange(range, dpi);
+			spring.AddWheel(-960, 50 * dpi, animated: true);
+			spring.SnapToTarget();
+			spring.AddWheel(-120, 50 * dpi, animated: true);
+			var maximum = spring.Position;
+			for (var frame = 0; frame < 120; frame++)
+			{
+				spring.Advance(1.0 / 120);
+				maximum = Math.Max(maximum, spring.Position);
+			}
+			Assert(maximum > range.Maximum + dpi && maximum <= range.Maximum + spring.OverscrollLimit,
+				"Edge feedback either disappeared or exceeded the elastic travel limit.");
+			Assert(!spring.IsMoving && Math.Abs(spring.Position - range.Maximum) < 0.1f,
+				"The edge spring did not return to rest within one second.");
+			for (var input = 0; input < 1000; input++)
+			{
+				spring.AddWheel(input % 8 < 4 ? -120 : 120, 50 * dpi, animated: true);
+				spring.Advance(input % 2 == 0 ? 1.0 / 60 : 1.0 / 120);
+				Assert(float.IsFinite(spring.Position) && spring.Position >= range.Minimum - spring.OverscrollLimit &&
+					spring.Position <= range.Maximum + spring.OverscrollLimit, "Rapid reversal escaped its finite travel limits.");
+			}
+			for (var frame = 0; frame < 180; frame++) spring.Advance(1.0 / 60);
+			Assert(!spring.IsMoving && spring.Position >= range.Minimum && spring.Position <= range.Maximum,
+				"Alternating wheel input left a drifting spring.");
+			spring.AddWheel(120, 50 * dpi, animated: true);
+			spring.Advance(2);
+			Assert(!spring.IsMoving, "A suspended UI resumed with an unbounded animation backlog.");
+			spring.SetRange(new SidebarScrollRange(-10 * dpi, 10 * dpi), dpi);
+			Assert(Math.Abs(spring.Position) <= 10 * dpi && !spring.IsMoving,
+				"Collapsing a long group left the resting column outside its new bounds.");
+		}
+	}
+
+	private static void ScrollRendererLayers()
+	{
+		Exception? failure = null;
+		var thread = new Thread(() =>
+		{
+			try
+			{
+				using var dispatcher = new DispatcherQueueHelper();
+				dispatcher.EnsureDispatcherQueue();
+				using var compositor = new Windows.UI.Composition.Compositor();
+				using var root = compositor.CreateContainerVisual();
+				using var owner = new Form();
+				using var renderer = new CompositionStageRenderer(owner, compositor, root, 0.8, false, true);
+				renderer.Resize(900, 1440, 1.25f);
+				renderer.SetNotificationAreaCardEnabled(true);
+				renderer.SetDesktopButtonEnabled(true);
+				var movingBefore = renderer.GetInteractivePolygons(false).First();
+				var fixedBefore = renderer.GetInteractivePolygons(true).SelectMany(polygon => polygon).ToArray();
+				CardHitTarget? FindTarget(Func<CardHitTarget, bool> predicate)
+				{
+					for (var y = 1; y < 1440; y += 2)
+						for (var x = 1; x < 260; x += 2)
+						{
+							var candidate = renderer.HitTest(new Point(x, y));
+							if (candidate is not null && predicate(candidate)) return candidate;
+						}
+					return null;
+				}
+				var notificationTarget = FindTarget(target => target.IsNotificationAreaCard);
+				var desktopTarget = FindTarget(target => target.IsDesktopButton);
+				Assert(notificationTarget is not null && desktopTarget is not null,
+					"The integrated utility controls were not laid out below the cards.");
+				Assert(fixedBefore.Length == 0, "A utility card still occupied the independent fixed layer.");
+				var center = new Point((int)movingBefore.Average(point => point.X), (int)movingBefore.Average(point => point.Y));
+				var targetBefore = renderer.HitTest(center);
+				var revision = renderer.LayoutRevision;
+				renderer.Scroll(-120);
+				Assert(renderer.ScrollTranslationY < 0 && renderer.LayoutRevision == revision,
+					"A wheel notch caused a full card layout or failed to move the main layer.");
+				var movedCenter = new Point(center.X, center.Y + (int)Math.Round(renderer.ScrollTranslationY));
+				Assert(targetBefore is not null && renderer.HitTest(movedCenter)?.StageKey == targetBefore.StageKey,
+					"Hit testing did not follow the visible scroll translation.");
+				var notificationCenter = new Point(
+					(int)notificationTarget!.Polygon.Average(point => point.X),
+					(int)notificationTarget.Polygon.Average(point => point.Y) + (int)Math.Round(renderer.ScrollTranslationY));
+				var desktopCenter = new Point(
+					(int)desktopTarget!.Polygon.Average(point => point.X),
+					(int)desktopTarget.Polygon.Average(point => point.Y) + (int)Math.Round(renderer.ScrollTranslationY));
+				Assert(renderer.HitTest(notificationCenter)?.IsNotificationAreaCard == true,
+					"The hidden-icons card did not move with the card column.");
+				Assert(renderer.HitTest(desktopCenter)?.IsDesktopButton == true,
+					"The Show Desktop button did not move with the card column.");
+				var cameras = root.Children.ToArray();
+				Assert(cameras.Count(camera => camera.Offset.Y == 0) == 1 &&
+					cameras.Count(camera => camera.Offset.Y == renderer.ScrollTranslationY) == 1,
+					"The main card camera did not carry the integrated controls while scrolling.");
+				renderer.Activate(desktopTarget);
+				Assert(renderer.ConsumeDesktopToggleRequest() && !renderer.ConsumeDesktopToggleRequest(),
+					"The Show Desktop command was not consumed exactly once.");
+
+				var window = new FakeWindow(321, "Feedback test", "test.exe");
+				renderer.Synchronize([new PrototypeStageSnapshot("test", "Test", [window], DateTime.UtcNow)]);
+				CardHitTarget? cardTarget = null;
+				for (var y = 1; y < 1400 && cardTarget is null; y++)
+				{
+					var hit = renderer.HitTest(new Point(100, y));
+					if (hit?.Window?.Handle == window.Handle) cardTarget = hit;
+				}
+				Assert(cardTarget is not null, "The feedback test could not find its card.");
+				var originalHits = renderer.GetInteractivePolygons(false).SelectMany(polygon => polygon).ToArray();
+				revision = renderer.LayoutRevision;
+				foreach (var feedback in new[] { CardFeedback.Pressed, CardFeedback.None })
+				{
+					renderer.SetCardFeedback(cardTarget, feedback);
+					Assert(renderer.LayoutRevision == revision && originalHits.SequenceEqual(renderer.GetInteractivePolygons(false).SelectMany(polygon => polygon)),
+						"Click feedback changed card layout or hit geometry.");
+				}
+			}
+			catch (Exception exception) { failure = exception; }
+		}) { IsBackground = true };
+		thread.SetApartmentState(ApartmentState.STA);
+		thread.Start();
+		Assert(thread.Join(TimeSpan.FromSeconds(15)), "Scroll renderer smoke test timed out.");
+		if (failure is not null) throw new InvalidOperationException("Scroll renderer smoke test failed.", failure);
+	}
+
 	private static void IndependentStartupShortcut()
 	{
 		var shortcut = AutoStart.GetStartupShortcutPath();
@@ -373,17 +644,116 @@ internal static class TestRunner
 		Assert(withNewWindow[^1].Handle == fourth.Handle, "A newly opened child window was not appended to the stable list.");
 	}
 
-	private static void PrototypeClickToggle()
+	private static void PrototypeClickPreservesPlacement()
 	{
 		var selected = new IntPtr(101);
+		Assert(WindowClickBehavior.ShouldProcessPointerPress(1), "A normal card click was suppressed.");
+		Assert(!WindowClickBehavior.ShouldProcessPointerPress(2), "A double-click still triggered a card command.");
+		Assert(WindowClickBehavior.Decide(selected, new IntPtr(202), false, true) == WindowClickAction.ActivatePreservingPlacement,
+			"A visible window should be activated without a size-changing ShowWindow command.");
 		Assert(WindowClickBehavior.Decide(selected, selected, false, true) == WindowClickAction.Minimize,
-			"Clicking the selected foreground window should minimize it.");
-		Assert(WindowClickBehavior.Decide(selected, new IntPtr(202), false, true) == WindowClickAction.Activate,
-			"Clicking a background window should activate that exact window.");
-		Assert(WindowClickBehavior.Decide(selected, selected, true, true) == WindowClickAction.Activate,
-			"A minimized window should be restored instead of minimized again.");
+			"Clicking the selected foreground window should still minimize it.");
+		Assert(WindowClickBehavior.Decide(selected, selected, false, true, allowMinimize: false) == WindowClickAction.ActivatePreservingPlacement,
+			"The explicit Bring to front command must not minimize the current window.");
+		Assert(WindowClickBehavior.Decide(selected, selected, true, true) == WindowClickAction.RestoreAndActivate,
+			"Only a currently minimized window should receive a restore command.");
 		Assert(WindowClickBehavior.Decide(selected, IntPtr.Zero, false, false) == WindowClickAction.Ignore,
 			"A destroyed window should not trigger another application.");
+		Assert(WindowClickBehavior.Decide(IntPtr.Zero, IntPtr.Zero, false, true) == WindowClickAction.Ignore,
+			"An empty window handle should not trigger activation.");
+	}
+
+	private static void CardClicksAreImmediate()
+	{
+		var gate = new CardClickGesture();
+		var target = new CardHitTarget("test", new FakeWindow(123, "Test", "test.exe"), [], 0);
+		var point = new Point(30, 100);
+		var tolerance = new Size(8, 8);
+		Assert(gate.Begin(target, WindowClickAction.Minimize, 1, point, 1000, 500, tolerance), "First press was rejected.");
+		Assert(gate.Take() is null, "A press executed before release.");
+		Assert(gate.Release(target, point, tolerance), "Release on the original card was rejected.");
+		var action = gate.Take();
+		Assert(action?.Target == target && action.Action == WindowClickAction.Minimize,
+			"The click was delayed or lost its original target/action.");
+		Assert(gate.Take() is null, "One release executed twice.");
+		var other = target with { StageKey = "other", Window = new FakeWindow(456, "Other", "other.exe") };
+		Assert(gate.Begin(other, WindowClickAction.ActivatePreservingPlacement, 1, point, 1050, 500, tolerance),
+			"A fast click on a different card was suppressed.");
+		gate.Release(other, point, tolerance);
+		Assert(gate.Take()?.Target == other, "The second card did not respond immediately.");
+	}
+
+	private static void CardDoubleClickRunsOnce()
+	{
+		var target = new CardHitTarget("test", new FakeWindow(123, "Test", "test.exe"), [], 0);
+		var point = new Point(30, 100);
+		var tolerance = new Size(8, 8);
+		foreach (var clicks in new[] { 1, 2 })
+		{
+			var gate = new CardClickGesture();
+			Assert(gate.Begin(target, WindowClickAction.Minimize, 1, point, 1000, 500, tolerance), "First press was rejected.");
+			Assert(gate.Release(target, point, tolerance), "A release on the original card was rejected.");
+			Assert(gate.Take()?.Action == WindowClickAction.Minimize, "The first click did not execute immediately.");
+			Assert(!gate.Begin(target, WindowClickAction.RestoreAndActivate, clicks, point, 1300, 500, tolerance),
+				"The native or fallback second click was not suppressed.");
+			Assert(!gate.Release(target, point, tolerance) && gate.Take() is null,
+				"A double-click restored the window after minimizing it.");
+			Assert(gate.Begin(target, WindowClickAction.RestoreAndActivate, 1, point, 1600, 500, tolerance),
+				"A later intentional click was suppressed.");
+			gate.Release(target, point, tolerance);
+			Assert(gate.Take()?.Action == WindowClickAction.RestoreAndActivate,
+				"The later click failed to restore the window.");
+		}
+		var movedGate = new CardClickGesture();
+		movedGate.Begin(target, null, 1, point, 1000, 500, tolerance);
+		movedGate.Release(target, point, tolerance);
+		movedGate.Take();
+		Assert(movedGate.Begin(target, null, 1, new Point(50, 100), 1100, 500, tolerance),
+			"A separate click outside the double-click area was suppressed.");
+	}
+
+	private static void CancelledCardClicksDoNothing()
+	{
+		var gate = new CardClickGesture();
+		var target = new CardHitTarget("test", new FakeWindow(123, "Test", "test.exe"), [], 0);
+		var point = new Point(30, 100);
+		var tolerance = new Size(8, 8);
+		gate.Begin(target, null, 1, point, 1000, 500, tolerance);
+		Assert(gate.IsDrag(new Point(50, 100), tolerance), "A drag was treated as a click.");
+		Assert(!gate.Release(target, new Point(50, 100), tolerance) && gate.Take() is null,
+			"Dragging off the press point still executed a click.");
+		Assert(gate.Begin(target, null, 1, point, 1100, 500, tolerance),
+			"An unsuccessful drag swallowed the next click.");
+		Assert(!gate.Release(target with { StageKey = "other" }, point, tolerance) && gate.Take() is null,
+			"Release on another card was accepted.");
+		gate.Begin(target, null, 1, point, 1200, 500, tolerance);
+		gate.Cancel();
+		Assert(gate.Take() is null && !gate.Release(target, point, tolerance),
+			"A cancelled context-menu/scroll/capture-loss gesture ran later.");
+		Assert(gate.Begin(target, null, 1, point, 1300, 500, tolerance),
+			"A cancelled press swallowed the next click.");
+		Assert(gate.Take() is null, "Holding the mouse button executed a click.");
+		gate.Release(target, point, tolerance);
+		Assert(gate.Take()?.Target == target, "A held press was lost after a valid release.");
+	}
+
+	private static void CardHintsMatchActions()
+	{
+		foreach (var language in new[] { UiLanguage.English, UiLanguage.SimplifiedChinese })
+		{
+			var chinese = language == UiLanguage.SimplifiedChinese;
+			var background = CardHoverText.Window(language, "Report", "App", false, false, true);
+			var foreground = CardHoverText.Window(language, "Report", "App", false, true, true);
+			var minimized = CardHoverText.Window(language, "Report", "App", true, false, false);
+			Assert(background.Contains(chinese ? "单击置于前台" : "Click to bring forward"), "Background hint described the wrong action.");
+			Assert(foreground.Contains(chinese ? "单击最小化" : "Click to minimize"), "Foreground hint omitted minimize.");
+			Assert(minimized.Contains(chinese ? "单击恢复" : "Click to restore"), "Minimized hint omitted restore.");
+			Assert(!background.Contains("Double-click") && !background.Contains("双击"), "A removed double-click action was advertised.");
+			var pinned = CardHoverText.Group(language, "App", 3, true, true, false, false);
+			Assert(pinned.Contains("FIXED") && !pinned.Contains(chinese ? "单击收起" : "Click to collapse"), "A pinned group offered an unavailable collapse action.");
+		}
+		var compact = CardHoverText.CompactTitle("  多行\n\t标题  " + new string('长', 200));
+		Assert(!compact.Contains('\n') && compact.EndsWith('…') && compact.Length < 50, "A long multiline title overflowed the hint.");
 	}
 
 	private static void PointerButtonTransitions()
@@ -637,6 +1007,10 @@ internal static class TestRunner
 					"The Explorer quick button option was not exposed in Chinese.");
 				Assert(Descendants(form).Any(control => control.Text == "多窗口卡片展开时显示固定按钮"),
 					"The expanded-card pin button option was not exposed in Chinese.");
+				Assert(Descendants(form).Any(control => control.Text == "在底部卡片中显示 Windows 隐藏图标"),
+					"The hidden-icons card toggle was not exposed in Chinese.");
+				Assert(Descendants(form).Any(control => control.Text == "在窗口卡片下方显示一键最小化／恢复快捷卡"),
+					"The Show Desktop button toggle was not exposed in Chinese.");
 				var switchButton = Descendants(form)
 					.OfType<Button>()
 					.Single(button => button.Text == "English");
@@ -787,6 +1161,18 @@ internal static class TestRunner
 			"A temporary edge reveal unexpectedly rearranged the desktop work area.");
 		Assert(!FocusEnhancedBehavior.ShouldIdleHide(StageMode.Focus, true),
 			"Focus enhanced mode still allowed idle auto-hide.");
+		Assert(!FocusEnhancedBehavior.CanHideSidebar(StageMode.Focus, exclusiveFullScreenActive: false),
+			"A stale or delayed request could hide the persistent Focus sidebar outside full-screen.");
+		Assert(FocusEnhancedBehavior.CanHideSidebar(StageMode.Focus, exclusiveFullScreenActive: true),
+			"Focus mode could not temporarily hide while an exclusive full-screen window was active.");
+		Assert(FocusEnhancedBehavior.CanHideSidebar(StageMode.Coexist, exclusiveFullScreenActive: false),
+			"Standard mode lost manual and idle sidebar hiding.");
+		Assert(FocusEnhancedBehavior.ShouldPollHiddenSidebar(StageMode.Focus, pointerAtLeftEdge: false),
+			"A hidden Focus sidebar stopped checking whether a long full-screen session had ended.");
+		Assert(!FocusEnhancedBehavior.ShouldPollHiddenSidebar(StageMode.Coexist, pointerAtLeftEdge: false),
+			"A normally hidden standard sidebar continued unnecessary foreground polling.");
+		Assert(FocusEnhancedBehavior.ShouldPollHiddenSidebar(StageMode.Coexist, pointerAtLeftEdge: true),
+			"Standard mode no longer woke when the pointer reached the left edge.");
 		Assert(!FocusEnhancedBehavior.ShouldShowCollapseButton(StageMode.Focus),
 			"Focus enhanced mode still exposed the accidental-collapse button.");
 		Assert(FocusEnhancedBehavior.ShouldShowCollapseButton(StageMode.Coexist),

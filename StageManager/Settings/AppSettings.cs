@@ -39,8 +39,13 @@ public sealed class AppSettings
 	public double CardScale { get; set; } = 0.60;
 	public int SidebarVerticalOffset { get; set; } = -80;
 	public bool ShowExplorerButton { get; set; } = true;
+	public bool ShowChromeQuickLaunch { get; set; } = true;
+	public bool ShowEdgeQuickLaunch { get; set; } = true;
 	public bool ShowExpandedPinButton { get; set; } = true;
 	public bool ShowNotificationAreaCard { get; set; } = true;
+	public bool ShowDesktopButton { get; set; } = true;
+	public bool ShowDesktopIconsButton { get; set; } = true;
+	public int NotificationAreaVerticalOffset { get; set; }
 	public double SidebarOpacity { get; set; } = 0.94;
 	public string ToggleSidebarHotkey { get; set; } = "Win+Alt+S";
 	public string PreviousStageHotkey { get; set; } = "Win+Alt+[";

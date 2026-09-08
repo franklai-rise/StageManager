@@ -165,6 +165,16 @@ internal static class NotificationAreaWorker
 			new PropertyCondition(AutomationElement.ClassNameProperty, "Shell_TrayWnd"));
 		if (taskbar is null)
 			return null;
+		var button = FindOverflowButton(taskbar);
+		if (button is not null)
+			return button;
+		if (!RevealAutoHiddenTaskbar(taskbar))
+			return null;
+		return FindOverflowButton(taskbar);
+	}
+
+	private static AutomationElement? FindOverflowButton(AutomationElement taskbar)
+	{
 		var descendants = taskbar.FindAll(TreeScope.Descendants, Condition.TrueCondition);
 		for (var index = 0; index < descendants.Count; index++)
 		{
@@ -178,6 +188,48 @@ internal static class NotificationAreaWorker
 			}
 		}
 		return null;
+	}
+
+	private static bool RevealAutoHiddenTaskbar(AutomationElement taskbar)
+	{
+		if (!GetCursorPos(out var original))
+			return false;
+		try
+		{
+			var automationBounds = taskbar.Current.BoundingRectangle;
+			var bounds = Rectangle.FromLTRB(
+				(int)Math.Floor(automationBounds.Left),
+				(int)Math.Floor(automationBounds.Top),
+				(int)Math.Ceiling(automationBounds.Right),
+				(int)Math.Ceiling(automationBounds.Bottom));
+			if (bounds.Width <= 0 || bounds.Height <= 0)
+				return false;
+			var screen = Screen.FromRectangle(bounds).Bounds;
+			int x;
+			int y;
+			if (bounds.Width >= bounds.Height)
+			{
+				x = Math.Clamp(bounds.Right - 90, screen.Left + 1, screen.Right - 2);
+				y = Math.Abs(bounds.Top - screen.Top) < Math.Abs(bounds.Bottom - screen.Bottom)
+					? screen.Top + 1
+					: screen.Bottom - 2;
+			}
+			else
+			{
+				x = Math.Abs(bounds.Left - screen.Left) < Math.Abs(bounds.Right - screen.Right)
+					? screen.Left + 1
+					: screen.Right - 2;
+				y = Math.Clamp(bounds.Bottom - 90, screen.Top + 1, screen.Bottom - 2);
+			}
+			if (!SetCursorPos(x, y))
+				return false;
+			Thread.Sleep(550);
+			return true;
+		}
+		finally
+		{
+			SetCursorPos(original.X, original.Y);
+		}
 	}
 
 	private static AutomationElement? FindOverflowWindow() =>
@@ -272,4 +324,17 @@ internal static class NotificationAreaWorker
 
 	[DllImport("user32.dll")]
 	private static extern uint GetDpiForWindow(IntPtr windowHandle);
+
+	[DllImport("user32.dll")]
+	private static extern bool GetCursorPos(out NativePoint point);
+
+	[DllImport("user32.dll")]
+	private static extern bool SetCursorPos(int x, int y);
+
+	[StructLayout(LayoutKind.Sequential)]
+	private readonly struct NativePoint
+	{
+		public readonly int X;
+		public readonly int Y;
+	}
 }

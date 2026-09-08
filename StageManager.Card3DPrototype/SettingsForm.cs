@@ -9,8 +9,12 @@ internal sealed class SettingsForm : Form
 	private readonly Label _cardSizeValue;
 	private readonly NumericUpDown _sidebarVerticalOffset;
 	private readonly CheckBox _showExplorerButton;
+	private readonly CheckBox _showChromeQuickLaunch;
+	private readonly CheckBox _showEdgeQuickLaunch;
 	private readonly CheckBox _showExpandedPinButton;
 	private readonly CheckBox _showNotificationAreaCard;
+	private readonly CheckBox _showDesktopButton;
+	private readonly CheckBox _showDesktopIconsButton;
 	private readonly CheckBox _animationsEnabled;
 	private readonly CheckBox _lowMemoryRendering;
 	private readonly CheckBox _idleAutoHideEnabled;
@@ -49,7 +53,7 @@ internal sealed class SettingsForm : Form
 
 		Controls.Add(new Label
 		{
-			Text = "Stage_Manager_Lai v4.3.1",
+			Text = "Stage_Manager_Lai v4.4.7",
 			Font = new Font("Segoe UI", 17f, FontStyle.Bold),
 			AutoSize = true,
 			Location = new Point(22, 18)
@@ -65,7 +69,7 @@ internal sealed class SettingsForm : Form
 		_languageButton.Click += (_, _) => ToggleLanguage();
 		Controls.Add(_languageButton);
 
-		var appearanceGroup = CreateGroup("Appearance", new Rectangle(20, 58, 580, 301));
+		var appearanceGroup = CreateGroup("Appearance", new Rectangle(20, 58, 580, 421));
 		appearanceGroup.Controls.Add(CreateLabel("Card size", 18, 31, 105));
 		_cardSizeSlider = new TrackBar
 		{
@@ -116,23 +120,51 @@ internal sealed class SettingsForm : Form
 			195,
 			520);
 		appearanceGroup.Controls.Add(_showExplorerButton);
+		_showChromeQuickLaunch = CreateCheckBox(
+			"Show Google Chrome quick-launch card",
+			draft.ShowChromeQuickLaunch,
+			18,
+			225,
+			520);
+		appearanceGroup.Controls.Add(_showChromeQuickLaunch);
+		_showEdgeQuickLaunch = CreateCheckBox(
+			"Show Microsoft Edge quick-launch card",
+			draft.ShowEdgeQuickLaunch,
+			18,
+			255,
+			520);
+		appearanceGroup.Controls.Add(_showEdgeQuickLaunch);
 		_showExpandedPinButton = CreateCheckBox(
 			"Show pin button when multi-window cards are expanded",
 			draft.ShowExpandedPinButton,
 			18,
-			225,
+			285,
 			540);
 		appearanceGroup.Controls.Add(_showExpandedPinButton);
 		_showNotificationAreaCard = CreateCheckBox(
 			"Show Windows hidden icons in a bottom card",
 			draft.ShowNotificationAreaCard,
 			18,
-			255,
+			315,
 			540);
 		appearanceGroup.Controls.Add(_showNotificationAreaCard);
+		_showDesktopButton = CreateCheckBox(
+			"Show minimize / restore shortcut below window cards",
+			draft.ShowDesktopButton,
+			18,
+			345,
+			540);
+		appearanceGroup.Controls.Add(_showDesktopButton);
+		_showDesktopIconsButton = CreateCheckBox(
+			"Show desktop-icons toggle below minimize / restore",
+			draft.ShowDesktopIconsButton,
+			18,
+			375,
+			540);
+		appearanceGroup.Controls.Add(_showDesktopIconsButton);
 		appearanceGroup.Controls.AddRange(new Control[] { _cardSizeSlider, _cardSizeValue, _interfaceLanguage, _animationsEnabled, _lowMemoryRendering });
 
-		var behaviorGroup = CreateGroup("Behavior", new Rectangle(20, 369, 580, 204));
+		var behaviorGroup = CreateGroup("Behavior", new Rectangle(20, 489, 580, 204));
 		_idleAutoHideEnabled = CreateCheckBox("Auto-hide after no pointer activity", draft.IdleAutoHideEnabled, 18, 31, 300);
 		behaviorGroup.Controls.Add(_idleAutoHideEnabled);
 		behaviorGroup.Controls.Add(CreateLabel("Idle delay", 325, 33, 78));
@@ -178,7 +210,7 @@ internal sealed class SettingsForm : Form
 			430);
 		behaviorGroup.Controls.Add(_pausePreviewRefreshWhenHidden);
 
-		var shortcutsGroup = CreateGroup("Keyboard shortcuts", new Rectangle(20, 583, 580, 190));
+		var shortcutsGroup = CreateGroup("Keyboard shortcuts", new Rectangle(20, 703, 580, 190));
 		_hotkeysEnabled = CreateCheckBox("Enable global shortcuts", draft.HotkeysEnabled, 18, 28, 260);
 		shortcutsGroup.Controls.Add(_hotkeysEnabled);
 		shortcutsGroup.Controls.Add(CreateLabel("Show / hide sidebar", 18, 70, 180));
@@ -192,7 +224,7 @@ internal sealed class SettingsForm : Form
 		_nextStageHotkey.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 		shortcutsGroup.Controls.AddRange(new Control[] { _toggleSidebarHotkey, _previousStageHotkey, _nextStageHotkey });
 
-		var ignoredGroup = CreateGroup("Ignored applications", new Rectangle(20, 783, 580, 192));
+		var ignoredGroup = CreateGroup("Ignored applications", new Rectangle(20, 903, 580, 192));
 		ignoredGroup.Controls.Add(CreateLabel("Check an app to hide its card only; the app remains fully usable.", 18, 25, 540));
 		_ignoredApplications = new CheckedListBox
 		{
@@ -231,21 +263,21 @@ internal sealed class SettingsForm : Form
 		{
 			Text = "Cancel",
 			DialogResult = DialogResult.Cancel,
-			Location = new Point(412, 1009),
+			Location = new Point(412, 1129),
 			Size = new Size(88, 34),
 			Anchor = AnchorStyles.Top | AnchorStyles.Right
 		};
 		var resetButton = new Button
 		{
 			Text = "Reset defaults",
-			Location = new Point(20, 1009),
+			Location = new Point(20, 1129),
 			Size = new Size(120, 34)
 		};
 		resetButton.Click += (_, _) => ResetDefaults();
 		var saveButton = new Button
 		{
 			Text = "Save",
-			Location = new Point(510, 1009),
+			Location = new Point(510, 1129),
 			Size = new Size(88, 34),
 			Anchor = AnchorStyles.Top | AnchorStyles.Right
 		};
@@ -288,8 +320,12 @@ internal sealed class SettingsForm : Form
 		Draft.CardScale = _cardSizeSlider.Value / 100d;
 		Draft.SidebarVerticalOffset = (int)_sidebarVerticalOffset.Value;
 		Draft.ShowExplorerButton = _showExplorerButton.Checked;
+		Draft.ShowChromeQuickLaunch = _showChromeQuickLaunch.Checked;
+		Draft.ShowEdgeQuickLaunch = _showEdgeQuickLaunch.Checked;
 		Draft.ShowExpandedPinButton = _showExpandedPinButton.Checked;
 		Draft.ShowNotificationAreaCard = _showNotificationAreaCard.Checked;
+		Draft.ShowDesktopButton = _showDesktopButton.Checked;
+		Draft.ShowDesktopIconsButton = _showDesktopIconsButton.Checked;
 		Draft.AnimationsEnabled = _animationsEnabled.Checked;
 		Draft.LowMemoryRendering = _lowMemoryRendering.Checked;
 		Draft.IdleAutoHideEnabled = _idleAutoHideEnabled.Checked;
@@ -401,8 +437,12 @@ internal sealed class SettingsForm : Form
 		_cardSizeSlider.Value = 60;
 		_sidebarVerticalOffset.Value = -80;
 		_showExplorerButton.Checked = true;
+		_showChromeQuickLaunch.Checked = true;
+		_showEdgeQuickLaunch.Checked = true;
 		_showExpandedPinButton.Checked = true;
 		_showNotificationAreaCard.Checked = true;
+		_showDesktopButton.Checked = true;
+		_showDesktopIconsButton.Checked = true;
 		_animationsEnabled.Checked = true;
 		_lowMemoryRendering.Checked = true;
 		_idleAutoHideEnabled.Checked = true;

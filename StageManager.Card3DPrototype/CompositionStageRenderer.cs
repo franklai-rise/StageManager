@@ -1,6 +1,8 @@
 using StageManager.Native.Window;
 using StageManager.Settings;
 using StageManager.Card3DPrototype.NotificationArea;
+using StageManager.Card3DPrototype.QuickLaunch;
+using System.Diagnostics;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Numerics;
@@ -21,11 +23,24 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private readonly Control _owner;
 	private readonly Compositor _compositor;
 	private readonly ContainerVisual _cameraRoot;
+	private readonly ContainerVisual _mainCamera;
+	private readonly ContainerVisual _fixedCamera;
+	private readonly SidebarScrollMotion _scrollMotion = new();
+	private readonly System.Windows.Forms.Timer _scrollTimer = new() { Interval = 16 };
+	private readonly System.Windows.Forms.Timer _layoutMotionTimer = new() { Interval = 160 };
+	private Vector2 _toolbarLayoutKey = new(-1, -1);
+	private (WindowCardVisual Card, CapturedCardFrame Frame)? _deferredCapture;
+	private readonly List<(StageCardVisual Stage, float Top, float Height)> _stageScrollBounds = new();
+	private long _lastScrollTick;
 	private readonly D3DCompositionDevice _graphics;
 	private readonly WindowFrameCapture _capture = new();
 	private readonly SidebarExpandAllButtonVisual _expandAllButton;
 	private readonly SidebarExplorerButtonVisual _explorerButton;
 	private readonly SidebarCollapseButtonVisual _collapseButton;
+	private readonly SidebarDesktopButtonVisual _desktopButton;
+	private readonly SidebarDesktopIconsButtonVisual _desktopIconsButton;
+	private readonly SidebarQuickLaunchVisual _chromeButton;
+	private readonly SidebarQuickLaunchVisual _edgeButton;
 	private readonly NotificationTrayCardVisual _notificationAreaCard;
 	private readonly Dictionary<string, StageCardVisual> _stages = new(StringComparer.OrdinalIgnoreCase);
 	private readonly System.Windows.Forms.Timer _captureTimer;
@@ -37,6 +52,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private string? _expandedStageKey;
 	private bool _expandedByHover;
 	private bool _expandedPinned;
+	private WindowCardVisual? _feedbackCard;
 	private string? _hoveredStageKey;
 	private IntPtr _hoveredWindowHandle;
 	private bool _hoveredGroupCard;
@@ -44,8 +60,6 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private float _dpiScale = 1f;
 	private float _viewportWidth;
 	private float _viewportHeight;
-	private float _scrollOffset;
-	private float _maximumScroll;
 	private int _expandedPage;
 	private bool _disposeCaptureWhenIdle;
 	private bool _disposed;
@@ -56,11 +70,20 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private bool _explorerButtonEnabled = true;
 	private bool _explorerButtonHovered;
 	private bool _explorerRequested;
+	private bool _chromeQuickLaunchEnabled;
+	private bool _edgeQuickLaunchEnabled;
+	private QuickLaunchApp? _quickLaunchRequested;
 	private bool _pinButtonEnabled;
 	private bool _pinButtonHovered;
 	private bool _collapseButtonEnabled = true;
 	private bool _collapseButtonHovered;
 	private bool _collapseRequested;
+	private bool _desktopButtonEnabled = true;
+	private bool _desktopButtonHovered;
+	private bool _desktopToggleRequested;
+	private bool _desktopIconsButtonEnabled = true;
+	private bool _desktopIconsButtonHovered;
+	private bool _desktopIconsToggleRequested;
 	// Start disabled and let persisted settings explicitly attach the footer.
 	// This avoids relying on the constructor/first-resize ordering of the
 	// DesktopWindowTarget visual tree after a cold launch.
@@ -69,6 +92,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private NotificationIconActivation? _notificationIconActivationRequest;
 	private float _preferenceScale;
 	private int _sidebarVerticalOffset = DefaultSidebarVerticalOffset;
+	private int _notificationAreaVerticalOffset;
 	private int _previewRefreshMinutes = WindowCapturePolicy.DefaultRefreshMinutes;
 	private bool _pausePreviewRefreshWhenHidden = true;
 	private bool _manualRefreshPending;
@@ -78,17 +102,31 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_owner = owner;
 		_compositor = compositor;
 		_cameraRoot = cameraRoot;
+		_mainCamera = compositor.CreateContainerVisual();
+		_fixedCamera = compositor.CreateContainerVisual();
+		_cameraRoot.Children.InsertAtTop(_mainCamera);
+		_cameraRoot.Children.InsertAtTop(_fixedCamera);
+		_scrollTimer.Tick += (_, _) => AdvanceScroll();
+		_layoutMotionTimer.Tick += (_, _) => FinishLayoutMotion();
 		_preferenceScale = NormalizeCardScale(cardScale);
 		_animationsEnabled = animationsEnabled;
 		_graphics = new D3DCompositionDevice(lowMemoryRendering);
 		_expandAllButton = new SidebarExpandAllButtonVisual(_compositor);
 		_explorerButton = new SidebarExplorerButtonVisual(_compositor);
 		_collapseButton = new SidebarCollapseButtonVisual(_compositor);
+		_desktopButton = new SidebarDesktopButtonVisual(_compositor);
+		_desktopIconsButton = new SidebarDesktopIconsButtonVisual(_compositor);
+		_chromeButton = new SidebarQuickLaunchVisual(_compositor, _graphics, QuickLaunchApp.Chrome);
+		_edgeButton = new SidebarQuickLaunchVisual(_compositor, _graphics, QuickLaunchApp.Edge);
 		_notificationAreaCard = new NotificationTrayCardVisual(_compositor, _graphics);
-		_cameraRoot.Children.InsertAtTop(_expandAllButton.Root);
-		_cameraRoot.Children.InsertAtTop(_explorerButton.Root);
-		_cameraRoot.Children.InsertAtTop(_collapseButton.Root);
-		_cameraRoot.Children.InsertAtTop(_notificationAreaCard.Root);
+		_mainCamera.Children.InsertAtTop(_expandAllButton.Root);
+		_mainCamera.Children.InsertAtTop(_explorerButton.Root);
+		_mainCamera.Children.InsertAtTop(_collapseButton.Root);
+		_mainCamera.Children.InsertAtTop(_desktopButton.Root);
+		_mainCamera.Children.InsertAtTop(_desktopIconsButton.Root);
+		_mainCamera.Children.InsertAtTop(_chromeButton.Root);
+		_mainCamera.Children.InsertAtTop(_edgeButton.Root);
+		_mainCamera.Children.InsertAtTop(_notificationAreaCard.Root);
 		_captureTimer = new System.Windows.Forms.Timer { Interval = 350 };
 		_captureTimer.Tick += (_, _) => ScheduleCaptures();
 		_captureTimer.Start();
@@ -99,13 +137,49 @@ internal sealed class CompositionStageRenderer : IDisposable
 	public int SidebarVerticalOffset => _sidebarVerticalOffset;
 	public bool SidebarVisible => _sidebarVisible;
 	public bool IsExpandedStagePinned => _expandedPinned;
+	public bool AreAllStagesExpanded => _expandAllStages;
+	public bool IsStageExpanded(string key) => _expandAllStages || string.Equals(key, _expandedStageKey, StringComparison.OrdinalIgnoreCase);
+	public bool IsStagePinned(string key) => _expandedPinned && string.Equals(key, _expandedStageKey, StringComparison.OrdinalIgnoreCase);
+	public PrototypeStageSnapshot? GetStageSnapshot(string key) => _snapshots.FirstOrDefault(stage => string.Equals(stage.Key, key, StringComparison.OrdinalIgnoreCase));
+
+	public void SetCardFeedback(CardHitTarget? target, CardFeedback feedback)
+	{
+		WindowCardVisual? card = null;
+		if (target is not null && _stages.TryGetValue(target.StageKey, out var stage))
+			card = target.Window is { } window
+				? stage.Windows.FirstOrDefault(candidate => candidate.Window.Handle == window.Handle)
+				: stage.GroupCard;
+		var animate = _animationsEnabled && NativeMethods.ClientAreaAnimationsEnabled;
+		if (_feedbackCard is not null && _feedbackCard != card)
+			_feedbackCard.SetFeedback(CardFeedback.None, animate);
+		_feedbackCard = card;
+		card?.SetFeedback(feedback, animate);
+	}
 	public long LayoutRevision { get; private set; }
+	public event EventHandler? ScrollPositionChanged;
+	public float ScrollTranslationY => -_scrollMotion.Position;
+	public bool IsScrolling => _scrollTimer.Enabled;
 	public float SidebarInteractionWidth => CardSize.X + 48f * _dpiScale;
 	public TimeSpan SidebarAnimationDuration => TimeSpan.FromMilliseconds(220);
+
+	public bool CanScrollAt(Point clientPoint)
+	{
+		if (!_sidebarVisible || clientPoint.X < 0 || clientPoint.Y < 0 ||
+			clientPoint.X > SidebarInteractionWidth || clientPoint.Y > _viewportHeight)
+			return false;
+		return true;
+	}
 
 	public void ReleasePointerPress()
 	{
 		_expandAllButton.SetPressed(false);
+		_explorerButton.SetPressed(false);
+		_collapseButton.SetPressed(false);
+		_desktopButton.SetPressed(false);
+		_desktopIconsButton.SetPressed(false);
+		_chromeButton.SetPressed(false);
+		_edgeButton.SetPressed(false);
+		_notificationAreaCard.SetControlPressed(false, false);
 		_notificationAreaCard.SetPressed(false);
 		if (_expandedStageKey is not null && _stages.TryGetValue(_expandedStageKey, out var stage))
 			stage.PinButton.SetPressed(false);
@@ -136,7 +210,13 @@ internal sealed class CompositionStageRenderer : IDisposable
 		}
 		var requested = _explorerRequested;
 		_explorerRequested = false;
-		_explorerButton.SetPressed(false);
+		return requested;
+	}
+
+	public QuickLaunchApp? ConsumeQuickLaunchRequest()
+	{
+		var requested = _quickLaunchRequested;
+		_quickLaunchRequested = null;
 		return requested;
 	}
 
@@ -152,16 +232,85 @@ internal sealed class CompositionStageRenderer : IDisposable
 		return requested;
 	}
 
-	public IReadOnlyList<PointF[]> GetInteractivePolygons()
+	public bool ConsumeDesktopToggleRequest()
+	{
+		if (!_desktopButtonEnabled)
+		{
+			_desktopToggleRequested = false;
+			return false;
+		}
+		var requested = _desktopToggleRequested;
+		_desktopToggleRequested = false;
+		return requested;
+	}
+
+	public void SetDesktopShown(bool shown) => _desktopButton.SetActive(shown);
+
+	public bool ConsumeDesktopIconsToggleRequest()
+	{
+		if (!_desktopIconsButtonEnabled)
+		{
+			_desktopIconsToggleRequested = false;
+			return false;
+		}
+		var requested = _desktopIconsToggleRequested;
+		_desktopIconsToggleRequested = false;
+		return requested;
+	}
+
+	public void SetDesktopIconsVisible(bool visible) => _desktopIconsButton.SetIconsVisible(visible);
+
+	public IReadOnlyList<PointF[]> GetInteractivePolygons(bool fixedLayer)
 	{
 		var polygons = _hitTargets
-			.Select(target => target.Polygon.Select(point => new PointF(point.X, point.Y)).ToArray())
+			.Where(_ => !fixedLayer)
+			.Select(target =>
+			{
+				if (target.Projection?.IsMoving != true)
+					return target.Polygon.Select(point => new PointF(point.X, point.Y)).ToArray();
+				var points = target.Polygon.Concat(target.Projection.CurrentPolygon()).ToArray();
+				var left = points.Min(point => point.X);
+				var right = points.Max(point => point.X);
+				var top = points.Min(point => point.Y);
+				var bottom = points.Max(point => point.Y);
+				return new[] { new PointF(left, top), new PointF(right, top),
+					new PointF(right, bottom), new PointF(left, bottom) };
+			})
 			.ToList();
-		polygons.AddRange(_passivePolygons.Select(polygon => polygon.Select(point => new PointF(point.X, point.Y)).ToArray()));
+		if (!fixedLayer)
+			polygons.AddRange(_passivePolygons.Select(polygon => polygon.Select(point => new PointF(point.X, point.Y)).ToArray()));
 		return polygons;
 	}
 
-	public void SetAnimationsEnabled(bool enabled) => _animationsEnabled = enabled;
+	public void SetAnimationsEnabled(bool enabled)
+	{
+		_animationsEnabled = enabled;
+		if (!enabled)
+		{
+			FinishScroll();
+			LayoutStages(false);
+		}
+	}
+
+	public void SetNotificationAreaDragPressed(bool pressed) => _notificationAreaCard.SetControlPressed(pressed, false);
+	public void SetNotificationAreaRefreshPressed(bool pressed) => _notificationAreaCard.SetControlPressed(false, pressed);
+
+	public bool SetNotificationAreaVerticalOffset(int verticalOffset)
+	{
+		// Kept for settings migration. The hidden-icons card now follows the
+		// scrolling card column and no longer has an independent vertical offset.
+		_notificationAreaVerticalOffset = 0;
+		return verticalOffset != 0;
+	}
+
+	public bool PreviewNotificationAreaVerticalOffset(int verticalOffset)
+	{
+		return false;
+	}
+
+	public void CommitNotificationAreaVerticalOffset() => LayoutStages(false);
+
+	public int NotificationAreaVerticalOffset => _notificationAreaVerticalOffset;
 
 	public bool SetExplorerButtonEnabled(bool enabled)
 	{
@@ -172,7 +321,26 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_explorerRequested = false;
 		_explorerButton.SetPressed(false);
 		SetExplorerButtonHovered(false);
+		_chromeButton.SetPressed(false);
+		_chromeButton.SetHovered(false);
+		_edgeButton.SetPressed(false);
+		_edgeButton.SetHovered(false);
 		_explorerButton.SetVisible(false);
+		LayoutStages(true);
+		return true;
+	}
+
+	public bool SetQuickLaunchButtonsEnabled(bool chromeEnabled, bool edgeEnabled)
+	{
+		chromeEnabled &= _chromeButton.IsAvailable;
+		edgeEnabled &= _edgeButton.IsAvailable;
+		if (_chromeQuickLaunchEnabled == chromeEnabled && _edgeQuickLaunchEnabled == edgeEnabled)
+			return false;
+		_chromeQuickLaunchEnabled = chromeEnabled;
+		_edgeQuickLaunchEnabled = edgeEnabled;
+		_quickLaunchRequested = null;
+		_chromeButton.SetVisible(false);
+		_edgeButton.SetVisible(false);
 		LayoutStages(true);
 		return true;
 	}
@@ -201,6 +369,32 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_notificationAreaCard.SetPressed(false);
 		_notificationAreaCard.SetHovered(null);
 		_notificationAreaCard.SetVisible(false);
+		LayoutStages(true);
+		return true;
+	}
+
+	public bool SetDesktopButtonEnabled(bool enabled)
+	{
+		if (_desktopButtonEnabled == enabled)
+			return false;
+		_desktopButtonEnabled = enabled;
+		_desktopToggleRequested = false;
+		_desktopButton.SetPressed(false);
+		SetDesktopButtonHovered(false);
+		_desktopButton.SetVisible(false);
+		LayoutStages(true);
+		return true;
+	}
+
+	public bool SetDesktopIconsButtonEnabled(bool enabled)
+	{
+		if (_desktopIconsButtonEnabled == enabled)
+			return false;
+		_desktopIconsButtonEnabled = enabled;
+		_desktopIconsToggleRequested = false;
+		_desktopIconsButton.SetPressed(false);
+		SetDesktopIconsButtonHovered(false);
+		_desktopIconsButton.SetVisible(false);
 		LayoutStages(true);
 		return true;
 	}
@@ -272,12 +466,20 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var previous = _cameraRoot.Offset;
 		var target = new Vector3(visible ? 0 : HiddenOffsetX, 0, 0);
 		_sidebarVisible = visible;
+		if (!visible)
+			FinishScroll();
 		_expandAllButton.SetPressed(false);
 		SetExpandAllButtonHovered(false);
 		_explorerButton.SetPressed(false);
 		SetExplorerButtonHovered(false);
 		_collapseButton.SetPressed(false);
 		SetCollapseButtonHovered(false);
+		_desktopButton.SetPressed(false);
+		SetDesktopButtonHovered(false);
+		_desktopIconsButton.SetPressed(false);
+		SetDesktopIconsButtonHovered(false);
+		_notificationAreaCard.SetControlPressed(false, false);
+		_notificationAreaCard.SetControlHovered(false, false);
 		_notificationAreaCard.SetPressed(false);
 		_notificationAreaCard.SetHovered(null);
 		SetPinButtonHovered(false);
@@ -303,7 +505,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_hitTargets.Clear();
 		foreach (var stage in _stages.Values)
 		{
-			_cameraRoot.Children.Remove(stage.Root);
+			_mainCamera.Children.Remove(stage.Root);
 			stage.Dispose();
 		}
 		_stages.Clear();
@@ -329,10 +531,14 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_viewportHeight = Math.Max(1, height);
 		_dpiScale = Math.Max(0.75f, dpiScale);
 		_cameraRoot.Size = new Vector2(_viewportWidth, _viewportHeight);
-		_cameraRoot.CenterPoint = new Vector3(_viewportWidth / 2f, _viewportHeight / 2f, 0);
 		var perspective = Matrix4x4.Identity;
 		perspective.M34 = -1f / (PerspectiveDistance * _dpiScale);
-		_cameraRoot.TransformMatrix = perspective;
+		foreach (var camera in new[] { _mainCamera, _fixedCamera })
+		{
+			camera.Size = _cameraRoot.Size;
+			camera.CenterPoint = new Vector3(_viewportWidth / 2f, _viewportHeight / 2f, 0);
+			camera.TransformMatrix = perspective;
+		}
 		LayoutStages(false);
 		if (!_sidebarVisible)
 			_cameraRoot.Offset = new Vector3(HiddenOffsetX, 0, 0);
@@ -349,7 +555,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		{
 			layoutChanged = true;
 			var stage = _stages[stale];
-			_cameraRoot.Children.Remove(stage.Root);
+			_mainCamera.Children.Remove(stage.Root);
 			stage.Dispose();
 			_stages.Remove(stale);
 		}
@@ -361,7 +567,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 				layoutChanged = true;
 				stage = new StageCardVisual(snapshot.Key, _compositor, _graphics, CardPixelWidth, CardPixelHeight, CardSize);
 				_stages[snapshot.Key] = stage;
-				_cameraRoot.Children.InsertAtTop(stage.Root);
+				_mainCamera.Children.InsertAtTop(stage.Root);
 			}
 			stage.Synchronize(snapshot);
 			stage.SynchronizeGroupCard(snapshot.Windows.Count > 1 ? snapshot.Windows[0] : null);
@@ -419,10 +625,11 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	public CardHitTarget? HitTest(Point clientPoint)
 	{
-		var point = new Vector2(clientPoint.X, clientPoint.Y);
-		foreach (var target in _hitTargets.OrderByDescending(target => target.ZOrder))
+		var point = new Vector2(clientPoint.X, clientPoint.Y - ScrollTranslationY);
+		foreach (var target in _hitTargets)
 		{
-			if (Card3DGeometry.Contains(target.Polygon, point))
+			var polygon = target.Projection?.IsMoving == true ? target.Projection.CurrentPolygon() : target.Polygon;
+			if (Card3DGeometry.Contains(polygon, point))
 				return target;
 		}
 		return null;
@@ -435,11 +642,15 @@ internal sealed class CompositionStageRenderer : IDisposable
 			return;
 		_lastPointerInsideUtc = DateTime.UtcNow;
 		SetExplorerButtonHovered(hit.IsExplorerButton);
+		SetQuickLaunchHovered(hit.QuickLaunchApp);
 		SetExpandAllButtonHovered(hit.IsExpandAllButton);
 		SetCollapseButtonHovered(hit.IsSidebarCollapseButton);
+		SetDesktopButtonHovered(hit.IsDesktopButton);
+		SetDesktopIconsButtonHovered(hit.IsDesktopIconsButton);
+		SetNotificationAreaControlHovered(hit);
 		SetPinButtonHovered(hit.IsPinButton);
 		SetNotificationAreaHovered(hit);
-		if (hit.IsSidebarCollapseButton || hit.IsExpandAllButton || hit.IsNotificationAreaCard)
+		if (hit.IsSidebarCollapseButton || hit.IsDesktopButton || hit.IsDesktopIconsButton || hit.IsExpandAllButton || hit.IsNotificationAreaCard || hit.QuickLaunchApp is not null)
 			return;
 		if (!_expandAllStages && _expandedStageKey is not null &&
 			!_expandedPinned &&
@@ -451,12 +662,16 @@ internal sealed class CompositionStageRenderer : IDisposable
 				return;
 			_lastPointerInsideUtc = DateTime.UtcNow;
 			SetExplorerButtonHovered(hit.IsExplorerButton);
+			SetQuickLaunchHovered(hit.QuickLaunchApp);
 			SetExpandAllButtonHovered(hit.IsExpandAllButton);
 			SetCollapseButtonHovered(hit.IsSidebarCollapseButton);
+			SetDesktopButtonHovered(hit.IsDesktopButton);
+			SetDesktopIconsButtonHovered(hit.IsDesktopIconsButton);
+			SetNotificationAreaControlHovered(hit);
 			SetPinButtonHovered(hit.IsPinButton);
 			SetNotificationAreaHovered(hit);
 		}
-		if (hit.IsExplorerButton || hit.IsExpandAllButton || hit.IsPinButton || hit.IsNotificationAreaCard)
+		if (hit.IsExplorerButton || hit.IsDesktopButton || hit.IsDesktopIconsButton || hit.IsExpandAllButton || hit.IsPinButton || hit.IsNotificationAreaCard || hit.QuickLaunchApp is not null)
 			return;
 		if (_expandedStageKey is null ||
 			!string.Equals(_expandedStageKey, hit.StageKey, StringComparison.OrdinalIgnoreCase))
@@ -485,8 +700,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 		{
 			_lastPointerInsideUtc = DateTime.UtcNow;
 			SetExplorerButtonHovered(hit.IsExplorerButton);
+			SetQuickLaunchHovered(hit.QuickLaunchApp);
 			SetExpandAllButtonHovered(hit.IsExpandAllButton);
 			SetCollapseButtonHovered(hit.IsSidebarCollapseButton);
+			SetDesktopButtonHovered(hit.IsDesktopButton);
+			SetDesktopIconsButtonHovered(hit.IsDesktopIconsButton);
+			SetNotificationAreaControlHovered(hit);
 			SetPinButtonHovered(hit.IsPinButton);
 			SetNotificationAreaHovered(hit);
 			if (!_expandAllStages && _expandedStageKey is not null &&
@@ -498,8 +717,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 			return;
 		}
 		SetExplorerButtonHovered(false);
+		SetQuickLaunchHovered(null);
 		SetExpandAllButtonHovered(false);
 		SetCollapseButtonHovered(false);
+		SetDesktopButtonHovered(false);
+		SetDesktopIconsButtonHovered(false);
+		_notificationAreaCard.SetControlHovered(false, false);
 		SetPinButtonHovered(false);
 		_notificationAreaCard.SetHovered(null);
 		var elapsedSinceCard = DateTime.UtcNow - _lastPointerInsideUtc;
@@ -533,9 +756,14 @@ internal sealed class CompositionStageRenderer : IDisposable
 			HasExpandedStage ||
 			target.IsExpandAllButton ||
 			target.IsExplorerButton ||
+			target.QuickLaunchApp is not null ||
 			target.IsPinButton ||
 			target.IsNotificationAreaCard ||
+			target.IsNotificationAreaDragHandle ||
+			target.IsNotificationAreaRefreshButton ||
 			target.IsSidebarCollapseButton ||
+			target.IsDesktopButton ||
+			target.IsDesktopIconsButton ||
 			target.PageDelta != 0 ||
 			!_stages.TryGetValue(target.StageKey, out var stage))
 			return false;
@@ -563,13 +791,33 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	public IWindow? ActivateAt(Point clientPoint)
 	{
-		var hit = HitTest(clientPoint);
+		return Activate(HitTest(clientPoint));
+	}
+
+	public IWindow? Activate(CardHitTarget? hit)
+	{
 		if (hit is null)
 			return null;
 		if (hit.IsExplorerButton)
 		{
 			_explorerRequested = true;
 			_explorerButton.SetPressed(true);
+			return null;
+		}
+		if (hit.QuickLaunchApp is { } quickLaunchApp)
+		{
+			_quickLaunchRequested = quickLaunchApp;
+			(quickLaunchApp == QuickLaunchApp.Chrome ? _chromeButton : _edgeButton).SetPressed(true);
+			return null;
+		}
+		if (hit.IsNotificationAreaDragHandle)
+		{
+			_notificationAreaCard.SetControlPressed(true, false);
+			return null;
+		}
+		if (hit.IsNotificationAreaRefreshButton)
+		{
+			_notificationAreaCard.SetControlPressed(false, true);
 			return null;
 		}
 		if (hit.IsExpandAllButton)
@@ -582,6 +830,18 @@ internal sealed class CompositionStageRenderer : IDisposable
 		{
 			_collapseRequested = true;
 			_collapseButton.SetPressed(true);
+			return null;
+		}
+		if (hit.IsDesktopButton)
+		{
+			_desktopToggleRequested = true;
+			_desktopButton.SetPressed(true);
+			return null;
+		}
+		if (hit.IsDesktopIconsButton)
+		{
+			_desktopIconsToggleRequested = true;
+			_desktopIconsButton.SetPressed(true);
 			return null;
 		}
 		if (hit.IsNotificationAreaCard)
@@ -655,9 +915,50 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	public void Scroll(int wheelDelta)
 	{
-		var stride = CardSize.Y + Gap;
-		_scrollOffset = Math.Clamp(_scrollOffset - Math.Sign(wheelDelta) * stride * 2f, 0, _maximumScroll);
-		LayoutStages(true);
+		if (_disposed || !_sidebarVisible || wheelDelta == 0)
+			return;
+		var animated = _animationsEnabled && NativeMethods.ClientAreaAnimationsEnabled;
+		_scrollMotion.AddWheel(wheelDelta, (CardSize.Y + Gap) * 0.5f, animated);
+		if (!animated)
+		{
+			ApplyScrollTranslation();
+			ScrollPositionChanged?.Invoke(this, EventArgs.Empty);
+			return;
+		}
+		if (!_scrollTimer.Enabled && _scrollMotion.IsMoving)
+		{
+			_lastScrollTick = Stopwatch.GetTimestamp();
+			_scrollTimer.Start();
+		}
+	}
+
+	private void AdvanceScroll()
+	{
+		var now = Stopwatch.GetTimestamp();
+		_scrollMotion.Advance(Stopwatch.GetElapsedTime(_lastScrollTick, now).TotalSeconds);
+		_lastScrollTick = now;
+		ApplyScrollTranslation();
+		ScrollPositionChanged?.Invoke(this, EventArgs.Empty);
+		if (!_scrollMotion.IsMoving)
+			_scrollTimer.Stop();
+	}
+
+	public void FinishScroll()
+	{
+		_scrollTimer.Stop();
+		_scrollMotion.SnapToTarget();
+		ApplyScrollTranslation();
+	}
+
+	private void ApplyScrollTranslation()
+	{
+		_mainCamera.Offset = new Vector3(0, ScrollTranslationY, 0);
+		foreach (var (stage, top, height) in _stageScrollBounds)
+		{
+			var movingTop = stage.Motion.Current.Offset.Y;
+			stage.Root.IsVisible = Math.Max(top, movingTop) + height + ScrollTranslationY >= -80f * _dpiScale &&
+				Math.Min(top, movingTop) + ScrollTranslationY <= _viewportHeight + 80f * _dpiScale;
+		}
 	}
 
 	public void CollapseExpandedStage(bool force = false)
@@ -695,6 +996,13 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (_disposed)
 			return;
 		_disposed = true;
+		_scrollTimer.Stop();
+		_scrollTimer.Dispose();
+		_layoutMotionTimer.Stop();
+		_layoutMotionTimer.Dispose();
+		if (_deferredCapture is { } deferred) deferred.Frame.Dispose();
+		_deferredCapture = null;
+		ScrollPositionChanged = null;
 		_captureTimer.Stop();
 		_captureTimer.Dispose();
 		foreach (var stage in _stages.Values)
@@ -703,7 +1011,16 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_expandAllButton.Dispose();
 		_explorerButton.Dispose();
 		_collapseButton.Dispose();
+		_desktopButton.Dispose();
+		_desktopIconsButton.Dispose();
+		_chromeButton.Dispose();
+		_edgeButton.Dispose();
 		_notificationAreaCard.Dispose();
+		_cameraRoot.Children.Remove(_mainCamera);
+		_cameraRoot.Children.Remove(_fixedCamera);
+		_mainCamera.Dispose();
+		_fixedCamera.Dispose();
+		_stageScrollBounds.Clear();
 		lock (_captureGate)
 		{
 			if (_capturesInFlight.Count == 0)
@@ -728,25 +1045,35 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		if (_disposed || _viewportHeight <= 0)
 			return;
-		animate &= _animationsEnabled;
+		animate &= _animationsEnabled && NativeMethods.ClientAreaAnimationsEnabled;
 		_hitTargets.Clear();
 		_passivePolygons.Clear();
-		_expandAllButton.SetLayout(_dpiScale, CardSize.X);
-		_explorerButton.SetLayout(_dpiScale, CardSize.X);
-		_collapseButton.SetLayout(_dpiScale, CardSize.X);
-		_notificationAreaCard.SetLayout(_dpiScale, CardSize.X);
+		_stageScrollBounds.Clear();
+		var toolbarKey = new Vector2(_dpiScale, CardSize.X);
+		if (_toolbarLayoutKey != toolbarKey)
+		{
+			_toolbarLayoutKey = toolbarKey;
+			_expandAllButton.SetLayout(_dpiScale, CardSize.X);
+			_explorerButton.SetLayout(_dpiScale, CardSize.X);
+			_chromeButton.SetLayout(_dpiScale, CardSize.X);
+			_edgeButton.SetLayout(_dpiScale, CardSize.X);
+			_collapseButton.SetLayout(_dpiScale, CardSize.X);
+			_desktopButton.SetLayout(_dpiScale, CardSize.X);
+			_desktopIconsButton.SetLayout(_dpiScale, CardSize.X);
+			_notificationAreaCard.SetLayout(_dpiScale, CardSize.X);
+		}
 		var headerCardGap = 12f * _dpiScale;
 		var headerHeight = _expandAllButton.Size.Y + headerCardGap +
-			(_explorerButtonEnabled ? _explorerButton.Size.Y + headerCardGap : 0f);
-		var footerMargin = 10f * _dpiScale;
-		var footerCardGap = 12f * _dpiScale;
-		var notificationFooterHeight = _notificationAreaCardEnabled
-			? _notificationAreaCard.Size.Y + footerCardGap
-			: 0f;
-		var footerHeight = footerMargin + notificationFooterHeight + (_collapseButtonEnabled
-			? footerCardGap + _collapseButton.Size.Y
-			: 0f);
-		var cardViewportHeight = Math.Max(CardSize.Y + 24f * _dpiScale, _viewportHeight - footerHeight);
+			(_explorerButtonEnabled ? _explorerButton.Size.Y + headerCardGap : 0f) +
+			(_chromeQuickLaunchEnabled ? _chromeButton.Size.Y + headerCardGap : 0f) +
+			(_edgeQuickLaunchEnabled ? _edgeButton.Size.Y + headerCardGap : 0f);
+		var trailingGap = 12f * _dpiScale;
+		var trailingHeight =
+			(_notificationAreaCardEnabled ? trailingGap + _notificationAreaCard.Size.Y : 0f) +
+			(_desktopButtonEnabled ? trailingGap + _desktopButton.Size.Y : 0f) +
+			(_desktopIconsButtonEnabled ? trailingGap + _desktopIconsButton.Size.Y : 0f) +
+			(_collapseButtonEnabled ? trailingGap + _collapseButton.Size.Y : 0f);
+		var cardViewportHeight = _viewportHeight;
 		var cardSize = CardSize;
 		var stride = cardSize.Y + Gap;
 		var cardsHeight = Math.Max(0, _snapshots.Count * stride - Gap);
@@ -756,14 +1083,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 			: _expandedStageKey is not null && _stages.TryGetValue(_expandedStageKey, out var expandedStage)
 				? GetExpandedExtraHeight(expandedStage, false)
 				: 0f;
-		var totalHeight = baseTotalHeight + expandedExtraHeight;
-		var naturalStartY = baseTotalHeight <= cardViewportHeight - 24 * _dpiScale
-			? (cardViewportHeight - baseTotalHeight) / 2f
-			: 12 * _dpiScale;
-		var verticalOffset = _sidebarVerticalOffset * _dpiScale;
-		_maximumScroll = Math.Max(0, naturalStartY + verticalOffset + totalHeight - (cardViewportHeight - 12 * _dpiScale));
-		_scrollOffset = Math.Clamp(_scrollOffset, 0, _maximumScroll);
-		var startY = naturalStartY + verticalOffset - _scrollOffset;
+		var columnLayout = SidebarExpansionLayout.Calculate(baseTotalHeight + trailingHeight,
+			expandedExtraHeight, cardViewportHeight, _dpiScale, _sidebarVerticalOffset * _dpiScale);
+		_scrollMotion.SetRange(columnLayout.ScrollRange, _dpiScale);
+		var startY = columnLayout.StartY;
 		var cameraCenter = new Vector2(_viewportWidth / 2f, _viewportHeight / 2f);
 		var currentY = startY;
 		var lowestVisibleCardBottom = float.NaN;
@@ -778,6 +1101,24 @@ internal sealed class CompositionStageRenderer : IDisposable
 		{
 			_explorerButton.SetVisible(false);
 		}
+		if (_chromeQuickLaunchEnabled)
+		{
+			lowestVisibleCardBottom = LayoutQuickLaunchButton(_chromeButton, currentY);
+			currentY += _chromeButton.Size.Y + headerCardGap;
+		}
+		else
+		{
+			_chromeButton.SetVisible(false);
+		}
+		if (_edgeQuickLaunchEnabled)
+		{
+			lowestVisibleCardBottom = LayoutQuickLaunchButton(_edgeButton, currentY);
+			currentY += _edgeButton.Size.Y + headerCardGap;
+		}
+		else
+		{
+			_edgeButton.SetVisible(false);
+		}
 
 		for (var stageIndex = 0; stageIndex < _snapshots.Count; stageIndex++)
 		{
@@ -786,18 +1127,11 @@ internal sealed class CompositionStageRenderer : IDisposable
 				continue;
 			var isExpanded = stage.Windows.Count > 1 && (_expandAllStages || string.Equals(snapshot.Key, _expandedStageKey, StringComparison.OrdinalIgnoreCase));
 			var stageExpandedExtraHeight = isExpanded ? GetExpandedExtraHeight(stage, _expandAllStages) : 0f;
-			var stageScale = isExpanded ? 1.008f : 1f;
-			var stageOffset = new Vector3(12 * _dpiScale, currentY, isExpanded ? 8 * _dpiScale : 0);
-			stage.Root.Offset = stageOffset;
-			stage.Root.Scale = new Vector3(stageScale, stageScale, 1);
+			const float stageScale = 1f;
+			var stageOffset = new Vector3(12 * _dpiScale, currentY, 0);
+			stage.Motion.Set(stageOffset, Vector3.One, 0, animate);
 			var stageVisualHeight = cardSize.Y + stageExpandedExtraHeight;
-			stage.Root.IsVisible = stageOffset.Y + stageVisualHeight >= -40 && stageOffset.Y <= cardViewportHeight + 40;
-			if (!stage.Root.IsVisible)
-			{
-				stage.HideAll();
-				currentY += stride + stageExpandedExtraHeight;
-				continue;
-			}
+			_stageScrollBounds.Add((stage, stageOffset.Y, stageVisualHeight * stageScale));
 
 			if (isExpanded)
 				LayoutExpandedStage(stage, stageOffset, stageScale, cameraCenter, animate, _expandAllStages);
@@ -808,22 +1142,80 @@ internal sealed class CompositionStageRenderer : IDisposable
 				: Math.Max(lowestVisibleCardBottom, stageOffset.Y + stageVisualHeight * stageScale);
 			currentY += stride + stageExpandedExtraHeight;
 		}
-		var notificationAreaTop = _notificationAreaCardEnabled
-			? LayoutNotificationAreaCard()
-			: float.NaN;
-		if (!_notificationAreaCardEnabled)
+		if (_notificationAreaCardEnabled)
+		{
+			LayoutNotificationAreaCard(currentY);
+			currentY += _notificationAreaCard.Size.Y + trailingGap;
+		}
+		else
 			_notificationAreaCard.SetVisible(false);
+		if (_desktopButtonEnabled)
+		{
+			LayoutDesktopButton(currentY);
+			currentY += _desktopButton.Size.Y + trailingGap;
+		}
+		else
+			_desktopButton.SetVisible(false);
+		if (_desktopIconsButtonEnabled)
+		{
+			LayoutDesktopIconsButton(currentY);
+			currentY += _desktopIconsButton.Size.Y + trailingGap;
+		}
+		else
+			_desktopIconsButton.SetVisible(false);
 		if (_collapseButtonEnabled)
-			LayoutCollapseButton(lowestVisibleCardBottom, notificationAreaTop);
+			LayoutCollapseButton(currentY);
 		else
 			_collapseButton.SetVisible(false);
+		ApplyScrollTranslation();
+		_hitTargets.Sort((left, right) => right.ZOrder.CompareTo(left.ZOrder));
+		TrimWarmPreviews();
+		if (HasLayoutMotion) _layoutMotionTimer.Start();
 		LayoutRevision++;
 	}
 
+	private bool HasLayoutMotion => _stages.Values.Any(stage => stage.Motion.IsMoving ||
+		stage.GroupCard?.Motion.IsMoving == true || stage.Windows.Any(card => card.IsVisible && card.Motion.IsMoving));
+
+	private void FinishLayoutMotion()
+	{
+		if (_disposed || HasLayoutMotion) return;
+		_layoutMotionTimer.Stop();
+		ApplyScrollTranslation();
+		LayoutRevision++;
+		ScrollPositionChanged?.Invoke(this, EventArgs.Empty);
+		if (_deferredCapture is { } capture)
+		{
+			_deferredCapture = null;
+			UploadCapturedFrame(capture.Card, capture.Frame);
+		}
+		ScheduleCaptures();
+	}
+
+	private void TrimWarmPreviews()
+	{
+		var now = DateTime.UtcNow;
+		long budget = 4L * 1024 * 1024;
+		var slots = 8;
+		foreach (var card in _stages.Values.SelectMany(stage => stage.Windows)
+			.Where(card => !card.IsVisible && card.HasSurface).OrderByDescending(card => card.HiddenSinceUtc))
+		{
+			var bytes = card.EstimatedSurfaceBytes;
+			if (now - card.HiddenSinceUtc >= TimeSpan.FromSeconds(8) || slots <= 0 || bytes > budget)
+				card.ReleaseSurface();
+			else { budget -= bytes; slots--; }
+		}
+	}
+
+	private CardHitProjection ProjectLive(StageCardVisual stage, WindowCardVisual card,
+		Vector3? overlayOffset = null, Vector2? overlaySize = null) =>
+		new(stage.Motion, card.Motion, CardSize, card.Pivot,
+			new Vector2(_viewportWidth / 2f, _viewportHeight / 2f), PerspectiveDistance * _dpiScale, overlayOffset, overlaySize);
+
 	private float LayoutExpandAllButton(float y)
 	{
-		_cameraRoot.Children.Remove(_expandAllButton.Root);
-		_cameraRoot.Children.InsertAtTop(_expandAllButton.Root);
+		_mainCamera.Children.Remove(_expandAllButton.Root);
+		_mainCamera.Children.InsertAtTop(_expandAllButton.Root);
 		var x = 12f * _dpiScale;
 		_expandAllButton.SetOffset(new Vector3(x, y, 0));
 		_expandAllButton.SetVisible(true);
@@ -854,8 +1246,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 			return float.NaN;
 		}
 
-		_cameraRoot.Children.Remove(_explorerButton.Root);
-		_cameraRoot.Children.InsertAtTop(_explorerButton.Root);
+		_mainCamera.Children.Remove(_explorerButton.Root);
+		_mainCamera.Children.InsertAtTop(_explorerButton.Root);
 		var x = 12f * _dpiScale;
 		_explorerButton.SetOffset(new Vector3(x, y, 0));
 		_explorerButton.SetVisible(true);
@@ -878,13 +1270,37 @@ internal sealed class CompositionStageRenderer : IDisposable
 		return y + _explorerButton.Size.Y;
 	}
 
-	private float LayoutNotificationAreaCard()
+	private float LayoutQuickLaunchButton(SidebarQuickLaunchVisual button, float y)
 	{
-		_cameraRoot.Children.Remove(_notificationAreaCard.Root);
-		_cameraRoot.Children.InsertAtTop(_notificationAreaCard.Root);
-		var margin = 10f * _dpiScale;
+		_mainCamera.Children.Remove(button.Root);
+		_mainCamera.Children.InsertAtTop(button.Root);
 		var x = 12f * _dpiScale;
-		var y = Math.Max(margin, _viewportHeight - _notificationAreaCard.Size.Y - margin);
+		button.SetOffset(new Vector3(x, y, 0));
+		button.SetVisible(true);
+		var polygon = Card3DGeometry.ProjectCard(
+			new Vector3(x, y, 0),
+			1f,
+			Vector3.Zero,
+			Vector3.One,
+			button.Angle,
+			button.Size,
+			button.Pivot,
+			new Vector2(_viewportWidth / 2f, _viewportHeight / 2f),
+			PerspectiveDistance * _dpiScale);
+		_hitTargets.Add(new CardHitTarget(
+			$"__quick_launch_{button.App}__",
+			null,
+			polygon,
+			int.MaxValue - 1,
+			QuickLaunchApp: button.App));
+		return y + button.Size.Y;
+	}
+
+	private float LayoutNotificationAreaCard(float y)
+	{
+		_mainCamera.Children.Remove(_notificationAreaCard.Root);
+		_mainCamera.Children.InsertAtTop(_notificationAreaCard.Root);
+		var x = 12f * _dpiScale;
 		_notificationAreaCard.SetOffset(new Vector3(x, y, 0));
 		_notificationAreaCard.SetVisible(true);
 		var cameraCenter = new Vector2(_viewportWidth / 2f, _viewportHeight / 2f);
@@ -923,28 +1339,52 @@ internal sealed class CompositionStageRenderer : IDisposable
 				NotificationIcon: slot.Activation,
 				NotificationIconName: slot.Name));
 		}
-		return y;
+		return y + _notificationAreaCard.Size.Y;
 	}
 
-	private void LayoutCollapseButton(float lowestVisibleCardBottom, float notificationAreaTop)
+	private void LayoutDesktopButton(float y)
+	{
+		_mainCamera.Children.Remove(_desktopButton.Root);
+		_mainCamera.Children.InsertAtTop(_desktopButton.Root);
+		var x = 12f * _dpiScale;
+		_desktopButton.SetOffset(new Vector3(x, y, 0));
+		_desktopButton.SetVisible(true);
+		var polygon = Card3DGeometry.ProjectCard(
+			new Vector3(x, y, 0), 1f, Vector3.Zero, Vector3.One,
+			_desktopButton.Angle, _desktopButton.Size, _desktopButton.Pivot,
+			new Vector2(_viewportWidth / 2f, _viewportHeight / 2f),
+			PerspectiveDistance * _dpiScale);
+		_hitTargets.Add(new CardHitTarget(
+			"__show_desktop__", null, polygon, int.MaxValue - 4,
+			IsDesktopButton: true));
+	}
+
+	private void LayoutDesktopIconsButton(float y)
+	{
+		_mainCamera.Children.Remove(_desktopIconsButton.Root);
+		_mainCamera.Children.InsertAtTop(_desktopIconsButton.Root);
+		var x = 12f * _dpiScale;
+		_desktopIconsButton.SetOffset(new Vector3(x, y, 0));
+		_desktopIconsButton.SetVisible(true);
+		var polygon = Card3DGeometry.ProjectCard(
+			new Vector3(x, y, 0), 1f, Vector3.Zero, Vector3.One,
+			_desktopIconsButton.Angle, _desktopIconsButton.Size, _desktopIconsButton.Pivot,
+			new Vector2(_viewportWidth / 2f, _viewportHeight / 2f),
+			PerspectiveDistance * _dpiScale);
+		_hitTargets.Add(new CardHitTarget(
+			"__desktop_icons__", null, polygon, int.MaxValue - 4,
+			IsDesktopIconsButton: true));
+	}
+
+	private void LayoutCollapseButton(float y)
 	{
 		if (!_collapseButtonEnabled)
 		{
 			_collapseButton.SetVisible(false);
 			return;
 		}
-		_cameraRoot.Children.Remove(_collapseButton.Root);
-		_cameraRoot.Children.InsertAtTop(_collapseButton.Root);
-		var margin = 10f * _dpiScale;
-		var cardGap = 12f * _dpiScale;
-		var footerHeight = _collapseButton.Size.Y;
-		var maximumButtonY = float.IsNaN(notificationAreaTop)
-			? Math.Max(margin, _viewportHeight - footerHeight - margin)
-			: Math.Max(margin, notificationAreaTop - cardGap - footerHeight);
-		var preferredButtonY = float.IsNaN(lowestVisibleCardBottom)
-			? maximumButtonY + _sidebarVerticalOffset * _dpiScale
-			: lowestVisibleCardBottom + cardGap;
-		var y = Math.Clamp(preferredButtonY, margin, maximumButtonY);
+		_mainCamera.Children.Remove(_collapseButton.Root);
+		_mainCamera.Children.InsertAtTop(_collapseButton.Root);
 		var x = 12f * _dpiScale;
 		_collapseButton.SetOffset(new Vector3(x, y, 0));
 		_collapseButton.SetVisible(true);
@@ -976,6 +1416,26 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_collapseButton.SetHovered(hovered);
 	}
 
+	private void SetDesktopButtonHovered(bool hovered)
+	{
+		if (!_desktopButtonEnabled)
+			hovered = false;
+		if (_desktopButtonHovered == hovered)
+			return;
+		_desktopButtonHovered = hovered;
+		_desktopButton.SetHovered(hovered);
+	}
+
+	private void SetDesktopIconsButtonHovered(bool hovered)
+	{
+		if (!_desktopIconsButtonEnabled)
+			hovered = false;
+		if (_desktopIconsButtonHovered == hovered)
+			return;
+		_desktopIconsButtonHovered = hovered;
+		_desktopIconsButton.SetHovered(hovered);
+	}
+
 	private void SetExplorerButtonHovered(bool hovered)
 	{
 		if (!_explorerButtonEnabled)
@@ -984,6 +1444,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 			return;
 		_explorerButtonHovered = hovered;
 		_explorerButton.SetHovered(hovered);
+	}
+
+	private void SetQuickLaunchHovered(QuickLaunchApp? app)
+	{
+		_chromeButton.SetHovered(_chromeQuickLaunchEnabled && app == QuickLaunchApp.Chrome);
+		_edgeButton.SetHovered(_edgeQuickLaunchEnabled && app == QuickLaunchApp.Edge);
 	}
 
 	private void SetExpandAllButtonHovered(bool hovered)
@@ -1001,6 +1467,11 @@ internal sealed class CompositionStageRenderer : IDisposable
 			: null;
 		_notificationAreaCard.SetHovered(activation);
 	}
+
+	private void SetNotificationAreaControlHovered(CardHitTarget? target) =>
+		_notificationAreaCard.SetControlHovered(
+			target?.IsNotificationAreaDragHandle == true,
+			target?.IsNotificationAreaRefreshButton == true);
 
 	private void SetPinButtonHovered(bool hovered)
 	{
@@ -1067,7 +1538,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 				null,
 				groupPolygon,
 				stageIndex * 20 + 20 + (hovered ? 10 : 0),
-				IsPrimaryCard: true));
+				IsPrimaryCard: true, Projection: ProjectLive(stage, stage.GroupCard)));
 			return;
 		}
 
@@ -1102,7 +1573,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 				card.Window,
 				polygon,
 				stageIndex * 20 + (3 - index) + (hovered ? 10 : 0),
-				IsPrimaryCard: index == 0));
+				IsPrimaryCard: index == 0, Projection: ProjectLive(stage, card)));
 		}
 	}
 
@@ -1130,12 +1601,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 		stage.SetExpandedConnectorLayout(page.Length + 1, cardSize.Y, stride, childIndent, _dpiScale);
 		stage.ArrangeExpandedZOrder(page, _hoveredWindowHandle);
 
-		var groupTransform = Card3DGeometry.CreateExpandedListTransform(
-			0,
-			_hoveredGroupCard ? 0 : -1,
-			_dpiScale,
-			stride,
-			childIndent);
+		var groupTransform = Card3DGeometry.CreateCollapsedStackTransform(0,
+			_hoveredGroupCard && string.Equals(stage.Key, _hoveredStageKey, StringComparison.OrdinalIgnoreCase), _dpiScale);
 		stage.GroupCard.SetTransform(groupTransform.Offset, groupTransform.Scale, groupTransform.Angle, animate);
 		var groupPolygon = Card3DGeometry.ProjectCard(
 			stageOffset,
@@ -1147,7 +1614,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 			stage.GroupCard.Pivot,
 			cameraCenter,
 			PerspectiveDistance * _dpiScale);
-		_hitTargets.Add(new CardHitTarget(stage.Key, null, groupPolygon, 10100, IsPrimaryCard: true));
+		_hitTargets.Add(new CardHitTarget(stage.Key, null, groupPolygon, 10100, IsPrimaryCard: true, Projection: ProjectLive(stage, stage.GroupCard)));
 
 		if (_pinButtonEnabled && !expandAll)
 		{
@@ -1191,7 +1658,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 				null,
 				hitPolygon,
 				25000,
-				IsPinButton: true));
+				IsPinButton: true, Projection: ProjectLive(stage, stage.GroupCard, hitOffset, hitSize)));
 			_passivePolygons.Add(pinPolygon);
 		}
 		else
@@ -1225,7 +1692,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 				stage.Key,
 				card.Window,
 				polygon,
-				10000 + index + (hovered ? 100 : 0)));
+				10000 + index + (hovered ? 100 : 0), Projection: ProjectLive(stage, card)));
 		}
 
 		stage.SetPaginationVisible(!expandAll && pageCount > 1);
@@ -1274,6 +1741,9 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	private void ScheduleCaptures()
 	{
+		if (_disposed) return;
+		TrimWarmPreviews();
+		if (_layoutMotionTimer.Enabled || _deferredCapture is not null) return;
 		if (_disposed || (_pausePreviewRefreshWhenHidden && !_sidebarVisible && !_manualRefreshPending))
 			return;
 		lock (_captureGate)
@@ -1283,6 +1753,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		}
 		var nowUtc = DateTime.UtcNow;
 		var due = _stages.Values
+			.Where(stage => stage.Root.IsVisible)
 			.SelectMany(stage => stage.Windows
 				.Concat(stage.GroupCard is { } groupCard ? new[] { groupCard } : Array.Empty<WindowCardVisual>())
 				.Select(card => (stage, card)))
@@ -1333,11 +1804,17 @@ internal sealed class CompositionStageRenderer : IDisposable
 			{
 				_owner.BeginInvoke(new Action(() =>
 				{
-					using (frame)
+					if (!_disposed && _layoutMotionTimer.Enabled)
 					{
-						if (!_disposed && _sidebarVisible && card.IsVisible && card.Window.Handle == frame.Handle)
-							card.Upload(frame);
+						if (_deferredCapture is { } previous)
+						{
+							previous.Card.InvalidateCapture();
+							previous.Frame.Dispose();
+						}
+						_deferredCapture = (card, frame);
 					}
+					else
+						UploadCapturedFrame(card, frame);
 				}));
 			}
 			catch (InvalidOperationException)
@@ -1345,6 +1822,16 @@ internal sealed class CompositionStageRenderer : IDisposable
 				frame.Dispose();
 			}
 		}, TaskScheduler.Default);
+	}
+	private void UploadCapturedFrame(WindowCardVisual card, CapturedCardFrame frame)
+	{
+		using (frame)
+		{
+			if (!_disposed && _sidebarVisible && card.IsVisible && card.Window.Handle == frame.Handle)
+				card.Upload(frame);
+			else if (!_disposed && !card.HasSurface)
+				card.InvalidateCapture();
+		}
 	}
 }
 
@@ -1359,9 +1846,15 @@ internal sealed record CardHitTarget(
 	bool IsExplorerButton = false,
 	bool IsExpandAllButton = false,
 	bool IsPinButton = false,
+	QuickLaunchApp? QuickLaunchApp = null,
 	bool IsNotificationAreaCard = false,
+	bool IsNotificationAreaDragHandle = false,
+	bool IsNotificationAreaRefreshButton = false,
 	NotificationIconActivation? NotificationIcon = null,
-	string? NotificationIconName = null);
+	string? NotificationIconName = null,
+	bool IsDesktopButton = false,
+	bool IsDesktopIconsButton = false,
+	CardHitProjection? Projection = null);
 
 internal sealed class StageCardVisual : IDisposable
 {
@@ -1371,6 +1864,7 @@ internal sealed class StageCardVisual : IDisposable
 	private readonly int _surfaceHeight;
 	private readonly Vector2 _cardSize;
 	private string? _groupCardIdentity;
+	private Visual[] _arrangedVisuals = Array.Empty<Visual>();
 
 	public StageCardVisual(string key, Compositor compositor, D3DCompositionDevice graphics, int surfaceWidth, int surfaceHeight, Vector2 cardSize)
 	{
@@ -1383,6 +1877,7 @@ internal sealed class StageCardVisual : IDisposable
 		Root = compositor.CreateContainerVisual();
 		Root.Size = cardSize;
 		Root.IsVisible = false;
+		Motion = new CardVisualMotion(compositor, Root);
 		PreviousButton = new PageButtonVisual(compositor, false, cardSize.Y);
 		NextButton = new PageButtonVisual(compositor, true, cardSize.Y);
 		PinButton = new PinButtonVisual(compositor);
@@ -1394,6 +1889,7 @@ internal sealed class StageCardVisual : IDisposable
 
 	public string Key { get; }
 	public ContainerVisual Root { get; }
+	public CardVisualMotion Motion { get; }
 	public List<WindowCardVisual> Windows { get; } = new();
 	public WindowCardVisual? GroupCard { get; private set; }
 	public PageButtonVisual PreviousButton { get; }
@@ -1488,50 +1984,27 @@ internal sealed class StageCardVisual : IDisposable
 
 	public void HideGroupCard() => GroupCard?.SetVisible(false);
 
-	public void ArrangeCollapsedZOrder()
+	private void Arrange(Visual[] order)
 	{
-		foreach (var card in Windows.AsEnumerable().Reverse())
+		if (_arrangedVisuals.SequenceEqual(order)) return;
+		foreach (var visual in order)
 		{
-			Root.Children.Remove(card.Root);
-			Root.Children.InsertAtTop(card.Root);
+			Root.Children.Remove(visual);
+			Root.Children.InsertAtTop(visual);
 		}
+		_arrangedVisuals = order;
 	}
 
-	public void ArrangeCollapsedGroupZOrder()
-	{
-		foreach (var card in Windows.AsEnumerable().Reverse())
-		{
-			Root.Children.Remove(card.Root);
-			Root.Children.InsertAtTop(card.Root);
-		}
-		if (GroupCard is null)
-			return;
-		Root.Children.Remove(GroupCard.Root);
-		Root.Children.InsertAtTop(GroupCard.Root);
-	}
+	public void ArrangeCollapsedZOrder() => Arrange(Windows.AsEnumerable().Reverse().Select(card => (Visual)card.Root).ToArray());
+
+	public void ArrangeCollapsedGroupZOrder() => Arrange(Windows.AsEnumerable().Reverse()
+		.Select(card => (Visual)card.Root).Concat(GroupCard is { } group ? new Visual[] { group.Root } : Array.Empty<Visual>()).ToArray());
 
 	public void ArrangeExpandedZOrder(IReadOnlyList<WindowCardVisual> page, IntPtr hoveredHandle)
 	{
-		if (GroupCard is not null)
-		{
-			Root.Children.Remove(GroupCard.Root);
-			Root.Children.InsertAtTop(GroupCard.Root);
-		}
-		foreach (var card in page.Where(card => card.Window.Handle != hoveredHandle))
-		{
-			Root.Children.Remove(card.Root);
-			Root.Children.InsertAtTop(card.Root);
-		}
-		var hovered = page.FirstOrDefault(card => card.Window.Handle == hoveredHandle);
-		if (hovered is not null)
-		{
-			Root.Children.Remove(hovered.Root);
-			Root.Children.InsertAtTop(hovered.Root);
-		}
-		Root.Children.Remove(PreviousButton.Root);
-		Root.Children.InsertAtTop(PreviousButton.Root);
-		Root.Children.Remove(NextButton.Root);
-		Root.Children.InsertAtTop(NextButton.Root);
+		var group = GroupCard is { } card ? new Visual[] { card.Root } : Array.Empty<Visual>();
+		Arrange(group.Concat(page.OrderBy(card => card.Window.Handle == hoveredHandle).Select(card => (Visual)card.Root))
+			.Concat(new Visual[] { PreviousButton.Root, NextButton.Root }).ToArray());
 	}
 
 	public void HideAll()
@@ -2509,12 +2982,16 @@ internal sealed class WindowCardVisual : IDisposable
 	private readonly CompositionColorBrush _focusIndicatorBrush;
 	private readonly CompositionRoundedRectangleGeometry _focusIndicatorGeometry;
 	private readonly CompositionGeometricClip _focusIndicatorClip;
-	private Vector3 _lastOffset;
-	private Vector3 _lastScale;
-	private float _lastAngle;
+	private bool _justRevealed;
 	private bool _lastKnownMinimized;
-	private bool _hasTransform;
 	private bool _disposed;
+	private ShapeVisual? _feedbackVisual;
+	private CompositionRoundedRectangleGeometry? _feedbackGeometry;
+	private CompositionSpriteShape? _feedbackShape;
+	private CompositionColorBrush? _feedbackFill;
+	private CompositionColorBrush? _feedbackStroke;
+	private CardFeedback _feedback;
+	private float _feedbackOpacity;
 
 	public WindowCardVisual(Compositor compositor, D3DCompositionDevice graphics, IWindow window, int surfaceWidth, int surfaceHeight, Vector2 cardSize, bool isApplicationGroupCard)
 	{
@@ -2560,11 +3037,56 @@ internal sealed class WindowCardVisual : IDisposable
 		Root.RotationAxis = Vector3.UnitY;
 		Root.Children.InsertAtTop(_content);
 		Root.Children.InsertAtTop(_focusIndicator);
+		Root.IsVisible = false;
+		Motion = new CardVisualMotion(compositor, Root);
 		Pivot = new Vector2(Root.CenterPoint.X, Root.CenterPoint.Y);
 		UpdateFocusIndicator();
 	}
 
 	public ContainerVisual Root { get; }
+	public CardFeedback Feedback => _feedback;
+	public CardVisualMotion Motion { get; }
+	public bool HasSurface => _surface is not null;
+	public DateTime HiddenSinceUtc { get; private set; }
+	public long EstimatedSurfaceBytes => (long)SurfaceWidth * SurfaceHeight * 8;
+
+	public void SetFeedback(CardFeedback feedback, bool animate)
+	{
+		if (_disposed || _feedback == feedback)
+			return;
+		_feedback = feedback;
+		if (_feedbackVisual is null)
+		{
+			_feedbackGeometry = _compositor.CreateRoundedRectangleGeometry();
+			_feedbackGeometry.Size = Root.Size - new Vector2(2);
+			_feedbackGeometry.Offset = Vector2.One;
+			_feedbackGeometry.CornerRadius = _clipGeometry.CornerRadius;
+			_feedbackFill = _compositor.CreateColorBrush(Windows.UI.Color.FromArgb(36, 54, 112, 210));
+			_feedbackStroke = _compositor.CreateColorBrush(Windows.UI.Color.FromArgb(235, 98, 162, 250));
+			_feedbackShape = _compositor.CreateSpriteShape(_feedbackGeometry);
+			_feedbackShape.FillBrush = _feedbackFill;
+			_feedbackShape.StrokeBrush = _feedbackStroke;
+			_feedbackShape.StrokeThickness = Math.Max(1.5f, Root.Size.Y / 80f);
+			_feedbackVisual = _compositor.CreateShapeVisual();
+			_feedbackVisual.Size = Root.Size;
+			_feedbackVisual.Opacity = 0;
+			_feedbackVisual.Shapes.Add(_feedbackShape);
+			// Inherit the card's perspective, without moving its content or hit area.
+			Root.Children.InsertAtTop(_feedbackVisual);
+		}
+		var opacity = feedback == CardFeedback.Pressed ? 1f : 0f;
+		_feedbackVisual.StopAnimation(nameof(Visual.Opacity));
+		_feedbackVisual.Opacity = opacity;
+		if (animate && feedback != CardFeedback.Pressed)
+		{
+			using var animation = _compositor.CreateScalarKeyFrameAnimation();
+			animation.Duration = TimeSpan.FromMilliseconds(140);
+			animation.InsertKeyFrame(0, _feedbackOpacity);
+			animation.InsertKeyFrame(1, opacity);
+			_feedbackVisual.StartAnimation(nameof(Visual.Opacity), animation);
+		}
+		_feedbackOpacity = opacity;
+	}
 	public IWindow Window { get; private set; }
 	public Vector2 Pivot { get; }
 	public int SurfaceWidth { get; }
@@ -2584,8 +3106,8 @@ internal sealed class WindowCardVisual : IDisposable
 			return;
 		IsVisible = visible;
 		Root.IsVisible = visible;
-		if (!visible)
-			ReleaseSurface();
+		_justRevealed = visible;
+		if (!visible) HiddenSinceUtc = DateTime.UtcNow;
 	}
 
 	public void UpdateWindow(IWindow window)
@@ -2603,37 +3125,22 @@ internal sealed class WindowCardVisual : IDisposable
 
 	public void SetTransform(Vector3 offset, Vector3 scale, float angle, bool animate)
 	{
-		if (_hasTransform && Vector3.DistanceSquared(_lastOffset, offset) < 0.01f &&
-			Vector3.DistanceSquared(_lastScale, scale) < 0.0001f && Math.Abs(_lastAngle - angle) < 0.01f)
-			return;
-		var hadTransform = _hasTransform;
-		_hasTransform = true;
-		_lastOffset = offset;
-		_lastScale = scale;
-		_lastAngle = angle;
-		if (!animate || !hadTransform)
+		if (_justRevealed && animate && !Motion.Initialized)
 		{
-			Root.Offset = offset;
-			Root.Scale = scale;
-			Root.RotationAngleInDegrees = angle;
-			return;
+			Motion.Set(offset - new Vector3(0, Math.Min(14, Root.Size.Y * 0.12f), 0), scale, angle, false);
+			using var fade = _compositor.CreateScalarKeyFrameAnimation();
+			fade.Duration = CardVisualMotion.Duration;
+			fade.InsertKeyFrame(0, 0);
+			fade.InsertKeyFrame(1, 1);
+			Root.StartAnimation(nameof(Visual.Opacity), fade);
 		}
-
-		using var offsetAnimation = _compositor.CreateSpringVector3Animation();
-		offsetAnimation.FinalValue = offset;
-		offsetAnimation.DampingRatio = 1f;
-		offsetAnimation.Period = TimeSpan.FromMilliseconds(110);
-		Root.StartAnimation(nameof(Visual.Offset), offsetAnimation);
-		using var scaleAnimation = _compositor.CreateSpringVector3Animation();
-		scaleAnimation.FinalValue = scale;
-		scaleAnimation.DampingRatio = 1f;
-		scaleAnimation.Period = TimeSpan.FromMilliseconds(110);
-		Root.StartAnimation(nameof(Visual.Scale), scaleAnimation);
-		using var angleAnimation = _compositor.CreateSpringScalarAnimation();
-		angleAnimation.FinalValue = angle;
-		angleAnimation.DampingRatio = 1f;
-		angleAnimation.Period = TimeSpan.FromMilliseconds(110);
-		Root.StartAnimation(nameof(Visual.RotationAngleInDegrees), angleAnimation);
+		if (!animate)
+		{
+			Root.StopAnimation(nameof(Visual.Opacity));
+			Root.Opacity = 1;
+		}
+		_justRevealed = false;
+		Motion.Set(offset, scale, angle, animate);
 	}
 
 	public void Upload(CapturedCardFrame frame)
@@ -2677,6 +3184,11 @@ internal sealed class WindowCardVisual : IDisposable
 			return;
 		_disposed = true;
 		ReleaseSurface();
+		_feedbackVisual?.Dispose();
+		_feedbackShape?.Dispose();
+		_feedbackGeometry?.Dispose();
+		_feedbackFill?.Dispose();
+		_feedbackStroke?.Dispose();
 		Root.Dispose();
 		_shadow.Dispose();
 		_focusIndicatorClip.Dispose();
