@@ -88,6 +88,10 @@ internal static class NativeMethods
 	[return: MarshalAs(UnmanagedType.Bool)]
 	public static extern bool ShowWindowAsync(IntPtr windowHandle, int command);
 
+	[DllImport("user32.dll", SetLastError = true)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	public static extern bool PostMessage(IntPtr windowHandle, uint message, IntPtr wParam, IntPtr lParam);
+
 	[DllImport("user32.dll")]
 	[return: MarshalAs(UnmanagedType.Bool)]
 	public static extern bool BringWindowToTop(IntPtr windowHandle);

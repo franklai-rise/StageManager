@@ -30,7 +30,10 @@ internal static class QuickLaunchAppResolver
 		_ => throw new ArgumentOutOfRangeException(nameof(app))
 	};
 
-	public static string? ResolveExecutable(QuickLaunchApp app)
+	public static string? ResolveExecutable(QuickLaunchApp app) =>
+		ResolveExecutable(app, path => Registry.GetValue(path, null, null), File.Exists);
+
+	internal static string? ResolveExecutable(QuickLaunchApp app, Func<string, object?> readRegistry, Func<string, bool> fileExists)
 	{
 		var command = CommandName(app);
 		var registryPaths = new[]
@@ -40,8 +43,15 @@ internal static class QuickLaunchAppResolver
 		};
 		foreach (var registryPath in registryPaths)
 		{
-			if (Registry.GetValue(registryPath, null, null) is string path && File.Exists(path))
-				return path;
+			try
+			{
+				if (readRegistry(registryPath) is string path && fileExists(path))
+					return path;
+			}
+			catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+			{
+				// Keep checking the remaining registry/standard installation paths.
+			}
 		}
 
 		var candidates = app == QuickLaunchApp.Chrome
@@ -56,7 +66,7 @@ internal static class QuickLaunchAppResolver
 				Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Microsoft", "Edge", "Application", command),
 				Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft", "Edge", "Application", command)
 			};
-		return candidates.FirstOrDefault(File.Exists);
+		return candidates.FirstOrDefault(fileExists);
 	}
 
 	public static bool Launch(QuickLaunchApp app)

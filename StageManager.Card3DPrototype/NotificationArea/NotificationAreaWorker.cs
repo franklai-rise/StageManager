@@ -27,6 +27,7 @@ internal static class NotificationAreaWorker
 			{
 				"snapshot" => WriteSnapshot(),
 				"invoke" => InvokeItem(args),
+				"activate-app" => ActivateApplication(args),
 				"show" => ShowOverflow(),
 				_ => 2
 			};
@@ -129,6 +130,37 @@ internal static class NotificationAreaWorker
 		Invoke(target);
 		WriteResult(new NotificationAreaWorkerResult(true, []));
 		return 0;
+	}
+
+	private static int ActivateApplication(string[] args)
+	{
+		if (args.Length != 2) return WriteFailure("Invalid application identity.");
+		var name = Encoding.UTF8.GetString(Convert.FromBase64String(args[1]));
+		var button = FindOverflowButton();
+		if (button is null) return WriteFailure("The Windows hidden-icons button was not found.");
+		var overflow = FindOverflowWindow();
+		var opened = overflow is null || overflow.Current.IsOffscreen;
+		var invoked = false;
+		try
+		{
+			if (opened) { Invoke(button); overflow = WaitForOverflowWindow(); }
+			if (overflow is null) return WriteFailure("The Windows hidden-icons panel did not open.");
+			var items = GetNotifyItems(overflow);
+			var match = NotificationIconMatcher.FindBest(items.Select((item, index) =>
+				new NotificationIconActivation(index, NormalizeName(item.Current.Name))), [name]);
+			if (match is null) return WriteFailure("The application's notification icon was not found.");
+			Invoke(items[match.Value.Ordinal]);
+			invoked = true;
+			WriteResult(new NotificationAreaWorkerResult(true, []));
+			return 0;
+		}
+		finally
+		{
+			// After invoking an application Explorer owns dismissal. Toggling the
+			// overflow button here can steal foreground back from the restored app.
+			if (!invoked && opened && FindOverflowWindow() is { } remaining && !remaining.Current.IsOffscreen)
+				TryInvoke(button);
+		}
 	}
 
 	private static int ShowOverflow()

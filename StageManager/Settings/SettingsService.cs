@@ -34,15 +34,17 @@ public sealed class SettingsService
 
 	public string SettingsPath => _settingsPath;
 
-	public AppSettings CloneCurrent()
+	public AppSettings CloneCurrent() => Clone(Current);
+
+	private AppSettings Clone(AppSettings settings)
 	{
-		var json = JsonSerializer.Serialize(Current, _jsonOptions);
+		var json = JsonSerializer.Serialize(settings, _jsonOptions);
 		return JsonSerializer.Deserialize<AppSettings>(json, _jsonOptions) ?? new AppSettings();
 	}
 
 	public void Apply(AppSettings settings)
 	{
-		Current = Normalize(settings);
+		Current = Normalize(Clone(settings));
 		Save();
 		SettingsChanged?.Invoke(this, EventArgs.Empty);
 	}

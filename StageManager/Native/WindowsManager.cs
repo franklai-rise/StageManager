@@ -114,13 +114,20 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 		{
 			if (_disposed)
 				return;
+			_disposed = true;
 		}
 		Stop();
 		lock (_lifetimeLock)
 		{
-			if (_disposed)
-				return;
-			_disposed = true;
+			foreach (var window in _windows.Values)
+			{
+				window.WindowFocused -= HandleWindowFocused;
+				window.WindowUpdated -= HandleWindowUpdated;
+				window.WindowClosed -= HandleWindowClosed;
+			}
+			_windows.Clear();
+			_floating.Clear();
+			_lastForegroundEvents.Clear();
 			_lifetime.Dispose();
 		}
 	}
@@ -254,44 +261,65 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 
 	private async Task HandleDesktopSwitchAsync()
 	{
+		CancellationTokenSource lifetime;
+		CancellationToken cancellation;
+		lock (_lifetimeLock)
+		{
+			if (!_active || _disposed) return;
+			lifetime = _lifetime;
+			cancellation = lifetime.Token;
+		}
 		try
 		{
-			await Task.Delay(180, _lifetime.Token).ConfigureAwait(false);
+			await Task.Delay(180, cancellation).ConfigureAwait(false);
 			foreach (var window in _windows.Values)
+			{
+				cancellation.ThrowIfCancellationRequested();
 				window.RefreshIdentity(_virtualDesktops);
+			}
+			cancellation.ThrowIfCancellationRequested();
 			ReevaluateWindows();
-			DesktopChanged?.Invoke(this, EventArgs.Empty);
+			lock (_lifetimeLock)
+				if (_active && !_disposed && ReferenceEquals(lifetime, _lifetime) && !cancellation.IsCancellationRequested)
+					DesktopChanged?.Invoke(this, EventArgs.Empty);
 		}
 		catch (OperationCanceledException)
 		{
 		}
 	}
 
-	private void ScheduleRegistration(IntPtr handle)
+	private Task ScheduleRegistration(IntPtr handle)
 	{
-		if (!_active || handle == IntPtr.Zero || _windows.ContainsKey(handle) || _pendingRegistrations.ContainsKey(handle))
-			return;
-
-		var source = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-		if (!_pendingRegistrations.TryAdd(handle, source))
+		CancellationTokenSource source;
+		lock (_lifetimeLock)
 		{
-			source.Dispose();
-			return;
+			if (!_active || _disposed || handle == IntPtr.Zero || _windows.ContainsKey(handle) || _pendingRegistrations.ContainsKey(handle))
+				return Task.CompletedTask;
+			source = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+			if (!_pendingRegistrations.TryAdd(handle, source))
+			{
+				source.Dispose();
+				return Task.CompletedTask;
+			}
 		}
 
-		_ = Task.Run(async () =>
+		return Task.Run(async () =>
 		{
 			try
 			{
 				foreach (var delay in RegistrationRetryDelaysMilliseconds)
 				{
 					await Task.Delay(delay, source.Token).ConfigureAwait(false);
-					if (RegisterWindow(handle, emitEvent: true) || !Win32.IsWindow(handle))
+					if (RegisterWindow(handle, emitEvent: true, source.Token) || !Win32.IsWindow(handle))
 						return;
 				}
 			}
 			catch (OperationCanceledException)
 			{
+			}
+			catch (Exception exception)
+			{
+				AppLogger.Error("Delayed window registration failed.", exception);
 			}
 			finally
 			{
@@ -304,8 +332,9 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 
 	private void CancelRegistration(IntPtr handle)
 	{
-		if (_pendingRegistrations.TryRemove(handle, out var source))
-			TryCancel(source);
+		lock (_lifetimeLock)
+			if (_pendingRegistrations.TryRemove(handle, out var source))
+				TryCancel(source);
 	}
 
 	private static void TryCancel(CancellationTokenSource source)
@@ -322,13 +351,19 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 	private bool EventWindowIsValid(int idChild, Win32.OBJID idObject, IntPtr hwnd) =>
 		idChild == Win32.CHILDID_SELF && idObject == Win32.OBJID.OBJID_WINDOW && hwnd != IntPtr.Zero;
 
-	private bool RegisterWindow(IntPtr handle, bool emitEvent)
+	private bool RegisterWindow(IntPtr handle, bool emitEvent, CancellationToken cancellation = default)
 	{
-		if (!_active || handle == IntPtr.Zero || !Win32.IsWindow(handle))
-			return true;
-		if (_windows.ContainsKey(handle))
-			return true;
+		CancellationTokenSource lifetime;
+		lock (_lifetimeLock)
+		{
+			if (!_active || _disposed || cancellation.IsCancellationRequested || handle == IntPtr.Zero || !Win32.IsWindow(handle))
+				return true;
+			if (_windows.ContainsKey(handle)) return true;
+			lifetime = _lifetime;
+		}
 
+		Win32.GetWindowThreadProcessId(handle, out var originalOwnerProcessId);
+		if (originalOwnerProcessId == 0) return false;
 		var window = new WindowsWindow(handle, _virtualDesktops);
 		if (window.ProcessId == _currentProcessId)
 			return true;
@@ -337,26 +372,38 @@ public sealed class WindowsManager : IWindowsManager, IDisposable
 		if (!_classifier.IsCandidate(window, out _))
 			return false;
 
-		window.WindowFocused += HandleWindowFocused;
-		window.WindowUpdated += HandleWindowUpdated;
-		window.WindowClosed += HandleWindowClosed;
-		if (!_windows.TryAdd(handle, window))
-			return true;
-
-		if (emitEvent)
-			HandleWindowAdd(window, true);
+		lock (_lifetimeLock)
+		{
+			// Classification can outlive cancellation, destruction or Stop/Start.
+			// Publish only in the lifetime that began this registration.
+			if (!_active || _disposed || cancellation.IsCancellationRequested ||
+				!ReferenceEquals(lifetime, _lifetime) || !Win32.IsWindow(handle)) return true;
+			Win32.GetWindowThreadProcessId(handle, out var currentProcessId);
+			// Hosted applications can have an app PID different from the HWND
+			// owner (ApplicationFrameHost). Compare owner-to-owner, not app-to-host.
+			if (currentProcessId != originalOwnerProcessId) return true;
+			if (!_windows.TryAdd(handle, window)) return true;
+			window.WindowFocused += HandleWindowFocused;
+			window.WindowUpdated += HandleWindowUpdated;
+			window.WindowClosed += HandleWindowClosed;
+			if (emitEvent) HandleWindowAdd(window, true);
+		}
 		return true;
 	}
 
 	private void UnregisterWindow(IntPtr handle)
 	{
-		_lastForegroundEvents.TryRemove(handle, out _);
-		if (!_windows.TryRemove(handle, out var window))
-			return;
-		window.WindowFocused -= HandleWindowFocused;
-		window.WindowUpdated -= HandleWindowUpdated;
-		window.WindowClosed -= HandleWindowClosed;
-		HandleWindowRemove(window);
+		lock (_lifetimeLock)
+		{
+			_lastForegroundEvents.TryRemove(handle, out _);
+			if (!_windows.TryRemove(handle, out var window))
+				return;
+			window.WindowFocused -= HandleWindowFocused;
+			window.WindowUpdated -= HandleWindowUpdated;
+			window.WindowClosed -= HandleWindowClosed;
+			HandleWindowRemove(window);
+			_floating.TryRemove(window, out _);
+		}
 	}
 
 	private void UpdateWindow(IntPtr handle, WindowUpdateType type)

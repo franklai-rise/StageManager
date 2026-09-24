@@ -107,6 +107,36 @@ internal static class ExpansionRegressionTests
         Check(projection.CurrentPolygon().Average(p => p.Y) > 300, "Settled hit geometry did not reach the card.");
     });
 
+    public static void DpiChangesRebuildExistingCards() => OnSta(() =>
+    {
+        using var dispatcher = new DispatcherQueueHelper();
+        dispatcher.EnsureDispatcherQueue();
+        using var compositor = new Compositor();
+        using var root = compositor.CreateContainerVisual();
+        using var owner = new Form();
+        using var renderer = new CompositionStageRenderer(owner, compositor, root, 0.8, false, true);
+        renderer.Resize(900, 1800, 1f);
+        renderer.Synchronize([new PrototypeStageSnapshot("dpi", "DPI", [
+            new FakeWindow(61001, "One", "dpi.exe"), new FakeWindow(61002, "Two", "dpi.exe")], DateTime.UtcNow)]);
+        renderer.Activate(Primary(renderer, "dpi"));
+        var original = Field<Dictionary<string, StageCardVisual>>(renderer, "_stages")["dpi"].Windows[0];
+        var size = original.Root.Size;
+        foreach (var dpi in new[] { 1.25f, 2f, 1f })
+        {
+            renderer.Resize(900, 1800, dpi);
+            var stage = Field<Dictionary<string, StageCardVisual>>(renderer, "_stages")["dpi"];
+            Check(stage.Windows[0].Root.Size == size * dpi,
+                "Changing display DPI updated the hits but kept an old-size visual.");
+            Check(stage.Windows[0].SurfaceWidth == Math.Max(128, (int)Math.Ceiling(size.X * dpi * 1.25f)),
+                "Changing display DPI retained the wrong backing texture size.");
+            Check(renderer.IsStageExpanded("dpi") && stage.Windows.Select(c => c.Window.Handle).SequenceEqual(new IntPtr[] { 61001, 61002 }),
+                "DPI reconstruction changed the expanded group or child order.");
+            var child = Hits(renderer).First(hit => hit.Window?.Handle == (IntPtr)61001);
+            Check(renderer.HitTest(Center(child, renderer.ScrollTranslationY))?.Window?.Handle == (IntPtr)61001,
+                "A child hit no longer follows its visual after changing DPI.");
+        }
+    });
+
     public static void ScrollDuringExpansion()
     {
         var motion = new SidebarScrollMotion();
@@ -118,6 +148,57 @@ internal static class ExpansionRegressionTests
         motion.SetRange(new SidebarScrollRange(-100, 900), 1);
         Check(motion.Position == position && motion.Target == target, "Growing the column snapped a live wheel spring.");
     }
+
+    public static void LateCaptureCannotUndoInvalidation() => OnSta(() =>
+    {
+        using var dispatcher = new DispatcherQueueHelper();
+        dispatcher.EnsureDispatcherQueue();
+        using var compositor = new Compositor();
+        using var graphics = new D3DCompositionDevice(true);
+        var window = new FakeWindow(62001, "Capture", "capture.exe");
+        using var card = new WindowCardVisual(compositor, graphics, window, 128, 80, new Vector2(128, 80), false);
+        var oldRevision = card.MarkCaptureStarted();
+        var bytes = ArrayPool<byte>.Shared.Rent(128 * 80 * 4);
+        Array.Clear(bytes);
+        using var frame = new CapturedCardFrame(window.Handle, bytes, 128, 80, false);
+        window.ShowMinimized();
+        card.UpdateWindow(window);
+        Check(!card.TryUpload(frame, oldRevision) && !card.HasSurface && card.NeedsCapture(DateTime.UtcNow, 5),
+            "A late pre-minimize screenshot overwrote the current placeholder request.");
+        var currentRevision = card.MarkCaptureStarted();
+        card.MarkCaptureFailed(oldRevision);
+        Check(card.TryUpload(frame, currentRevision), "An old failure invalidated the newer screenshot.");
+        card.InvalidateCapture();
+        var failedRevision = card.MarkCaptureStarted();
+        card.MarkCaptureFailed(failedRevision);
+        Check(!card.NeedsCapture(DateTime.UtcNow.AddSeconds(6), 5) && card.NeedsCapture(DateTime.UtcNow.AddMinutes(6), 5),
+            "A failed capture did not respect the existing five-minute refresh policy.");
+        card.Dispose();
+        Check(!card.TryUpload(frame, failedRevision) && !card.NeedsCapture(DateTime.UtcNow.AddMinutes(10), 5),
+            "A destroyed card still accepted background work.");
+    });
+
+    public static void QueuedCaptureIsReleasedOnShutdown() => OnSta(() =>
+    {
+        using var dispatcher = new DispatcherQueueHelper();
+        dispatcher.EnsureDispatcherQueue();
+        using var compositor = new Compositor();
+        using var root = compositor.CreateContainerVisual();
+        using var owner = new Form();
+        using var renderer = new CompositionStageRenderer(owner, compositor, root, 0.8, false, true);
+        renderer.Resize(900, 1400, 1);
+        renderer.Synchronize([new PrototypeStageSnapshot("queued", "Queued", [new FakeWindow(63001, "Queued", "queued.exe")], DateTime.UtcNow)]);
+        var card = Field<Dictionary<string, StageCardVisual>>(renderer, "_stages")["queued"].Windows[0];
+        var bytes = ArrayPool<byte>.Shared.Rent(card.SurfaceWidth * card.SurfaceHeight * 4);
+        using var frame = new CapturedCardFrame(card.Window.Handle, bytes, card.SurfaceWidth, card.SurfaceHeight, false);
+        var completionType = typeof(CompositionStageRenderer).GetNestedType("CaptureCompletion", BindingFlags.NonPublic)!;
+        var completion = Activator.CreateInstance(completionType, card, card.MarkCaptureStarted(), frame, null);
+        typeof(CompositionStageRenderer).GetField("_pendingCapture", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(renderer, completion);
+        renderer.Dispose();
+        var released = false;
+        try { _ = frame.Pixels.Length; } catch (ObjectDisposedException) { released = true; }
+        Check(released, "Closing before the UI completion callback leaked its pooled pixels.");
+    });
 
     public static void RapidExpansion() => OnSta(() =>
     {
@@ -191,5 +272,28 @@ internal static class ExpansionRegressionTests
             typeof(WindowCardVisual).GetProperty(nameof(WindowCardVisual.HiddenSinceUtc))!.SetValue(card, DateTime.UtcNow.AddSeconds(-9));
         trim.Invoke(renderer, null);
         Check(cards.All(card => !card.HasSurface), "Expired previews were not released.");
+    });
+
+    public static void IdleCaptureSchedulingAllocations() => OnSta(() =>
+    {
+        using var dispatcher = new DispatcherQueueHelper();
+        dispatcher.EnsureDispatcherQueue();
+        using var compositor = new Compositor();
+        using var root = compositor.CreateContainerVisual();
+        using var owner = new Form();
+        using var renderer = new CompositionStageRenderer(owner, compositor, root, 0.8, false, true);
+        renderer.Resize(900, 1800, 1);
+        renderer.Synchronize(Enumerable.Range(0, 10).Select(i => new PrototypeStageSnapshot(
+            "idle" + i, "Idle", [new FakeWindow(65000 + i, "Idle", "idle.exe")], DateTime.UtcNow)).ToArray());
+        foreach (var stage in Field<Dictionary<string, StageCardVisual>>(renderer, "_stages").Values)
+            foreach (var card in stage.Windows) card.MarkCaptureStarted();
+        var schedule = (Action)typeof(CompositionStageRenderer).GetMethod("ScheduleCaptures", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .CreateDelegate(typeof(Action), renderer);
+        for (var i = 0; i < 100; i++) schedule();
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 1000; i++) schedule();
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Console.WriteLine($"Idle capture scheduler (10 cards, 1000 checks): {allocated} managed bytes.");
+        Check(allocated < 128 * 1024, "Unchanged preview checks allocate unnecessary per-window pipelines.");
     });
 }

@@ -13,11 +13,27 @@ internal sealed class CardVisualMotion
     private readonly Visual _visual;
     private CardHoverTransform _from;
     private long _started;
+	private TimeSpan _delay;
+	private TimeSpan _duration = Duration;
+	private bool _smooth;
     public CardHoverTransform Target { get; private set; }
     public bool Initialized { get; private set; }
-    public bool IsMoving => _started != 0 && Stopwatch.GetElapsedTime(_started) < Duration;
-    public CardHoverTransform Current => _started == 0 ? Target :
-        Interpolate(_from, Target, Stopwatch.GetElapsedTime(_started).TotalMilliseconds / Duration.TotalMilliseconds);
+	public bool IsWaiting => _started != 0 && Stopwatch.GetElapsedTime(_started) < _delay;
+	internal TimeSpan AnimationDelay => _delay;
+	internal TimeSpan AnimationDuration => _duration;
+    public bool IsMoving => _started != 0 && Stopwatch.GetElapsedTime(_started) < _delay + _duration;
+	public CardHoverTransform Current
+	{
+		get
+		{
+			if (_started == 0) return Target;
+			var elapsed = Stopwatch.GetElapsedTime(_started);
+			if (elapsed <= _delay) return _from;
+			return Interpolate(_from, Target,
+				(elapsed - _delay).TotalMilliseconds / _duration.TotalMilliseconds,
+				_smooth);
+		}
+	}
 
     public CardVisualMotion(Compositor compositor, Visual visual)
     {
@@ -25,23 +41,33 @@ internal sealed class CardVisualMotion
         _visual = visual;
     }
 
-    internal static CardHoverTransform Interpolate(CardHoverTransform from, CardHoverTransform to, double progress)
+	internal static CardHoverTransform Interpolate(CardHoverTransform from, CardHoverTransform to, double progress,
+		bool smooth = false)
     {
-        var eased = (float)(1 - Math.Pow(1 - Math.Clamp(progress, 0, 1), 3));
+		var clamped = Math.Clamp(progress, 0, 1);
+		var eased = smooth
+			? (float)(clamped * clamped * (3 - 2 * clamped))
+			: (float)(1 - Math.Pow(1 - clamped, 3));
         return new CardHoverTransform(Vector3.Lerp(from.Offset, to.Offset, eased),
             Vector3.Lerp(from.Scale, to.Scale, eased), from.Angle + (to.Angle - from.Angle) * eased);
     }
 
-    public void Set(Vector3 offset, Vector3 scale, float angle, bool animate)
+	public void Set(Vector3 offset, Vector3 scale, float angle, bool animate,
+		TimeSpan delay = default, TimeSpan? duration = null, bool smooth = false)
     {
         var target = new CardHoverTransform(offset, scale, angle);
-        if (Initialized && Target == target && (animate || !IsMoving))
+		var requestedDuration = duration ?? Duration;
+		if (Initialized && Target == target && _delay == delay && _duration == requestedDuration &&
+			_smooth == smooth && (animate || !IsMoving))
             return;
         var start = Current;
         animate &= Initialized;
         Initialized = true;
         _from = start;
         Target = target;
+		_delay = animate ? delay : TimeSpan.Zero;
+		_duration = requestedDuration;
+		_smooth = smooth;
         _started = animate ? Stopwatch.GetTimestamp() : 0;
         if (!animate)
         {
@@ -54,25 +80,32 @@ internal sealed class CardVisualMotion
             return;
         }
         // x(t) = t; y(t) = 1 - (1-t)^3, exactly matching Interpolate.
-        using var easing = _compositor.CreateCubicBezierEasingFunction(new Vector2(1f / 3f, 1), new Vector2(2f / 3f, 1));
-        AnimateVector(nameof(Visual.Offset), start.Offset, offset, easing);
-        AnimateVector(nameof(Visual.Scale), start.Scale, scale, easing);
+		using var easing = smooth
+			? _compositor.CreateCubicBezierEasingFunction(new Vector2(1f / 3f, 0), new Vector2(2f / 3f, 1))
+			: _compositor.CreateCubicBezierEasingFunction(new Vector2(1f / 3f, 1), new Vector2(2f / 3f, 1));
+		AnimateVector(nameof(Visual.Offset), start.Offset, offset, easing, _delay, _duration);
+		AnimateVector(nameof(Visual.Scale), start.Scale, scale, easing, _delay, _duration);
         if (start.Angle != angle)
         {
             using var animation = _compositor.CreateScalarKeyFrameAnimation();
-            animation.Duration = Duration;
-            animation.InsertKeyFrame(0, start.Angle);
+			animation.Duration = _delay + _duration;
+			animation.InsertKeyFrame(0, start.Angle);
+			if (_delay > TimeSpan.Zero)
+				animation.InsertKeyFrame((float)(_delay.TotalMilliseconds / animation.Duration.TotalMilliseconds), start.Angle);
             animation.InsertKeyFrame(1, angle, easing);
             _visual.StartAnimation(nameof(Visual.RotationAngleInDegrees), animation);
         }
     }
 
-    private void AnimateVector(string property, Vector3 from, Vector3 to, CompositionEasingFunction easing)
+	private void AnimateVector(string property, Vector3 from, Vector3 to, CompositionEasingFunction easing,
+		TimeSpan delay, TimeSpan duration)
     {
         if (from == to) return;
         using var animation = _compositor.CreateVector3KeyFrameAnimation();
-        animation.Duration = Duration;
+		animation.Duration = delay + duration;
         animation.InsertKeyFrame(0, from);
+		if (delay > TimeSpan.Zero)
+			animation.InsertKeyFrame((float)(delay.TotalMilliseconds / animation.Duration.TotalMilliseconds), from);
         animation.InsertKeyFrame(1, to, easing);
         _visual.StartAnimation(property, animation);
     }
@@ -83,6 +116,7 @@ internal sealed record CardHitProjection(
     Vector2 CameraCenter, float PerspectiveDistance, Vector3? OverlayOffset = null, Vector2? OverlaySize = null)
 {
     public bool IsMoving => Stage.IsMoving || Card.IsMoving;
+	public bool IsInteractive => !Card.IsWaiting;
     public Vector2[] CurrentPolygon()
     {
         var stage = Stage.Current;

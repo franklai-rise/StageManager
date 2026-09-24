@@ -39,6 +39,65 @@ internal static class DesktopToggleIntegrationTests
 		}
 	}
 
+	public static void FailedRestoreRetainsOnlyPendingWindows()
+	{
+		using var first = StartProbe("normal");
+		using var second = StartProbe("normal");
+		try
+		{
+			var firstHandle = WaitForWindow(first);
+			var secondHandle = WaitForWindow(second);
+			var failSecond = true;
+			var firstRestores = 0;
+			var secondRestores = 0;
+			bool Restore(IntPtr handle, ref NativeWindowPlacement placement)
+			{
+				if (handle == firstHandle) firstRestores++;
+				else { secondRestores++; if (failSecond) return false; }
+				var placed = NativeMethods.SetWindowPlacement(handle, ref placement);
+				var shown = NativeMethods.ShowWindowAsync(handle, placement.ShowCommand);
+				return placed && shown;
+			}
+			var service = new DesktopToggleService(() => new[] { firstHandle, secondHandle }, Restore);
+			Check(service.TryToggle(out _), "Could not start the test-owned restore session.");
+			WaitUntil(() => NativeMethods.IsIconic(firstHandle) && NativeMethods.IsIconic(secondHandle), "Probe minimization did not settle.");
+			Check(!service.TryRestore(out var error) && service.IsDesktopShown &&
+				error is not null && error.Contains("PID", StringComparison.Ordinal),
+				"A partial failure was incorrectly reported as a completed restore.");
+			WaitUntil(() => !NativeMethods.IsIconic(firstHandle), "The successful probe did not restore.");
+			Check(NativeMethods.IsIconic(secondHandle), "The failing restore unexpectedly changed the second probe.");
+			failSecond = false;
+			Check(service.TryRestore(out error) && error is null && !service.IsDesktopShown && firstRestores == 1 && secondRestores == 2,
+				"Retry lost a pending window or reprocessed a successfully restored window.");
+			WaitUntil(() => !NativeMethods.IsIconic(secondHandle), "The retained probe did not restore on retry.");
+		}
+		finally { CloseProbe(first); CloseProbe(second); }
+	}
+
+	public static void AlreadyRestoredWindowDoesNotCauseFailure()
+	{
+		using var probe = StartProbe("normal");
+		try
+		{
+			var handle = WaitForWindow(probe);
+			var restoreCalls = 0;
+			bool RejectRestore(IntPtr _, ref NativeWindowPlacement placement)
+			{
+				restoreCalls++;
+				return false;
+			}
+			var service = new DesktopToggleService(() => new[] { handle }, RejectRestore);
+			Check(service.TryToggle(out _), "Could not start the already-restored window test.");
+			WaitUntil(() => NativeMethods.IsIconic(handle), "Probe minimization did not settle.");
+			NativeMethods.ShowWindowAsync(handle, NativeMethods.SwRestore);
+			WaitUntil(() => NativeMethods.IsWindowVisible(handle) && !NativeMethods.IsIconic(handle),
+				"The probe did not restore independently.");
+			Check(service.TryRestore(out var error) && error is null && !service.IsDesktopShown && restoreCalls == 0,
+				"An already restored window was treated as a failed desktop command.");
+		}
+		finally { CloseProbe(probe); }
+	}
+
 	private static Process StartProbe(string mode)
 	{
 		var executable = Environment.ProcessPath ?? throw new InvalidOperationException("Test executable path is unavailable.");

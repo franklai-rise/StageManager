@@ -27,7 +27,14 @@ internal static class Program
 			Application.EnableVisualStyles();
 			Application.SetCompatibleTextRenderingDefault(false);
 			using var form = new PrototypeForm();
-			Application.Run(form);
+			try { Application.Run(form); }
+			finally
+			{
+				// The UI is already closed. Give owned notification workers time to
+				// terminate before this process exits; never block a live UI thread.
+				if (!form.WaitForBackgroundShutdownAsync().Wait(TimeSpan.FromSeconds(6)))
+					WriteError(new TimeoutException("Notification worker shutdown could not be confirmed within six seconds."));
+			}
 		}
 		catch (Exception exception)
 		{

@@ -40,15 +40,6 @@ namespace StageManager.Native
                     Win32.AttachThreadInput(currentThread, foregroundThread, false);
             }
 
-            if (Win32.GetForegroundWindow() != windowToFocus)
-            {
-                const byte virtualKeyMenu = 0x12;
-                const uint keyEventKeyUp = 0x0002;
-                Win32.keybd_event(virtualKeyMenu, 0, 0, UIntPtr.Zero);
-                Win32.keybd_event(virtualKeyMenu, 0, keyEventKeyUp, UIntPtr.Zero);
-                Win32.SetForegroundWindow(windowToFocus);
-            }
-
             return Win32.GetForegroundWindow() == windowToFocus;
         }
     }

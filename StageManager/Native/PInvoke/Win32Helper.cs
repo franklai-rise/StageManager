@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 namespace StageManager.Native.PInvoke
@@ -64,7 +65,51 @@ namespace StageManager.Native.PInvoke
 
         public static bool ForceForegroundWindow(IntPtr hWnd)
         {
-            return FocusStealer.Steal(hWnd);
+			return FocusStealer.Steal(ResolveActivationTarget(hWnd));
         }
+
+		public static IntPtr ResolveActivationTarget(IntPtr hWnd)
+		{
+			if (hWnd == IntPtr.Zero || !Win32.IsWindow(hWnd)) return IntPtr.Zero;
+			var root = Win32.GetAncestor(hWnd, Win32.GA.GA_ROOTOWNER);
+			if (root == IntPtr.Zero) root = hWnd;
+			var target = root;
+			var visited = new HashSet<IntPtr> { target };
+			while (true)
+			{
+				var popup = Win32.GetLastActivePopup(target);
+				if (popup == IntPtr.Zero || !visited.Add(popup)) break;
+				target = popup;
+				if (Win32.IsWindowVisible(target) && Win32.IsWindowEnabled(target)) return target;
+			}
+			return Win32.IsWindowEnabled(root) ? root : hWnd;
+		}
+
+		public static bool IsForegroundForWindow(IntPtr hWnd)
+		{
+			if (!Win32.IsWindow(hWnd) || !Win32.IsWindowVisible(hWnd) || Win32.IsIconic(hWnd)) return false;
+			var foreground = Win32.GetForegroundWindow();
+			if (foreground == IntPtr.Zero) return false;
+			var target = ResolveActivationTarget(hWnd);
+			if (foreground == target) return true;
+			var foregroundRoot = Win32.GetAncestor(foreground, Win32.GA.GA_ROOTOWNER);
+			var targetRoot = Win32.GetAncestor(target, Win32.GA.GA_ROOTOWNER);
+			return foregroundRoot != IntPtr.Zero && foregroundRoot == targetRoot;
+		}
+
+		public static void FlashTaskbar(IntPtr hWnd)
+		{
+			var target = ResolveActivationTarget(hWnd);
+			if (target == IntPtr.Zero) return;
+			var info = new Win32.FlashWindowInfo
+			{
+				Size = (uint)Marshal.SizeOf<Win32.FlashWindowInfo>(),
+				Window = target,
+				Flags = 0x00000002u,
+				Count = 3,
+				Timeout = 0
+			};
+			Win32.FlashWindowEx(ref info);
+		}
     }
 }

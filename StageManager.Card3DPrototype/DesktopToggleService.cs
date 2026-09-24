@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Diagnostics;
 
 namespace StageManager.Card3DPrototype;
 
@@ -8,8 +9,13 @@ internal sealed class DesktopToggleService
 	private const int WindowPlacementRestoreToMaximized = 0x0002;
 	private readonly Func<bool, bool> _setDesktopVisibility;
 	private readonly Func<IReadOnlyList<IntPtr>> _enumerateWindows;
+	private readonly RestoreWindowOperation _restoreWindow = RestoreWindow;
 	private readonly List<DesktopWindowState> _session = new();
 	private IntPtr _previousForeground;
+	private uint _previousForegroundProcessId;
+	private string? _lastFailure;
+
+	internal delegate bool RestoreWindowOperation(IntPtr handle, ref NativeWindowPlacement placement);
 
 	public DesktopToggleService()
 	{
@@ -23,9 +29,10 @@ internal sealed class DesktopToggleService
 		_setDesktopVisibility = setDesktopVisibility;
 	}
 
-	internal DesktopToggleService(Func<IReadOnlyList<IntPtr>> enumerateWindows)
+	internal DesktopToggleService(Func<IReadOnlyList<IntPtr>> enumerateWindows, RestoreWindowOperation? restoreWindow = null)
 	{
 		_enumerateWindows = enumerateWindows;
+		_restoreWindow = restoreWindow ?? RestoreWindow;
 		_setDesktopVisibility = SetDesktopVisibility;
 	}
 
@@ -36,6 +43,7 @@ internal sealed class DesktopToggleService
 		IsDesktopShown = false;
 		_session.Clear();
 		_previousForeground = IntPtr.Zero;
+		_previousForegroundProcessId = 0;
 	}
 
 	public bool TryToggle(out string? error)
@@ -55,8 +63,9 @@ internal sealed class DesktopToggleService
 	{
 		try
 		{
+			_lastFailure = null;
 			if (!_setDesktopVisibility(showDesktop))
-				throw new InvalidOperationException("Windows did not accept the desktop command.");
+				throw new InvalidOperationException(_lastFailure ?? "Windows did not accept the desktop command.");
 			IsDesktopShown = showDesktop;
 			error = null;
 			return true;
@@ -74,6 +83,7 @@ internal sealed class DesktopToggleService
 		{
 			_session.Clear();
 			_previousForeground = NativeMethods.GetForegroundWindow();
+			NativeDesktopMethods.GetWindowThreadProcessId(_previousForeground, out _previousForegroundProcessId);
 			foreach (var handle in _enumerateWindows())
 			{
 				if (!IsMinimizableApplicationWindow(handle))
@@ -88,19 +98,37 @@ internal sealed class DesktopToggleService
 					_session.Add(new DesktopWindowState(handle, processId, placement, wasMaximized));
 				}
 			}
-			foreach (var window in _session)
-				NativeMethods.ShowWindowAsync(window.Handle, NativeMethods.SwMinimize);
+			for (var index = _session.Count - 1; index >= 0; index--)
+			{
+				// A rejected minimize command must not later make the restore fail.
+				if (!NativeMethods.ShowWindowAsync(_session[index].Handle, NativeMethods.SwMinimize))
+					_session.RemoveAt(index);
+			}
 			return true;
 		}
 
+		var accepted = new HashSet<IntPtr>();
 		for (var index = _session.Count - 1; index >= 0; index--)
 		{
 			var window = _session[index];
 			if (!NativeMethods.IsWindow(window.Handle))
+			{
+				_session.RemoveAt(index);
 				continue;
+			}
 			NativeDesktopMethods.GetWindowThreadProcessId(window.Handle, out var currentProcessId);
 			if (currentProcessId != window.ProcessId)
+			{
+				_session.RemoveAt(index);
 				continue;
+			}
+			// Some applications ignored minimize, or the user has already restored
+			// them. Neither case is a failed desktop restore.
+			if (IsRestored(window))
+			{
+				_session.RemoveAt(index);
+				continue;
+			}
 			var placement = window.Placement;
 			placement.Length = Marshal.SizeOf<NativeWindowPlacement>();
 			placement.Flags = window.WasMaximized
@@ -109,20 +137,58 @@ internal sealed class DesktopToggleService
 			placement.ShowCommand = window.WasMaximized
 				? NativeMethods.SwShowMaximized
 				: NativeMethods.SwRestore;
-			NativeMethods.SetWindowPlacement(window.Handle, ref placement);
-			// Some tray-style applications become hidden instead of remaining iconic.
-			// Always issue the recorded restore command; checking IsIconic here races
-			// with the asynchronous minimize request and can skip the window entirely.
-			NativeMethods.ShowWindowAsync(window.Handle, placement.ShowCommand);
+			if (_restoreWindow(window.Handle, ref placement))
+				accepted.Add(window.Handle);
 		}
-		if (NativeMethods.IsWindow(_previousForeground))
+		// ShowWindowAsync only queues work for another UI thread. Settle all
+		// accepted commands together, instead of blocking once per window.
+		var settling = Stopwatch.StartNew();
+		while (accepted.Count > 0 && settling.ElapsedMilliseconds < 300)
+		{
+			foreach (var window in _session)
+				if (accepted.Contains(window.Handle) && IsRestored(window))
+					accepted.Remove(window.Handle);
+			if (accepted.Count > 0) Thread.Sleep(15);
+		}
+		_session.RemoveAll(IsRestored);
+		// Keep only genuinely failed windows for a retry and identify them.
+		if (_session.Count != 0)
+		{
+			_lastFailure = $"{_session.Count} window(s) did not restore: " +
+				string.Join(", ", _session.Take(4).Select(DescribeWindow));
+			return false;
+		}
+		NativeDesktopMethods.GetWindowThreadProcessId(_previousForeground, out var foregroundProcessId);
+		if (NativeMethods.IsWindow(_previousForeground) && foregroundProcessId == _previousForegroundProcessId)
 		{
 			NativeMethods.BringWindowToTop(_previousForeground);
 			NativeMethods.SetForegroundWindow(_previousForeground);
 		}
 		_session.Clear();
 		_previousForeground = IntPtr.Zero;
+		_previousForegroundProcessId = 0;
 		return true;
+	}
+
+	private static bool RestoreWindow(IntPtr handle, ref NativeWindowPlacement placement)
+	{
+		var placed = NativeMethods.SetWindowPlacement(handle, ref placement);
+		// A tray-style app can be hidden rather than iconic; always send restore.
+		var shown = NativeMethods.ShowWindowAsync(handle, placement.ShowCommand);
+		// SetWindowPlacement may be denied for an elevated window even though
+		// ShowWindowAsync succeeds. The caller verifies the observed state.
+		return placed || shown;
+	}
+
+	private static bool IsRestored(DesktopWindowState window) =>
+		NativeMethods.IsWindowVisible(window.Handle) &&
+		!NativeMethods.IsIconic(window.Handle) &&
+		(!window.WasMaximized || NativeMethods.IsZoomed(window.Handle));
+
+	private static string DescribeWindow(DesktopWindowState window)
+	{
+		try { return $"{Process.GetProcessById((int)window.ProcessId).ProcessName} (PID {window.ProcessId})"; }
+		catch { return $"HWND 0x{window.Handle.ToInt64():X}"; }
 	}
 
 	private static IReadOnlyList<IntPtr> EnumerateWindows()

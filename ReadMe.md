@@ -1,4 +1,73 @@
-# Stage_Manager_Lai v4.4.7
+# Stage_Manager_Lai v4.4.16
+
+v4.4.16 gives the whole-sidebar pin its own pushpin icon. An angled pushpin
+means auto-hide is available; an upright highlighted pushpin means the
+sidebar remains open. The separate multi-window FIX/FIXED control is unchanged.
+
+v4.4.15 adds a FIX/FIXED button only when a manually hidden Focus sidebar is
+revealed from the left edge. FIX keeps the revealed cards open; FIXED releases
+them so they hide again after the pointer leaves. The reserved blank column
+remains in both states.
+
+v4.4.14 adds the collapse arrow to Focus mode. Manually collapsing slides the
+cards away while keeping the left work-area reservation; moving to the left
+edge temporarily reveals the cards, and leaving the edge hides them again.
+An exclusive full-screen session can still use the whole screen.
+
+v4.4.13 corrects false failures when restoring the desktop toggle and reports
+the process of any window that genuinely fails to return.
+
+v4.4.12 restores click-to-minimize for VPN Manager and Clash. Pointer-down
+minimize intent is handled before tray activation, using the target application's
+system minimize command. Live activation tests now verify the full restore,
+minimize and restore cycle for both applications.
+
+## v4.4.11
+
+v4.4.11 fixes clipped expansion connectors by including their geometry in the
+native display region without adding clickable targets. VPN Manager uses its
+existing activation event; Clash resolves and invokes its current tray icon.
+Activation succeeds only when the target is visible, restored and foreground.
+Live opt-in activation checks now exercise the same method as card selection.
+
+## v4.4.10
+
+v4.4.10 corrects the remaining tray-activation path found during live testing.
+The notification-area fallback now runs whenever verified foreground activation
+failed, even if the first restore request already cleared the minimized flag.
+Versioned window titles such as VPN Manager also match their longer live-status
+notification labels by a stable title prefix. Child cards now overlap their motion
+more naturally: each starts 45 ms after the previous card and uses a 300 ms smooth
+ease-in/ease-out movement. Connector lines retain their original static behavior.
+
+## v4.4.9
+
+v4.4.9 improves activation for minimized and notification-area applications.
+Card activation now resolves an application's active owned dialog, verifies the
+foreground result, retries without simulated keyboard input, and uses an exact
+notification-icon fallback for tray-only applications such as Clash. If Windows
+still rejects foreground activation, the intended taskbar button flashes instead
+of another application being selected.
+
+Multi-window groups now expand as soon as the pointer reaches the primary card.
+Their child cards flow downward in a 35 ms cascade with a 200 ms ease-out rather
+than appearing together. Delayed cards do not accept clicks until their motion
+starts. Expand-all, fixed expansion, collapse and pagination behavior are unchanged.
+
+## v4.4.8
+
+v4.4.8 is a maintenance build with no new features, UI layout changes, settings
+defaults or shortcut changes. It rejects late screenshot results, releases queued
+preview buffers on shutdown, rebuilds existing card visuals when DPI changes,
+guards delayed window registration and notification-worker shutdown, and retains
+failed desktop-restore entries for retry. Registry read failures no longer abort
+desktop-status or browser-shortcut initialization, and applied settings own their
+snapshot. Idle preview scheduling reuses its buffers instead of building temporary
+per-window query pipelines. The configured screenshot cadence is unchanged.
+
+See [the maintenance audit](docs/maintenance-v4.4.8.md) for validation and limits.
+
+## v4.4.7
 
 v4.4.7 adds a desktop-icons card directly below the minimize / restore card.
 It reads the real Windows desktop-icon setting, toggles the native Explorer

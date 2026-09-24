@@ -10,13 +10,13 @@ internal static class CardInteraction
 {
 	public static bool IsWindowCard(CardHitTarget? target) => target is not null &&
 		!target.IsExplorerButton && target.QuickLaunchApp is null && !target.IsExpandAllButton &&
-		!target.IsPinButton && !target.IsSidebarCollapseButton && !target.IsDesktopButton &&
+		!target.IsPinButton && !target.IsSidebarCollapseButton && !target.IsSidebarPinButton && !target.IsDesktopButton &&
 		!target.IsDesktopIconsButton &&
 		!target.IsNotificationAreaCard && target.PageDelta == 0;
 
 	public static string Key(CardHitTarget target) =>
 		$"{target.StageKey}:{target.Window?.Handle}:{target.IsPrimaryCard}:{target.IsPinButton}:{target.PageDelta}:" +
-		$"{target.IsDesktopButton}:{target.IsDesktopIconsButton}:{target.IsNotificationAreaDragHandle}:{target.IsNotificationAreaRefreshButton}:" +
+		$"{target.IsDesktopButton}:{target.IsDesktopIconsButton}:{target.IsSidebarPinButton}:{target.IsNotificationAreaDragHandle}:{target.IsNotificationAreaRefreshButton}:" +
 		$"{target.NotificationIcon?.Ordinal}:{target.NotificationIconName}";
 
 	public static bool SameTarget(CardHitTarget? first, CardHitTarget? second) =>

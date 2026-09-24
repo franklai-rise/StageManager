@@ -21,12 +21,12 @@ internal static class FocusEnhancedBehavior
 		StageMode mode,
 		bool sidebarVisible,
 		bool transientSession,
-		bool edgeRevealSession)
+		bool edgeRevealSession,
+		bool manuallyCollapsed = false)
 	{
 		return mode == StageMode.Focus &&
-			sidebarVisible &&
 			!transientSession &&
-			!edgeRevealSession;
+			(manuallyCollapsed || (sidebarVisible && !edgeRevealSession));
 	}
 
 	public static bool ShouldIdleHide(StageMode mode, bool idleAutoHideEnabled)
@@ -34,9 +34,9 @@ internal static class FocusEnhancedBehavior
 		return mode != StageMode.Focus && idleAutoHideEnabled;
 	}
 
-	public static bool CanHideSidebar(StageMode mode, bool exclusiveFullScreenActive)
+	public static bool CanHideSidebar(StageMode mode, bool exclusiveFullScreenActive, bool manualCollapse = false)
 	{
-		return mode != StageMode.Focus || exclusiveFullScreenActive;
+		return mode != StageMode.Focus || exclusiveFullScreenActive || manualCollapse;
 	}
 
 	public static bool ShouldPollHiddenSidebar(StageMode mode, bool pointerAtLeftEdge)
@@ -48,12 +48,18 @@ internal static class FocusEnhancedBehavior
 
 	public static bool ShouldShowCollapseButton(StageMode mode)
 	{
-		return mode != StageMode.Focus;
+		return true;
 	}
 
-	public static bool ShouldRestoreAfterTransientSession(StageMode mode, bool wasVisibleBeforeSession)
+	public static bool ShouldShowSidebarPinButton(StageMode mode, bool manuallyCollapsed, bool pinned) =>
+		mode == StageMode.Focus && (manuallyCollapsed || pinned);
+
+	public static bool ShouldApplyTransientHide(TransientSidebarAction action, bool pinned, bool exclusiveFullScreenActive) =>
+		action == TransientSidebarAction.Hide && (!pinned || exclusiveFullScreenActive);
+
+	public static bool ShouldRestoreAfterTransientSession(StageMode mode, bool wasVisibleBeforeSession, bool manuallyCollapsed = false)
 	{
-		return mode == StageMode.Focus || wasVisibleBeforeSession;
+		return !manuallyCollapsed && (mode == StageMode.Focus || wasVisibleBeforeSession);
 	}
 
 	public static Rectangle GetSidebarHostArea(StageMode mode, Rectangle displayBounds, Rectangle workingArea)

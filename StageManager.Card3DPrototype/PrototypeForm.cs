@@ -1,6 +1,7 @@
 using StageManager.Services;
 using StageManager.Settings;
 using StageManager.Native.Window;
+using StageManager.Native.PInvoke;
 using StageManager.Card3DPrototype.NotificationArea;
 using StageManager.Card3DPrototype.QuickLaunch;
 using Microsoft.Win32;
@@ -27,11 +28,9 @@ internal sealed class PrototypeForm : Form
 	private const int VirtualKeyLeftButton = 0x01;
 	private const int VirtualKeyRightButton = 0x02;
 	private const int VirtualKeyMiddleButton = 0x04;
-	private const int HoverExpandDelayMilliseconds = 350;
 	private readonly DispatcherQueueHelper _dispatcherQueue = new();
 	private readonly System.Windows.Forms.Timer _stageTimer = new() { Interval = 500 };
 	private readonly System.Windows.Forms.Timer _pointerTimer = new() { Interval = 50 };
-	private readonly System.Windows.Forms.Timer _hoverExpandTimer = new() { Interval = HoverExpandDelayMilliseconds };
 	private readonly System.Windows.Forms.Timer _hoverHintTimer = new() { Interval = 500 };
 	private readonly System.Windows.Forms.Timer _regionCollapseTimer = new() { Interval = 260 };
 	private readonly System.Windows.Forms.Timer _displayChangeTimer = new() { Interval = 250 };
@@ -46,6 +45,7 @@ internal sealed class PrototypeForm : Form
 	private readonly DesktopToggleService _desktopToggle = new();
 	private readonly DesktopIconVisibilityService _desktopIcons = new();
 	private readonly CancellationTokenSource _notificationAreaCancellation = new();
+	private readonly List<NotificationIconActivation> _notificationActivations = new();
 	private readonly HashSet<int> _registeredHotkeys = new();
 	private readonly CardClickGesture _cardClick = new();
 	private SidebarMouseWheelHook? _mouseWheelHook;
@@ -67,6 +67,7 @@ internal sealed class PrototypeForm : Form
 	private DateTime _nextFocusConstraintUtc = DateTime.MinValue;
 	private DateTime _nextFocusAnchorCheckUtc = DateTime.MinValue;
 	private volatile bool _sidebarVisible = true;
+	private bool _focusManuallyCollapsed;
 	private bool _transientSession;
 	private bool _edgeRevealSession;
 	private bool _sidebarWasVisibleBeforeTransientSession;
@@ -82,9 +83,9 @@ internal sealed class PrototypeForm : Form
 	private bool _middlePointerButtonDown;
 	private bool _notificationAreaDragActive;
 	private bool _notificationAreaRefreshPressActive;
+	private CancellationTokenSource? _activationVerification;
 	private int _notificationAreaDragStartY;
 	private int _notificationAreaDragStartOffset;
-	private string? _hoverExpandStageKey;
 	private bool IsFocusEnhanced => _catalog?.Settings.Current.StageMode == StageMode.Focus;
 	private UiLanguage CurrentLanguage => _catalog?.Settings.Current.UiLanguage ?? UiLanguage.English;
 	private string L(string english, string chinese) => UiText.Get(CurrentLanguage, english, chinese);
@@ -112,7 +113,7 @@ internal sealed class PrototypeForm : Form
 			() => _renderer?.RefreshAllPreviews());
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => RunAfterContextMenuCloses(_contextMenu, Close);
-		_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v4.4.7") { Enabled = false });
+	_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v4.4.16") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(refreshItem);
@@ -125,7 +126,6 @@ internal sealed class PrototypeForm : Form
 			RefreshDesktopIconState();
 		};
 		_pointerTimer.Tick += (_, _) => PollPointer();
-		_hoverExpandTimer.Tick += (_, _) => ExpandHoveredMultiWindowCard();
 		_hoverHintTimer.Tick += (_, _) => ShowHoverHint();
 		_regionCollapseTimer.Tick += (_, _) =>
 		{
@@ -245,7 +245,6 @@ internal sealed class PrototypeForm : Form
 		if (_renderer.IsScrolling)
 		{
 			_lastSidebarInteractionUtc = DateTime.UtcNow;
-			CancelHoverExpand();
 			HideHoverHint();
 			return;
 		}
@@ -253,7 +252,6 @@ internal sealed class PrototypeForm : Form
 		if (initialTarget is null)
 		{
 			Cursor = Cursors.Default;
-			CancelHoverExpand();
 			HideHoverHint();
 			return;
 		}
@@ -269,14 +267,13 @@ internal sealed class PrototypeForm : Form
 		Cursor = target.IsNotificationAreaDragHandle
 			? Cursors.SizeNS
 			: Cursors.Hand;
-		UpdateHoverExpandCandidate(target);
+		UpdateHoverExpandCandidate(target, e.Location);
 		UpdateHoverHint(target);
 	}
 
 	protected override void OnMouseDown(MouseEventArgs e)
 	{
 		base.OnMouseDown(e);
-		CancelHoverExpand();
 		HideHoverHint();
 		_lastSidebarInteractionUtc = DateTime.UtcNow;
 		if (e.Button == MouseButtons.Right)
@@ -286,7 +283,7 @@ internal sealed class PrototypeForm : Form
 			if (target?.IsNotificationAreaCard == true)
 				ShowNotificationAreaContextMenu(target);
 			else if (target is not null && !target.IsExplorerButton && target.QuickLaunchApp is null &&
-				!target.IsExpandAllButton && !target.IsPinButton && !target.IsSidebarCollapseButton &&
+				!target.IsExpandAllButton && !target.IsPinButton && !target.IsSidebarCollapseButton && !target.IsSidebarPinButton &&
 				!target.IsDesktopButton && !target.IsDesktopIconsButton && target.PageDelta == 0)
 				ShowCardContextMenu(target);
 			else
@@ -308,6 +305,7 @@ internal sealed class PrototypeForm : Form
 				? WindowClickBehavior.Decide(selected.Handle, NativeMethods.GetForegroundWindow(),
 					NativeMethods.IsIconic(selected.Handle), NativeMethods.IsWindow(selected.Handle))
 				: null;
+			TraceCardClick($"DOWN selected={clickTarget!.Window?.Handle} app={clickTarget.Window?.ProcessName} foreground={NativeMethods.GetForegroundWindow()} self={Handle} action={action}");
 			if (_cardClick.Begin(clickTarget, action, e.Clicks, e.Location, Environment.TickCount64,
 				SystemInformation.DoubleClickTime, SystemInformation.DoubleClickSize))
 			{
@@ -374,7 +372,25 @@ internal sealed class PrototypeForm : Form
 		}
 		if (_renderer.ConsumeSidebarCollapseRequest())
 		{
-			SetSidebarVisible(false);
+			_renderer.SetSidebarPinned(false);
+			SetSidebarVisible(false, manualCollapse: true);
+			return;
+		}
+		if (_renderer.ConsumeSidebarPinRequest())
+		{
+			var pin = !_renderer.IsSidebarPinned;
+			_renderer.SetSidebarPinned(pin);
+			if (pin)
+			{
+				_edgeRevealSession = false;
+				SetTransientOverlayRaised(false);
+				UpdateFocusReservation(force: true);
+			}
+			else if (_focusManuallyCollapsed)
+			{
+				_edgeRevealSession = true;
+				_transientRevealUtc = DateTime.UtcNow;
+			}
 			return;
 		}
 		if (_renderer.ConsumeDesktopToggleRequest())
@@ -415,7 +431,6 @@ internal sealed class PrototypeForm : Form
 			return;
 		CancelPendingSingleCardClick();
 		HideHoverHint();
-		CancelHoverExpand();
 		_lastSidebarInteractionUtc = DateTime.UtcNow;
 		_renderer.Scroll(e.Delta);
 	}
@@ -454,7 +469,6 @@ internal sealed class PrototypeForm : Form
 			{
 				CancelPendingSingleCardClick();
 				HideHoverHint();
-				CancelHoverExpand();
 				_lastSidebarInteractionUtc = DateTime.UtcNow;
 				_renderer.Scroll(delta);
 			}
@@ -518,11 +532,11 @@ internal sealed class PrototypeForm : Form
 		_mouseWheelHook?.Dispose();
 		_mouseWheelHook = null;
 		_notificationAreaCancellation.Cancel();
+		CancelActivationVerification();
 		_focusAppBarReservation.Dispose();
 		UnregisterHotkeys();
 		_stageTimer.Stop();
 		_pointerTimer.Stop();
-		_hoverExpandTimer.Stop();
 		_cardClick.Cancel();
 		_hoverHintTimer.Stop();
 		_hiddenEdgeTimer.Change(Timeout.Infinite, Timeout.Infinite);
@@ -531,7 +545,6 @@ internal sealed class PrototypeForm : Form
 		_previewReleaseTimer.Stop();
 		_stageTimer.Dispose();
 		_pointerTimer.Dispose();
-		_hoverExpandTimer.Dispose();
 		_hoverHintTimer.Dispose();
 		_hiddenEdgeTimer.Dispose();
 		_regionCollapseTimer.Dispose();
@@ -571,6 +584,8 @@ internal sealed class PrototypeForm : Form
 		_dispatcherQueue.Dispose();
 		base.OnFormClosed(e);
 	}
+
+	internal Task WaitForBackgroundShutdownAsync() => _notificationAreaClient.ShutdownAsync();
 
 	private void RefreshStages()
 	{
@@ -613,6 +628,9 @@ internal sealed class PrototypeForm : Form
 			layoutRegionChanged = true;
 		if (_renderer.SetCollapseButtonEnabled(FocusEnhancedBehavior.ShouldShowCollapseButton(settings.StageMode)))
 			layoutRegionChanged = true;
+		if (_renderer.SetSidebarPinButtonEnabled(FocusEnhancedBehavior.ShouldShowSidebarPinButton(
+			settings.StageMode, _focusManuallyCollapsed, _renderer.IsSidebarPinned)))
+			layoutRegionChanged = true;
 		if (_renderer.SetNotificationAreaVerticalOffset(settings.NotificationAreaVerticalOffset))
 			layoutRegionChanged = true;
 		if (_renderer.SetNotificationAreaCardEnabled(settings.ShowNotificationAreaCard))
@@ -631,9 +649,17 @@ internal sealed class PrototypeForm : Form
 		_renderer.SetPreviewPolicy(settings.PreviewRefreshMinutes, settings.PausePreviewRefreshWhenHidden);
 		UiText.Apply(_contextMenu.Items, settings.UiLanguage);
 		RegisterHotkeys();
+		var wasFocusManuallyCollapsed = _focusManuallyCollapsed;
 		if (settings.StageMode != StageMode.Focus)
+		{
+			_renderer.SetSidebarPinned(false);
+			_focusManuallyCollapsed = false;
 			_focusAppBarReservation.Remove();
-		if ((settings.StageMode == StageMode.Focus || !settings.IdleAutoHideEnabled) && !_sidebarVisible)
+		}
+		var shouldRestoreHiddenSidebar = settings.StageMode == StageMode.Focus
+			? !_focusManuallyCollapsed || _renderer.IsSidebarPinned
+			: wasFocusManuallyCollapsed || !settings.IdleAutoHideEnabled;
+		if (shouldRestoreHiddenSidebar && !_sidebarVisible)
 		{
 			_edgeRevealSession = false;
 			SetSidebarVisible(true);
@@ -778,7 +804,7 @@ internal sealed class PrototypeForm : Form
 			_renderer?.SetDesktopShown(_desktopToggle.IsDesktopShown);
 			return;
 		}
-		_renderer?.SetDesktopShown(false);
+		_renderer?.SetDesktopShown(_desktopToggle.IsDesktopShown);
 		_trayIcon?.ShowBalloonTip(
 			3000,
 			"Stage_Manager_Lai",
@@ -972,6 +998,8 @@ internal sealed class PrototypeForm : Form
 			{
 				if (_closing || _renderer is null)
 					return;
+				_notificationActivations.Clear();
+				_notificationActivations.AddRange(icons.Select(icon => new NotificationIconActivation(icon.Ordinal, icon.Name)));
 				_renderer.UpdateNotificationAreaIcons(icons);
 				UpdateWindowRegion(_sidebarVisible);
 			}
@@ -1217,6 +1245,10 @@ internal sealed class PrototypeForm : Form
 			return _renderer?.IsExpandedStagePinned == true
 				? L("FIXED · Click to release", "FIXED · 点击解除固定")
 				: L("FIX · Keep expanded", "FIX · 保持展开");
+		if (target.IsSidebarPinButton)
+			return _renderer?.IsSidebarPinned == true
+				? L("Unpin sidebar · Allow automatic hiding", "取消侧栏固定 · 恢复自动隐藏")
+				: L("Pin sidebar open", "图钉固定侧栏保持展开");
 		if (target.IsSidebarCollapseButton)
 			return L("Hide sidebar", "隐藏侧栏");
 		if (target.IsDesktopButton)
@@ -1281,12 +1313,13 @@ internal sealed class PrototypeForm : Form
 
 	private void ToggleSidebarVisibility() => SetSidebarVisible(!_sidebarVisible);
 
-	private void SetSidebarVisible(bool visible)
+	private void SetSidebarVisible(bool visible, bool manualCollapse = false)
 	{
 		if (!visible && IsFocusEnhanced)
 		{
 			var exclusiveFullScreenActive = UsesTransientSidebar(NativeMethods.GetForegroundWindow());
-			if (!FocusEnhancedBehavior.CanHideSidebar(StageMode.Focus, exclusiveFullScreenActive))
+			if (!FocusEnhancedBehavior.CanHideSidebar(StageMode.Focus, exclusiveFullScreenActive,
+				manualCollapse || _focusManuallyCollapsed))
 				return;
 		}
 		if (!visible)
@@ -1296,6 +1329,13 @@ internal sealed class PrototypeForm : Form
 		}
 		if (_renderer is null)
 			return;
+		if (visible && !(_edgeRevealSession && IsFocusEnhanced) && !_renderer.IsSidebarPinned)
+			_focusManuallyCollapsed = false;
+		else if (!visible && manualCollapse && IsFocusEnhanced)
+			_focusManuallyCollapsed = true;
+		_renderer.SetSidebarPinButtonEnabled(FocusEnhancedBehavior.ShouldShowSidebarPinButton(
+			_catalog?.Settings.Current.StageMode ?? StageMode.Coexist,
+			_focusManuallyCollapsed, _renderer.IsSidebarPinned));
 		if (_sidebarVisible == visible)
 		{
 			UpdateFocusReservation();
@@ -1310,7 +1350,6 @@ internal sealed class PrototypeForm : Form
 		}
 		else
 		{
-			CancelHoverExpand();
 			_edgeRevealSession = false;
 			_pointerTimer.Stop();
 			var largeWindowActive = UsesTransientSidebar(NativeMethods.GetForegroundWindow());
@@ -1388,34 +1427,172 @@ internal sealed class PrototypeForm : Form
 	private void ActivateSelectedWindow(StageManager.Native.Window.IWindow window, bool allowMinimize = false,
 		WindowClickAction? requestedAction = null)
 	{
+		var exists = NativeMethods.IsWindow(window.Handle);
+		var action = requestedAction ?? WindowClickBehavior.Decide(
+			window.Handle, NativeMethods.GetForegroundWindow(),
+			exists && NativeMethods.IsIconic(window.Handle), exists, allowMinimize);
+		if (!exists || action == WindowClickAction.Ignore) return;
+		TraceCardClick($"EXEC selected={window.Handle} foreground={NativeMethods.GetForegroundWindow()} action={action} allowMinimize={allowMinimize}");
+		// Honor the pointer-down intent before any tray-restore special case.
+		// WM_SYSCOMMAND follows the application's own minimize handling, including
+		// elevated windows where ShowWindowAsync can fail to change the state.
+		if (action == WindowClickAction.Minimize)
+		{
+			CancelActivationVerification();
+			if (allowMinimize && !NativeMethods.IsIconic(window.Handle))
+			{
+				var sent = NativeMethods.PostMessage(window.Handle, 0x0112, (IntPtr)0xF020, IntPtr.Zero);
+				TraceCardClick($"MINIMIZE selected={window.Handle} sent={sent} error={System.Runtime.InteropServices.Marshal.GetLastWin32Error()}");
+			}
+			return;
+		}
+		var trayApplication = window.ProcessName.Equals("VpnManager", StringComparison.OrdinalIgnoreCase)
+			? "VPN 管理器"
+			: window.ProcessName.Equals("Clash for Windows", StringComparison.OrdinalIgnoreCase)
+				? "Clash for Windows" : null;
+		if (trayApplication is not null && NativeMethods.IsWindow(window.Handle) &&
+			!Win32Helper.IsForegroundForWindow(window.Handle))
+		{
+			CancelActivationVerification();
+			_activationVerification = CancellationTokenSource.CreateLinkedTokenSource(_notificationAreaCancellation.Token);
+			_ = ActivateTrayApplicationAsync(window, trayApplication, _activationVerification);
+			return;
+		}
 		if (!ManagedWindowPresence.ShouldDisplay(
 			NativeMethods.IsWindowVisible(window.Handle),
 			NativeMethods.IsIconic(window.Handle)))
-			return;
-		// Card clicks retain the intent from pointer-down until pointer-up.
-		// Explicit menu/keyboard activation never toggles a foreground window off.
-		var exists = NativeMethods.IsWindow(window.Handle);
-		var action = requestedAction ?? WindowClickBehavior.Decide(
-			window.Handle,
-			NativeMethods.GetForegroundWindow(),
-			exists && NativeMethods.IsIconic(window.Handle),
-			exists, allowMinimize);
-		if (action == WindowClickAction.Ignore)
-			return;
-		_desktopToggle.MarkDesktopDismissed();
-		_renderer?.SetDesktopShown(false);
-		if (action == WindowClickAction.Minimize)
 		{
-			if (allowMinimize && NativeMethods.GetForegroundWindow() == window.Handle && !NativeMethods.IsIconic(window.Handle))
-				NativeMethods.ShowWindowAsync(window.Handle, NativeMethods.SwMinimize);
+			if (!_closing && IsHandleCreated) BeginInvoke(new Action(RefreshStages));
 			return;
 		}
+		// Card clicks retain the intent from pointer-down until pointer-up.
+		// Explicit menu/keyboard activation never toggles a foreground window off.
+		_desktopToggle.MarkDesktopDismissed();
+		_renderer?.SetDesktopShown(false);
 
 		// FocusStealer performs exactly one native restore when the window is
 		// minimized. Avoid issuing a second asynchronous restore here: that race can
 		// discard Windows' restore-to-maximized state on some applications.
+		var previousForeground = NativeMethods.GetForegroundWindow();
 		window.Focus();
 		QueueFocusWindowPlacement(window);
+		BeginActivationVerification(window, previousForeground);
+	}
+
+	private static void TraceCardClick(string message)
+	{
+		try
+		{
+			var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Stage_Manager_Lai", "Logs");
+			Directory.CreateDirectory(directory);
+			var path = Path.Combine(directory, "card-click.log");
+			if (File.Exists(path) && new FileInfo(path).Length > 262144) File.WriteAllText(path, string.Empty);
+			File.AppendAllText(path, $"{DateTimeOffset.Now:O} {message}{Environment.NewLine}");
+		}
+		catch (IOException) { }
+		catch (UnauthorizedAccessException) { }
+	}
+
+	private async Task ActivateTrayApplicationAsync(IWindow window, string applicationName, CancellationTokenSource source)
+	{
+		try
+		{
+			var invoked = false;
+			if (window.ProcessName.Equals("VpnManager", StringComparison.OrdinalIgnoreCase))
+			{
+				try
+				{
+					using var signal = EventWaitHandle.OpenExisting("Local\\VpnManager.Activate");
+					invoked = signal.Set();
+				}
+				catch (WaitHandleCannotBeOpenedException) { }
+				catch (UnauthorizedAccessException) { }
+			}
+			if (!invoked)
+				invoked = await _notificationAreaClient.ActivateApplicationAsync(applicationName, source.Token);
+			await Task.Delay(250, source.Token);
+			var foreground = Win32Helper.IsForegroundForWindow(window.Handle);
+			var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Stage_Manager_Lai", "Logs");
+			Directory.CreateDirectory(directory);
+			File.AppendAllText(Path.Combine(directory, "activation.log"),
+				$"{DateTimeOffset.Now:O} {applicationName}: invoked={invoked}, foreground={foreground}, iconic={NativeMethods.IsIconic(window.Handle)}{Environment.NewLine}");
+			if (!foreground && NativeMethods.IsWindow(window.Handle)) window.Focus();
+			if (!_closing) RefreshStages();
+		}
+		catch (OperationCanceledException) { }
+		catch (Exception exception) { Debug.WriteLine(exception); }
+		finally
+		{
+			if (ReferenceEquals(_activationVerification, source)) _activationVerification = null;
+			source.Dispose();
+		}
+	}
+
+	private void BeginActivationVerification(IWindow window, IntPtr previousForeground)
+	{
+		CancelActivationVerification();
+		_activationVerification = CancellationTokenSource.CreateLinkedTokenSource(_notificationAreaCancellation.Token);
+		var source = _activationVerification;
+		_ = VerifyWindowActivationAsync(window, previousForeground, source);
+	}
+
+	private void CancelActivationVerification()
+	{
+		_activationVerification?.Cancel();
+		_activationVerification = null;
+	}
+
+	private async Task VerifyWindowActivationAsync(IWindow window, IntPtr previousForeground, CancellationTokenSource source)
+	{
+		try
+		{
+			await Task.Delay(150, source.Token);
+			if (_closing || !NativeMethods.IsWindow(window.Handle) || Win32Helper.IsForegroundForWindow(window.Handle)) return;
+			var foreground = NativeMethods.GetForegroundWindow();
+			if (foreground != IntPtr.Zero && foreground != previousForeground) return;
+
+			window.Focus();
+			await Task.Delay(180, source.Token);
+			if (_closing || !NativeMethods.IsWindow(window.Handle) || Win32Helper.IsForegroundForWindow(window.Handle)) return;
+			foreground = NativeMethods.GetForegroundWindow();
+			if (foreground != IntPtr.Zero && foreground != previousForeground) return;
+
+			// A restore request can clear WS_MINIMIZE before Windows actually grants
+			// foreground activation. Keep the notification-area fallback available
+			// whenever both verified foreground attempts failed, not only while the
+			// original HWND still reports itself as iconic.
+			if (await TryActivateFromNotificationAreaAsync(window, source.Token))
+			{
+				await Task.Delay(220, source.Token);
+				RefreshStages();
+				if (!NativeMethods.IsIconic(window.Handle) || Win32Helper.IsForegroundForWindow(window.Handle)) return;
+			}
+			Win32Helper.FlashTaskbar(window.Handle);
+		}
+		catch (OperationCanceledException) { }
+		finally
+		{
+			if (ReferenceEquals(_activationVerification, source)) _activationVerification = null;
+			source.Dispose();
+		}
+	}
+
+	private async Task<bool> TryActivateFromNotificationAreaAsync(IWindow window, CancellationToken cancellationToken)
+	{
+		var candidates = new[] { window.Title, window.ProcessName, window.ProcessFileName };
+		var activation = NotificationIconMatcher.FindBest(_notificationActivations, candidates);
+		if (activation is null)
+		{
+			var icons = await _notificationAreaClient.CaptureAsync(cancellationToken);
+			try
+			{
+				_notificationActivations.Clear();
+				_notificationActivations.AddRange(icons.Select(icon => new NotificationIconActivation(icon.Ordinal, icon.Name)));
+				activation = NotificationIconMatcher.FindBest(_notificationActivations, candidates);
+			}
+			finally { foreach (var icon in icons) icon.Dispose(); }
+		}
+		return activation is { } match && await _notificationAreaClient.InvokeAsync(match, cancellationToken);
 	}
 
 	private bool UsesTransientSidebar(IntPtr foregroundWindow)
@@ -1528,7 +1705,8 @@ internal sealed class PrototypeForm : Form
 			{
 				_edgeRevealSession = true;
 				_transientRevealUtc = nowUtc;
-				SetTransientOverlayRaised(true);
+				if (!_focusManuallyCollapsed)
+					SetTransientOverlayRaised(true);
 				SetSidebarVisible(true);
 			}
 			return;
@@ -1540,7 +1718,7 @@ internal sealed class PrototypeForm : Form
 			_renderer.PollPointer(client);
 		var hit = _renderer.HitTest(client);
 		if (!_renderer.IsScrolling && !_notificationAreaDragActive && _cardClick.Pending is null)
-			UpdateHoverExpandCandidate(hit);
+			UpdateHoverExpandCandidate(hit, client);
 		UpdateHoverHint(hit);
 		var pointerNearSidebar = client.X >= 0 &&
 			client.X <= _renderer.SidebarInteractionWidth &&
@@ -1564,15 +1742,16 @@ internal sealed class PrototypeForm : Form
 			pointerWithinTransientSidebar,
 			_transientRevealUtc,
 			nowUtc);
-		if (transientAction == TransientSidebarAction.Hide)
+		if (FocusEnhancedBehavior.ShouldApplyTransientHide(
+			transientAction, _renderer.IsSidebarPinned, largeWindowActive))
 		{
 			_edgeRevealSession = false;
-			SetSidebarVisible(false);
+			SetSidebarVisible(false, manualCollapse: _focusManuallyCollapsed);
 			return;
 		}
 		if (transientOverlayActive)
 		{
-			if (pointerWithinTransientSidebar && !_transientOverlayRaised)
+			if (pointerWithinTransientSidebar && !_transientOverlayRaised && !_focusManuallyCollapsed)
 			{
 				_transientRevealUtc = nowUtc;
 				SetTransientOverlayRaised(true);
@@ -1592,43 +1771,14 @@ internal sealed class PrototypeForm : Form
 		}
 	}
 
-	private void UpdateHoverExpandCandidate(CardHitTarget? target)
+	private void UpdateHoverExpandCandidate(CardHitTarget? target, Point clientPoint)
 	{
 		if (_cardClick.Pending is not null || _renderer is null || target is null || !_renderer.CanExpandOnHover(target))
-		{
-			CancelHoverExpand();
 			return;
-		}
-
-		if (string.Equals(_hoverExpandStageKey, target.StageKey, StringComparison.OrdinalIgnoreCase) &&
-			_hoverExpandTimer.Enabled)
+		if (!_sidebarVisible || !_renderer.TryExpandHoveredPrimaryCard(clientPoint, target.StageKey))
 			return;
-
-		_hoverExpandStageKey = target.StageKey;
-		_hoverExpandTimer.Stop();
-		_hoverExpandTimer.Start();
-	}
-
-	private void CancelHoverExpand()
-	{
-		_hoverExpandTimer.Stop();
-		_hoverExpandStageKey = null;
-	}
-
-	private void ExpandHoveredMultiWindowCard()
-	{
-		_hoverExpandTimer.Stop();
-		var stageKey = _hoverExpandStageKey;
-		_hoverExpandStageKey = null;
-		if (_renderer is null || !_sidebarVisible || string.IsNullOrEmpty(stageKey))
-			return;
-
-		var wasExpanded = _renderer.HasExpandedStage;
-		if (!_renderer.TryExpandHoveredPrimaryCard(PointToClient(Cursor.Position), stageKey))
-			return;
-
-		if (!wasExpanded && _renderer.HasExpandedStage)
-			NativeMethods.SetWindowPos(Handle, NativeMethods.HwndTop, 0, 0, 0, 0, NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
+		NativeMethods.SetWindowPos(Handle, NativeMethods.HwndTop, 0, 0, 0, 0,
+			NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
 		_lastSidebarInteractionUtc = DateTime.UtcNow;
 		UpdateWindowRegion(true);
 	}
@@ -1687,7 +1837,8 @@ internal sealed class PrototypeForm : Form
 		_transientSession = false;
 		SetTransientOverlayRaised(false);
 		var mode = _catalog?.Settings.Current.StageMode ?? StageMode.Coexist;
-		if (FocusEnhancedBehavior.ShouldRestoreAfterTransientSession(mode, _sidebarWasVisibleBeforeTransientSession))
+		if (FocusEnhancedBehavior.ShouldRestoreAfterTransientSession(mode, _sidebarWasVisibleBeforeTransientSession,
+			_focusManuallyCollapsed && _renderer?.IsSidebarPinned != true))
 		{
 			_edgeRevealSession = false;
 			if (!_sidebarVisible)
@@ -1743,7 +1894,8 @@ internal sealed class PrototypeForm : Form
 			_catalog.Settings.Current.StageMode,
 			_sidebarVisible,
 			_transientSession,
-			_edgeRevealSession);
+			_edgeRevealSession,
+			_focusManuallyCollapsed);
 		var wasRegistered = _focusAppBarReservation.IsRegistered;
 		var previousBounds = _focusAppBarReservation.ReservedBounds;
 		if (!shouldReserve)
@@ -1805,7 +1957,7 @@ internal sealed class PrototypeForm : Form
 		var physicalBounds = _sidebarDisplay.Bounds;
 		if (Left != physicalBounds.Left || Top != physicalBounds.Top || Height != physicalBounds.Height)
 			UpdateSidebarDisplay(force: true);
-		if (!_sidebarVisible)
+		if (!_sidebarVisible && (!_focusManuallyCollapsed || _renderer?.IsSidebarPinned == true))
 			SetSidebarVisible(true);
 	}
 
@@ -1889,7 +2041,7 @@ internal sealed class PrototypeForm : Form
 		var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 		_trayIcon = new NotifyIcon
 		{
-			Text = "Stage_Manager_Lai v4.4.7",
+			Text = "Stage_Manager_Lai v4.4.16",
 			Icon = icon,
 			ContextMenuStrip = _contextMenu,
 			Visible = true

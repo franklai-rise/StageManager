@@ -22,18 +22,29 @@ internal sealed class DesktopIconVisibilityService
 	{
 		_queryVisibility = queryVisibility;
 		_toggleVisibility = toggleVisibility;
-		IconsVisible = _queryVisibility() ?? true;
+		IconsVisible = QueryVisibilitySafely() ?? true;
 	}
 
 	public bool IconsVisible { get; private set; }
 
 	public bool Refresh()
 	{
-		var current = _queryVisibility();
+		var current = QueryVisibilitySafely();
 		if (current is null || current.Value == IconsVisible)
 			return false;
 		IconsVisible = current.Value;
 		return true;
+	}
+
+	private bool? QueryVisibilitySafely()
+	{
+		try { return _queryVisibility(); }
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+		{
+			// A transient registry failure must not close the sidebar or change
+			// the desktop. Retain the last observed state until a later refresh.
+			return null;
+		}
 	}
 
 	public bool TryToggle(out string? error)
@@ -48,7 +59,7 @@ internal sealed class DesktopIconVisibilityService
 				return false;
 			}
 
-			var observed = _queryVisibility();
+			var observed = QueryVisibilitySafely();
 			// Explorer may persist HideIcons a fraction later than it updates the
 			// desktop view. Give immediate visual feedback and let Refresh reconcile.
 			IconsVisible = observed is not null && observed.Value != previous

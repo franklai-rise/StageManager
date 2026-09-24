@@ -10,6 +10,22 @@ using System.IO;
 using System.Numerics;
 using System.Windows.Forms;
 
+if (args.Length > 0 && args[0] == "--notification-area-worker")
+{
+	return InteractionMaintenanceTests.RunNotificationWorker(args.Skip(1).ToArray());
+}
+if (args is ["--live-activation-probe"])
+{
+	InteractionMaintenanceTests.VerifyLiveActivation();
+	return 0;
+}
+
+if (args is ["--maintenance-worker-probe"])
+{
+	Thread.Sleep(TimeSpan.FromSeconds(15));
+	return 0;
+}
+
 if (args is ["--desktop-toggle-probe", var probeMode])
 {
 	ApplicationConfiguration.Initialize();
@@ -48,12 +64,27 @@ internal static class TestRunner
 		RunTest("Expansion preserves an in-flight wheel spring", ExpansionRegressionTests.ScrollDuringExpansion);
 		RunTest("Rapid expansion remains anchored and targets its own child windows", ExpansionRegressionTests.RapidExpansion);
 		RunTest("Recently hidden previews are reused within a bounded expiring cache", ExpansionRegressionTests.WarmPreviews);
+		RunTest("Changing DPI rebuilds visuals, textures and hits without changing group state", ExpansionRegressionTests.DpiChangesRebuildExistingCards);
+		RunTest("Late or failed captures cannot overwrite newer card state", ExpansionRegressionTests.LateCaptureCannotUndoInvalidation);
+		RunTest("Shutdown releases a captured frame before its UI callback executes", ExpansionRegressionTests.QueuedCaptureIsReleasedOnShutdown);
+		RunTest("Idle preview scheduling avoids per-window temporary allocations", ExpansionRegressionTests.IdleCaptureSchedulingAllocations);
 		RunTest("Settings are normalized and persisted atomically", SettingsPersistence);
+		RunTest("Applied settings cannot be mutated by a previously saved draft", MaintenanceRegressionTests.AppliedSettingsOwnTheirSnapshot);
+		RunTest("Desktop-icon status survives registry failures and recovers without toggling", MaintenanceRegressionTests.DesktopRegistryFailuresRecover);
+		RunTest("Browser shortcut resolution survives inaccessible registry candidates", MaintenanceRegressionTests.BrowserRegistryFailuresUseFallback);
+		RunTest("Window registration cannot publish after disposal", MaintenanceRegressionTests.RegistrationCannotCommitAfterDispose);
+		RunTest("Cancelling classification prevents late window registration", MaintenanceRegressionTests.CancelledRegistrationCannotCommit);
+		RunTest("Normal delayed registration still publishes exactly once", MaintenanceRegressionTests.RegistrationStillPublishesNormally);
+		RunTest("Hosted application identity may differ from the window owner", MaintenanceRegressionTests.HostedApplicationIdentityIsPreserved);
+		RunTest("Disposal cancels active and queued notification workers", MaintenanceRegressionTests.NotificationWorkersStopOnDispose);
+		RunTest("Timed-out notification workers exit before the request finishes", MaintenanceRegressionTests.NotificationWorkersAreBoundedByTimeout);
 		RunTest("Independent startup shortcut is owned by Windows Explorer", IndependentStartupShortcut);
 		RunTest("Default and custom hotkeys parse", HotkeyParsing);
 		RunTest("3D projection recedes toward the left edge", PerspectiveProjection);
 		RunTest("Collapsed cards retain subtle hover feedback without expanding", CollapsedHoverFeedback);
 		RunTest("Expanded multi-window cards form a full vertical child list", SubtleHoverProjection);
+		RunTest("Hover contact expands immediately with a non-clickable card cascade", InteractionMaintenanceTests.HoverExpansionStartsImmediatelyAndCascades);
+		RunTest("Activation fallback matches only the intended notification icon", InteractionMaintenanceTests.NotificationIconMatchingIsSpecific);
 		RunTest("Capture fallback produces a light gray placeholder card", CaptureFallback);
 		RunTest("Prototype stage slots do not jump after activation", PrototypeStageSlotsStayStable);
 		RunTest("Prototype child-window slots do not jump after activation", PrototypeChildWindowSlotsStayStableAfterActivation);
@@ -68,6 +99,8 @@ internal static class TestRunner
 		RunTest("Show Desktop toggle changes state only after a successful desktop operation", DesktopToggleState);
 		RunTest("Desktop-icons toggle follows Windows state and changes only after success", DesktopIconVisibilityState);
 		RunTest("Show Desktop restores normal, maximized and hidden application windows", DesktopToggleIntegrationTests.RestoresNativeWindows);
+		RunTest("Partial desktop restore failures retain only failed windows for retry", DesktopToggleIntegrationTests.FailedRestoreRetainsOnlyPendingWindows);
+		RunTest("Already restored desktop windows are not reported as failures", DesktopToggleIntegrationTests.AlreadyRestoredWindowDoesNotCauseFailure);
 		RunTest("Notification-area icons keep native sizes in a non-overlapping grid", NotificationTrayIconLayout);
 		RunTest("Multi-window child selection stays expanded until the primary card is clicked", MultiWindowCardClicking);
 		RunTest("Only collapsed multi-window primary cards arm hover expansion", MultiWindowHoverExpansion);
@@ -525,6 +558,7 @@ internal static class TestRunner
 				renderer.Resize(900, 1440, 1.25f);
 				renderer.SetNotificationAreaCardEnabled(true);
 				renderer.SetDesktopButtonEnabled(true);
+				renderer.SetSidebarPinButtonEnabled(true);
 				var movingBefore = renderer.GetInteractivePolygons(false).First();
 				var fixedBefore = renderer.GetInteractivePolygons(true).SelectMany(polygon => polygon).ToArray();
 				CardHitTarget? FindTarget(Func<CardHitTarget, bool> predicate)
@@ -539,8 +573,11 @@ internal static class TestRunner
 				}
 				var notificationTarget = FindTarget(target => target.IsNotificationAreaCard);
 				var desktopTarget = FindTarget(target => target.IsDesktopButton);
-				Assert(notificationTarget is not null && desktopTarget is not null,
+				var sidebarPinTarget = FindTarget(target => target.IsSidebarPinButton);
+				Assert(notificationTarget is not null && desktopTarget is not null && sidebarPinTarget is not null,
 					"The integrated utility controls were not laid out below the cards.");
+				Assert(!CardInteraction.IsWindowCard(sidebarPinTarget),
+					"The whole-sidebar pin was incorrectly treated as an application card.");
 				Assert(fixedBefore.Length == 0, "A utility card still occupied the independent fixed layer.");
 				var center = new Point((int)movingBefore.Average(point => point.X), (int)movingBefore.Average(point => point.Y));
 				var targetBefore = renderer.HitTest(center);
@@ -568,6 +605,13 @@ internal static class TestRunner
 				renderer.Activate(desktopTarget);
 				Assert(renderer.ConsumeDesktopToggleRequest() && !renderer.ConsumeDesktopToggleRequest(),
 					"The Show Desktop command was not consumed exactly once.");
+				renderer.Activate(sidebarPinTarget);
+				Assert(renderer.ConsumeSidebarPinRequest() && !renderer.ConsumeSidebarPinRequest(),
+					"The whole-sidebar pin command was not consumed exactly once.");
+				renderer.SetSidebarPinned(true);
+				Assert(renderer.IsSidebarPinned, "The sidebar pin did not enter its fixed state.");
+				renderer.SetSidebarPinned(false);
+				Assert(!renderer.IsSidebarPinned, "The sidebar pin did not release its fixed state.");
 
 				var window = new FakeWindow(321, "Feedback test", "test.exe");
 				renderer.Synchronize([new PrototypeStageSnapshot("test", "Test", [window], DateTime.UtcNow)]);
@@ -1159,12 +1203,20 @@ internal static class TestRunner
 			"Focus enhanced mode reserved space over an exclusive full-screen window.");
 		Assert(!FocusEnhancedBehavior.ShouldReserveSidebar(StageMode.Focus, true, false, true),
 			"A temporary edge reveal unexpectedly rearranged the desktop work area.");
+		Assert(FocusEnhancedBehavior.ShouldReserveSidebar(StageMode.Focus, false, false, false, manuallyCollapsed: true),
+			"A manually collapsed Focus sidebar released the blank reserved column.");
+		Assert(FocusEnhancedBehavior.ShouldReserveSidebar(StageMode.Focus, true, false, true, manuallyCollapsed: true),
+			"Revealing a manually collapsed Focus sidebar changed the reserved work area.");
+		Assert(!FocusEnhancedBehavior.ShouldReserveSidebar(StageMode.Focus, false, true, false, manuallyCollapsed: true),
+			"A manually collapsed Focus sidebar covered an exclusive full-screen window.");
 		Assert(!FocusEnhancedBehavior.ShouldIdleHide(StageMode.Focus, true),
 			"Focus enhanced mode still allowed idle auto-hide.");
 		Assert(!FocusEnhancedBehavior.CanHideSidebar(StageMode.Focus, exclusiveFullScreenActive: false),
 			"A stale or delayed request could hide the persistent Focus sidebar outside full-screen.");
 		Assert(FocusEnhancedBehavior.CanHideSidebar(StageMode.Focus, exclusiveFullScreenActive: true),
 			"Focus mode could not temporarily hide while an exclusive full-screen window was active.");
+		Assert(FocusEnhancedBehavior.CanHideSidebar(StageMode.Focus, exclusiveFullScreenActive: false, manualCollapse: true),
+			"The Focus collapse arrow did not allow a deliberate manual hide.");
 		Assert(FocusEnhancedBehavior.CanHideSidebar(StageMode.Coexist, exclusiveFullScreenActive: false),
 			"Standard mode lost manual and idle sidebar hiding.");
 		Assert(FocusEnhancedBehavior.ShouldPollHiddenSidebar(StageMode.Focus, pointerAtLeftEdge: false),
@@ -1173,14 +1225,25 @@ internal static class TestRunner
 			"A normally hidden standard sidebar continued unnecessary foreground polling.");
 		Assert(FocusEnhancedBehavior.ShouldPollHiddenSidebar(StageMode.Coexist, pointerAtLeftEdge: true),
 			"Standard mode no longer woke when the pointer reached the left edge.");
-		Assert(!FocusEnhancedBehavior.ShouldShowCollapseButton(StageMode.Focus),
-			"Focus enhanced mode still exposed the accidental-collapse button.");
+		Assert(FocusEnhancedBehavior.ShouldShowCollapseButton(StageMode.Focus),
+			"Focus enhanced mode did not show its manual collapse arrow.");
+		Assert(!FocusEnhancedBehavior.ShouldShowSidebarPinButton(StageMode.Focus, false, false) &&
+			FocusEnhancedBehavior.ShouldShowSidebarPinButton(StageMode.Focus, true, false) &&
+			FocusEnhancedBehavior.ShouldShowSidebarPinButton(StageMode.Focus, true, true) &&
+			!FocusEnhancedBehavior.ShouldShowSidebarPinButton(StageMode.Coexist, true, true),
+			"The whole-sidebar pin was visible outside a revealed Focus sidebar.");
+		Assert(!FocusEnhancedBehavior.ShouldApplyTransientHide(TransientSidebarAction.Hide, pinned: true, exclusiveFullScreenActive: false) &&
+			FocusEnhancedBehavior.ShouldApplyTransientHide(TransientSidebarAction.Hide, pinned: false, exclusiveFullScreenActive: false) &&
+			FocusEnhancedBehavior.ShouldApplyTransientHide(TransientSidebarAction.Hide, pinned: true, exclusiveFullScreenActive: true),
+			"The sidebar pin did not hold an edge reveal or improperly blocked exclusive full-screen.");
 		Assert(FocusEnhancedBehavior.ShouldShowCollapseButton(StageMode.Coexist),
 			"Standard mode lost its manual sidebar-collapse button.");
 		Assert(FocusEnhancedBehavior.ShouldIdleHide(StageMode.Coexist, true),
 			"Standard mode no longer respected its idle auto-hide setting.");
 		Assert(FocusEnhancedBehavior.ShouldRestoreAfterTransientSession(StageMode.Focus, false),
 			"Focus mode failed to restore its sidebar after a long full-screen session lost the transient visibility marker.");
+		Assert(!FocusEnhancedBehavior.ShouldRestoreAfterTransientSession(StageMode.Focus, false, manuallyCollapsed: true),
+			"Leaving full screen overrode the user's manual Focus collapse.");
 		Assert(!FocusEnhancedBehavior.ShouldRestoreAfterTransientSession(StageMode.Coexist, false),
 			"Standard mode restored a sidebar that was intentionally hidden before the transient session.");
 		var physicalDisplay = new Rectangle(0, 0, 2560, 1440);

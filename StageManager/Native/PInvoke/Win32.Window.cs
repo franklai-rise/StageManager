@@ -113,6 +113,10 @@ namespace StageManager.Native.PInvoke
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool IsIconic(IntPtr hWnd);
 
+		[DllImport("user32.dll")]
+		[return: MarshalAs(UnmanagedType.Bool)]
+		public static extern bool IsWindowEnabled(IntPtr hWnd);
+
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool IsZoomed(IntPtr hWnd);
@@ -235,8 +239,22 @@ namespace StageManager.Native.PInvoke
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool BringWindowToTop(IntPtr hWnd);
 
-        [DllImport("user32.dll", SetLastError = true)]
-        public static extern IntPtr SetFocus(IntPtr hWnd);
+		[DllImport("user32.dll", SetLastError = true)]
+		public static extern IntPtr SetFocus(IntPtr hWnd);
+
+		[StructLayout(LayoutKind.Sequential)]
+		public struct FlashWindowInfo
+		{
+			public uint Size;
+			public IntPtr Window;
+			public uint Flags;
+			public uint Count;
+			public uint Timeout;
+		}
+
+		[DllImport("user32.dll")]
+		[return: MarshalAs(UnmanagedType.Bool)]
+		public static extern bool FlashWindowEx(ref FlashWindowInfo info);
 
 
         [DllImport("user32.dll")]
