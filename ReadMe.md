@@ -1,5 +1,7 @@
 # Stage_Manager_Lai v3.1.1
 
+**最新版下载与交互演示：** [Stage Manager Lai 网站](https://franklai-rise.github.io/StageManager/)；网站文件及 GitHub Pages 发布配置保存在本仓库的 `site/`。以下正文记录较早开发阶段，当前正式版信息以网站链接的 Release 为准。
+
 Stage_Manager_Lai is Frank Lai's personal Windows adaptation of
 [Stage Manager for Windows](https://github.com/awaescher/StageManager), originally created by
 [Andreas Wäscher](https://github.com/awaescher). It remains a derivative work under the upstream MIT

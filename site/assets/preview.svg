@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="Stage Manager Lai preview">
+  <defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#f7f9fc"/><stop offset="1" stop-color="#e2ecff"/></linearGradient><linearGradient id="card" x2="1" y2="1"><stop stop-color="#e9f2ff"/><stop offset="1" stop-color="#a2c1ff"/></linearGradient></defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect x="84" y="92" width="74" height="74" rx="19" fill="#3269e4"/>
+  <rect x="98" y="108" width="12" height="12" rx="3" fill="#e8efff"/><rect x="98" y="128" width="12" height="12" rx="3" fill="#e8efff"/><rect x="98" y="148" width="12" height="8" rx="3" fill="#e8efff"/><rect x="118" y="108" width="26" height="48" rx="5" fill="#e8efff"/>
+  <text x="84" y="265" font-family="Segoe UI,Arial,sans-serif" font-size="65" font-weight="700" fill="#15253a">Stage Manager</text>
+  <text x="84" y="340" font-family="Segoe UI,Arial,sans-serif" font-size="65" font-weight="700" fill="#3269e4">Lai.</text>
+  <text x="88" y="411" font-family="Segoe UI,Arial,sans-serif" font-size="29" fill="#5c6b7f">WINDOWS · CARDS · FOCUS</text>
+  <g transform="translate(730 115) rotate(-8 175 190)"><rect x="0" y="75" width="300" height="350" rx="26" fill="#a9bfe5" opacity=".45"/><rect x="43" y="39" width="300" height="350" rx="26" fill="#527bd6" opacity=".65"/><rect x="81" y="0" width="300" height="350" rx="26" fill="url(#card)" stroke="#fff" stroke-width="4"/><rect x="117" y="56" width="225" height="28" rx="9" fill="#fff" opacity=".85"/><rect x="117" y="112" width="116" height="116" rx="17" fill="#3269e4" opacity=".8"/><rect x="248" y="112" width="94" height="22" rx="7" fill="#fff" opacity=".9"/><rect x="248" y="151" width="94" height="22" rx="7" fill="#fff" opacity=".65"/><rect x="117" y="263" width="225" height="16" rx="7" fill="#fff" opacity=".8"/></g>
+</svg>

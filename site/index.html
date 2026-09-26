@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f7fb">
+  <meta name="description" content="Stage_Manager_Lai：适用于 Windows 的立体窗口卡片和台前调度侧栏。先体验交互演示，再下载最新版本。">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Stage Manager Lai · 让窗口各就其位">
+  <meta property="og:description" content="立体窗口卡片、多窗口展开、Focus 模式。交互演示与 Windows 下载。">
+  <meta property="og:image" content="https://franklai-rise.github.io/StageManager/assets/preview.svg">
+  <link rel="canonical" href="https://franklai-rise.github.io/StageManager/">
+  <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+  <link rel="stylesheet" href="styles.css">
+  <title>Stage Manager Lai · 让窗口各就其位</title>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-zh="跳到正文" data-en="Skip to content">跳到正文</a>
+  <header class="site-header wrap">
+    <a class="brand" href="#top" aria-label="Stage Manager Lai"><img src="assets/logo.svg" alt="" width="36" height="36"><span><strong>Stage Manager</strong><small>LAI / WINDOWS</small></span></a>
+    <nav aria-label="Main navigation">
+      <a href="#demo" data-zh="体验演示" data-en="Try the demo">体验演示</a>
+      <a href="#features" data-zh="功能" data-en="Features">功能</a>
+      <a href="#download" data-zh="下载" data-en="Download">下载</a>
+      <button id="language-toggle" class="language-toggle" type="button" aria-label="Switch to English">English</button>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero wrap" id="top">
+      <div class="hero-copy">
+        <div class="eyebrow"><span class="status-dot"></span> STAGE_MANAGER_LAI / WINDOWS</div>
+        <h1><span data-zh="让窗口" data-en="Give every window">让窗口</span><br><em data-zh="各就其位。" data-en="its place.">各就其位。</em></h1>
+        <p class="hero-lead" data-zh="把正在使用的窗口留在眼前，把其余任务收成左侧卡片。切换、展开、固定，都在顺手的位置。" data-en="Keep the windows you need in view and organize the rest as cards on the left. Switch, expand and pin them within reach.">把正在使用的窗口留在眼前，把其余任务收成左侧卡片。切换、展开、固定，都在顺手的位置。</p>
+        <div class="hero-actions">
+          <a id="hero-download" class="button primary" href="https://github.com/franklai-rise/StageManager/releases/latest" data-zh="下载 Windows 版 ↗" data-en="Download for Windows ↗">下载 Windows 版 ↗</a>
+          <a class="inline-link" href="#demo" data-zh="先体验，再下载 →" data-en="Try it first →">先体验，再下载 →</a>
+        </div>
+        <p class="release-line" id="hero-release" role="status" data-zh="正在读取最新版本…" data-en="Checking the latest version…">正在读取最新版本…</p>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <div class="hero-orbit orbit-a"></div><div class="hero-orbit orbit-b"></div>
+        <div class="hero-stack back"><span class="hero-stack-top">NOTES</span><span class="hero-stack-line"></span><span class="hero-stack-line short"></span><span class="hero-stack-line"></span></div>
+        <div class="hero-stack middle"><span class="hero-stack-top">BROWSER</span><span class="hero-stack-grid"><i></i><i></i><i></i></span></div>
+        <div class="hero-stack front"><span class="hero-stack-top">STAGE / 03</span><span class="hero-stack-chart"><i></i><i></i><i></i><i></i><i></i></span><span class="hero-stack-caption">YOUR SPACE, IN FOCUS.</span></div>
+        <span class="hero-float">FOCUS <b>ON</b></span>
+        <span class="hero-art-note">WINDOWS · CARDS · FLOW</span>
+      </div>
+    </section>
+
+    <section class="demo-section wrap" id="demo">
+      <div class="section-heading"><div><span class="eyebrow" data-zh="亲手试试" data-en="HANDS-ON PREVIEW">亲手试试</span><h2 data-zh="一块可以操作的桌面。" data-en="A desktop you can try.">一块可以操作的桌面。</h2></div><p data-zh="点开卡片、展开分组，再切到 Focus 模式看看。" data-en="Open a card, expand a group, then switch to Focus mode.">点开卡片、展开分组，再切到 Focus 模式看看。</p></div>
+      <div class="demo-shell">
+        <div class="demo-toolbar">
+          <div class="segmented" role="group" aria-label="Workspace mode">
+            <button type="button" data-mode="coexist" aria-pressed="true" data-zh="普通模式" data-en="Coexist">普通模式</button>
+            <button type="button" data-mode="focus" aria-pressed="false" data-zh="Focus 模式" data-en="Focus mode">Focus 模式</button>
+          </div>
+          <div class="demo-tools">
+            <label for="card-size"><span data-zh="卡片大小" data-en="Card size">卡片大小</span><output id="size-value" for="card-size">80%</output></label>
+            <input id="card-size" type="range" min="55" max="125" value="80" aria-label="Card size">
+            <button id="reset-demo" class="subtle-button" type="button" data-zh="重置演示" data-en="Reset demo">重置演示</button>
+          </div>
+        </div>
+        <div class="demo-desktop" id="demo-desktop" data-mode="coexist">
+          <div class="desktop-glow" aria-hidden="true"></div>
+          <div class="desktop-topbar" aria-hidden="true"><span class="topbar-brand">STAGE DESKTOP / DEMO</span><span>◷ 10:24</span></div>
+          <div class="reserved-column" aria-hidden="true"></div>
+          <button id="edge-reveal" class="edge-reveal" type="button" aria-label="Reveal sidebar" data-zh-label="唤出侧栏" data-en-label="Reveal sidebar"><span>›</span></button>
+          <div class="demo-sidebar" id="demo-sidebar">
+            <div class="sidebar-utilities">
+              <button id="expand-all" class="utility-card" type="button" data-zh-label="展开全部多窗口分组" data-en-label="Expand all window groups" aria-label="展开全部多窗口分组"><span class="utility-legend" id="expand-all-legend">FIX</span><span class="utility-glyph" aria-hidden="true">☷</span></button>
+              <button id="explorer-card" class="utility-card" type="button" data-zh-label="打开文件夹示例窗口" data-en-label="Open the sample folder window" aria-label="打开文件夹示例窗口"><span class="folder-icon" aria-hidden="true"></span></button>
+            </div>
+            <div class="stage-list" id="stage-list" aria-label="Window cards"></div>
+            <div class="sidebar-bottom">
+              <button id="minimize-all" class="utility-card bottom-card" type="button" data-zh-label="最小化所有示例窗口" data-en-label="Minimize all sample windows" aria-label="最小化所有示例窗口"><span class="window-glyph" aria-hidden="true">▣</span></button>
+              <button id="sidebar-pin" class="utility-card bottom-card sidebar-pin" type="button" aria-pressed="false" data-zh-label="固定侧栏" data-en-label="Pin sidebar" aria-label="固定侧栏"><span class="pin-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4" r="2"/><path d="M5 9h14M8 9v4l4 3 4-3V9M12 16v6"/></svg></span><span class="pin-indicator" aria-hidden="true"></span></button>
+              <button id="collapse-sidebar" class="utility-card bottom-card collapse-card" type="button" data-zh-label="隐藏侧栏" data-en-label="Hide sidebar" aria-label="隐藏侧栏"><span aria-hidden="true">‹</span></button>
+            </div>
+          </div>
+          <div class="demo-windows" id="demo-windows"></div>
+          <div class="demo-taskbar" aria-hidden="true"><img src="assets/logo.svg" alt="" width="23" height="23"><span class="taskbar-apps">▣　▤　◉　▦</span><span id="taskbar-status">4 APPS</span></div>
+        </div>
+      </div>
+      <div class="demo-caption"><span data-zh="交互演示 · 示例窗口，非本机画面；网页展示经过简化。" data-en="Interactive demo · Sample windows, not your PC. The web presentation is simplified.">交互演示 · 示例窗口，非本机画面；网页展示经过简化。</span><span id="demo-help" role="status" aria-live="polite" data-zh="点击窗口卡片切换；悬停或点击多窗口主卡展开。" data-en="Click cards to switch windows; hover or click a group to expand it.">点击窗口卡片切换；悬停或点击多窗口主卡展开。</span></div>
+    </section>
+
+    <section class="features wrap" id="features">
+      <div class="section-heading"><div><span class="eyebrow" data-zh="为什么用它" data-en="MADE FOR YOUR WORKFLOW">为什么用它</span><h2 data-zh="窗口多，也能从容切换。" data-en="Many windows. One clear view.">窗口多，也能从容切换。</h2></div><p data-zh="围绕日常工作调整，而非只做一个外观。" data-en="Built around real desktop work, beyond the visual effect.">围绕日常工作调整，而非只做一个外观。</p></div>
+      <div class="feature-grid">
+        <article><span class="feature-number">01 / CARDS</span><h3 data-zh="看见窗口，再决定打开哪个。" data-en="See the window before you choose it.">看见窗口，再决定打开哪个。</h3><p data-zh="立体卡片在左侧排列；同应用有多个窗口时，向下展开子卡片并保留连接线。" data-en="Perspective cards line the left edge. Multiple windows expand downward with visible connectors.">立体卡片在左侧排列；同应用有多个窗口时，向下展开子卡片并保留连接线。</p></article>
+        <article><span class="feature-number">02 / FOCUS</span><h3 data-zh="给侧栏留出真正的空间。" data-en="Make room for the sidebar.">给侧栏留出真正的空间。</h3><p data-zh="Focus 模式为正常和最大化窗口保留右侧工作区；真正全屏时，靠近屏幕左缘仍能唤出卡片。" data-en="Focus mode keeps regular and maximized windows to the right. The sidebar remains reachable at the left edge over full-screen apps.">Focus 模式为正常和最大化窗口保留右侧工作区；真正全屏时，靠近屏幕左缘仍能唤出卡片。</p></article>
+        <article><span class="feature-number">03 / CONTROL</span><h3 data-zh="按自己的节奏使用。" data-en="Set the pace yourself.">按自己的节奏使用。</h3><p data-zh="调整卡片大小与位置、固定展开的分组、唤出后固定侧栏；滚轮和快捷键也能快速切换。" data-en="Resize and reposition cards, pin an expanded group or a revealed sidebar, and navigate with the wheel or shortcuts.">调整卡片大小与位置、固定展开的分组、唤出后固定侧栏；滚轮和快捷键也能快速切换。</p></article>
+      </div>
+      <div class="feature-tags"><span data-zh="双显示器" data-en="Dual monitors">双显示器</span><span data-zh="窗口位置恢复" data-en="Window recovery">窗口位置恢复</span><span data-zh="低频静态预览" data-en="Periodic snapshots">低频静态预览</span><span data-zh="中英文设置" data-en="Chinese & English">中英文设置</span><span data-zh="开机自启" data-en="Start with Windows">开机自启</span></div>
+    </section>
+
+    <section class="getting-started wrap" id="start">
+      <div class="section-heading"><div><span class="eyebrow" data-zh="开始使用" data-en="GET STARTED">开始使用</span><h2 data-zh="下载、打开，找到顺手的布局。" data-en="Download, launch, make it yours.">下载、打开，找到顺手的布局。</h2></div></div>
+      <div class="steps"><article><span>01</span><h3 data-zh="下载 Windows EXE" data-en="Download the Windows EXE">下载 Windows EXE</h3><p data-zh="从下方下载最新正式版，放入你想保存的文件夹。" data-en="Get the latest release below and keep the EXE in a folder of your choice.">从下方下载最新正式版，放入你想保存的文件夹。</p></article><article><span>02</span><h3 data-zh="打开并查看侧栏" data-en="Launch and find the sidebar">打开并查看侧栏</h3><p data-zh="运行程序后，在屏幕左侧选择卡片；托盘图标可打开设置。" data-en="Launch the app, choose a card on the left, and open Settings from the tray icon.">运行程序后，在屏幕左侧选择卡片；托盘图标可打开设置。</p></article><article><span>03</span><h3 data-zh="开启适合你的模式" data-en="Choose your working mode">开启适合你的模式</h3><p data-zh="在设置中切换普通／Focus、卡片尺寸、忽略应用及开机启动。" data-en="Choose Coexist or Focus, card size, ignored apps and startup behavior in Settings.">在设置中切换普通／Focus、卡片尺寸、忽略应用及开机启动。</p></article></div>
+    </section>
+
+    <section class="download wrap" id="download"><div><span class="eyebrow">STAGE_MANAGER_LAI / RELEASE</span><h2 data-zh="给桌面多一点秩序。" data-en="Bring order to your desktop.">给桌面多一点秩序。</h2><p id="download-meta" data-zh="正在读取最新版本…" data-en="Checking the latest version…">正在读取最新版本…</p><p class="checksum" id="download-checksum"></p></div><div class="download-actions"><a id="download-exe" class="button light" href="https://github.com/franklai-rise/StageManager/releases/latest" data-zh="下载单文件 EXE ↗" data-en="Download single-file EXE ↗">下载单文件 EXE ↗</a><a id="release-page" href="https://github.com/franklai-rise/StageManager/releases/latest" data-zh="查看版本说明 →" data-en="View release notes →">查看版本说明 →</a></div></section>
+
+    <section class="faq wrap" id="faq"><h2 data-zh="你可能想知道" data-en="Good to know">你可能想知道</h2><details><summary data-zh="它是原版 StageManager 吗？" data-en="Is this the original StageManager?">它是原版 StageManager 吗？</summary><p data-zh="这是 Frank Lai 在 Andreas Wäscher 原项目基础上维护的修改版，保留原作者署名与 MIT 许可。" data-en="This is Frank Lai's modified fork of the original project by Andreas Wäscher. It retains the original credit and MIT license.">这是 Frank Lai 在 Andreas Wäscher 原项目基础上维护的修改版，保留原作者署名与 MIT 许可。</p></details><details><summary data-zh="需要什么系统？" data-en="What Windows version do I need?">需要什么系统？</summary><p data-zh="Windows 10 版本 2004 或更新的 x64 系统。下载包是自包含单文件 EXE；当前版本未进行发布者代码签名。" data-en="Windows 10 version 2004 or newer on x64. The download is a self-contained single-file EXE and is currently unsigned.">Windows 10 版本 2004 或更新的 x64 系统。下载包是自包含单文件 EXE；当前版本未进行发布者代码签名。</p></details><details><summary data-zh="卡片一直在截图吗？" data-en="Are cards captured continuously?">卡片一直在截图吗？</summary><p data-zh="默认使用静态窗口预览，刷新间隔可在设置中调整为 1–60 分钟；隐藏侧栏时还可以暂停刷新。" data-en="Cards use static window snapshots. Set their refresh interval from 1 to 60 minutes, and optionally pause refreshes while the sidebar is hidden.">默认使用静态窗口预览，刷新间隔可在设置中调整为 1–60 分钟；隐藏侧栏时还可以暂停刷新。</p></details><details><summary data-zh="如何恢复被忽略的应用？" data-en="How do I restore an ignored app?">如何恢复被忽略的应用？</summary><p data-zh="打开托盘中的设置，进入忽略应用列表并取消勾选；忽略只影响侧栏卡片，不应阻止应用自身运行。" data-en="Open Settings from the tray and remove the app from the ignored list. Ignoring affects its sidebar card, not the app itself.">打开托盘中的设置，进入忽略应用列表并取消勾选；忽略只影响侧栏卡片，不应阻止应用自身运行。</p></details></section>
+  </main>
+
+  <footer class="site-footer wrap"><a class="brand" href="#top"><img src="assets/logo.svg" alt="" width="28" height="28"><strong>Stage Manager Lai</strong></a><p>© 2026 Frank Lai · <span data-zh="基于 Andreas Wäscher 的 StageManager" data-en="Based on StageManager by Andreas Wäscher">基于 Andreas Wäscher 的 StageManager</span></p><div><a href="https://github.com/awaescher/StageManager" data-zh="原项目 ↗" data-en="Original project ↗">原项目 ↗</a><a href="https://github.com/franklai-rise/StageManager/blob/main/LICENSE">MIT License</a><a href="https://github.com/franklai-rise/StageManager/issues" data-zh="反馈 ↗" data-en="Feedback ↗">反馈 ↗</a></div></footer>
+</body>
+</html>
