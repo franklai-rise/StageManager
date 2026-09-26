@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://franklai-rise.github.io/StageManager/sitemap.xml
+Sitemap: https://franklai.com/StageManager/sitemap.xml

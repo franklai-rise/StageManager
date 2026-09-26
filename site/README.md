@@ -1,6 +1,8 @@
 # Stage Manager Lai website
 
-The public website is deployed from `site/` to GitHub Pages. It is a browser
+The public website is deployed from `site/` to GitHub Pages at
+`https://franklai.com/StageManager/`. The repository's `github.io` URL redirects
+to this account-level custom domain. It is a browser
 simulation; it does not read or control visitors' windows. The app remains a
 modified fork of Andreas Wäscher's [StageManager](https://github.com/awaescher/StageManager).
 
