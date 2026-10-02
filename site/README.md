@@ -18,6 +18,16 @@ GitHub's latest stable Release API. The builder verifies the EXE filename,
 source URL, size and SHA-256 digest before assembling a deploy directory. If
 these checks fail, deployment stops and the existing website remains online.
 
+The demo offers three one-click scenarios (groups, Focus, and full screen),
+independently pinned groups, keyboard navigation, and a reversible minimize-all
+action. Chinese and English use the same demo state. Cards are mounted once and
+updated in place so selecting a window does not restart expansion animations.
+The site uses local assets and system fonts, with no analytics or external UI libraries.
+
+The download area can copy the verified EXE link and SHA-256. The builder also
+embeds working download links, version text, and SoftwareApplication metadata in
+HTML, so downloads still work without JavaScript. Preview imagery is illustrative.
+
 The site publishes on changes to `site/` on `main`, a GitHub Release being
 published, or a manual workflow dispatch. After adding the workflow, configure
 the repository Pages source as **GitHub Actions**.

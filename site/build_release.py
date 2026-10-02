@@ -9,6 +9,7 @@ import re
 import shutil
 import sys
 import urllib.request
+from html import escape
 from pathlib import Path
 
 REPOSITORY = "franklai-rise/StageManager"
@@ -64,6 +65,39 @@ def get_latest_release() -> dict:
     }
 
 
+def render_index(release: dict) -> str:
+    """Keep downloads and version information useful even without JavaScript."""
+    page = (SITE_DIR / "index.html").read_text(encoding="utf-8")
+    for element_id, url in (
+        ("hero-download", release["asset"]["url"]),
+        ("download-exe", release["asset"]["url"]),
+        ("release-page", release["release_url"]),
+    ):
+        pattern = rf'(<a\b[^>]*\bid="{element_id}"[^>]*\bhref=")[^"]*(")'
+        page, count = re.subn(pattern, lambda match: match[1] + escape(url, quote=True) + match[2], page)
+        if count != 1:
+            raise ValueError(f"Expected one download link with id {element_id}")
+
+    version = release["version"]
+    size = f'{release["asset"]["size_bytes"] / 1_000_000:.1f}'
+    page = page.replace("Windows x64 · 免费 · 单文件 EXE", f"{version} · Windows x64 · {size} MB · 免费")
+    page = page.replace("Windows x64 · Free · Single-file EXE", f"{version} · Windows x64 · {size} MB · Free")
+    page = page.replace("Windows x64 · 单文件 EXE", f"{version} · Windows x64 · {size} MB · 单文件 EXE")
+    page = page.replace("Windows x64 · Single-file EXE", f"{version} · Windows x64 · {size} MB · Single-file EXE")
+    page = page.replace('<p class="checksum" id="download-checksum"></p>',
+                        f'<p class="checksum" id="download-checksum">SHA-256: {release["asset"]["sha256"].upper()}</p>')
+    structured_data = {
+        "@context": "https://schema.org", "@type": "SoftwareApplication",
+        "name": "Stage Manager Lai", "url": "https://franklai.com/StageManager/",
+        "applicationCategory": "UtilitiesApplication",
+        "operatingSystem": "Windows 10 version 2004 or newer (x64)",
+        "softwareVersion": version, "downloadUrl": release["asset"]["url"],
+        "license": "https://github.com/franklai-rise/StageManager/blob/main/LICENSE",
+        "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+    }
+    return page.replace("</head>", '<script type="application/ld+json">' + json.dumps(structured_data, ensure_ascii=False) + '</script>\n</head>')
+
+
 def build(destination: Path) -> None:
     release = get_latest_release()
     if destination.resolve() == SITE_DIR or SITE_DIR in destination.resolve().parents:
@@ -77,6 +111,7 @@ def build(destination: Path) -> None:
     (destination / "data" / "release.json").write_text(
         json.dumps(release, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+    (destination / "index.html").write_text(render_index(release), encoding="utf-8")
     print(f"Prepared {destination} for {release['version']} ({release['asset']['name']})")
 
 
