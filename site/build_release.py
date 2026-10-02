@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -68,6 +69,9 @@ def get_latest_release() -> dict:
 def render_index(release: dict) -> str:
     """Keep downloads and version information useful even without JavaScript."""
     page = (SITE_DIR / "index.html").read_text(encoding="utf-8")
+    for asset_name in ("styles.css", "app.js"):
+        fingerprint = hashlib.sha256((SITE_DIR / asset_name).read_bytes()).hexdigest()[:12]
+        page = page.replace(f'="{asset_name}"', f'="{asset_name}?v={fingerprint}"')
     for element_id, url in (
         ("hero-download", release["asset"]["url"]),
         ("download-exe", release["asset"]["url"]),

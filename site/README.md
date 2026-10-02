@@ -27,6 +27,8 @@ The site uses local assets and system fonts, with no analytics or external UI li
 The download area can copy the verified EXE link and SHA-256. The builder also
 embeds working download links, version text, and SoftwareApplication metadata in
 HTML, so downloads still work without JavaScript. Preview imagery is illustrative.
+Published CSS and JavaScript links carry content fingerprints to avoid stale
+assets after an update.
 
 The site publishes on changes to `site/` on `main`, a GitHub Release being
 published, or a manual workflow dispatch. After adding the workflow, configure
