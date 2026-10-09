@@ -11,8 +11,8 @@
 - Permission and operation state-machine checks: 61 passed (including cache expiry,
   owner reuse, integrity-query failures, cooperative tray transitions and stopping
   retries after new input).
-- Launcher migration, ordering, Shell commands, cancellation, icon ownership and
-  renderer hit-testing: nine groups passed.
+- Launcher migration, ordering, Shell commands, cancellation, icon ownership,
+  stalled-launch admission and renderer hit-testing: thirteen groups passed.
 - Website JavaScript syntax and Python compilation: passed.
 
 GitHub CI must also pass at the recorded release commit. Automated checks alone

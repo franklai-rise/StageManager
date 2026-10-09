@@ -86,20 +86,26 @@ internal static class InteractionMaintenanceTests
 			.GetField("_stages", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(renderer)!;
 		var visible = stages["cascade"].Windows.Where(card => card.IsVisible).ToArray();
 		Check(visible.Length == 5, "The first expanded page changed its existing size.");
+		var animate = NativeMethods.ClientAreaAnimationsEnabled;
 		for (var index = 0; index < visible.Length; index++)
 		{
-			Check(visible[index].Motion.AnimationDelay == TimeSpan.FromMilliseconds(index * 45),
+			Check(visible[index].Motion.AnimationDelay == (animate ? TimeSpan.FromMilliseconds(index * 45) : TimeSpan.Zero),
 				"Child cards did not receive increasing cascade delays.");
-			Check(visible[index].Motion.AnimationDuration == TimeSpan.FromMilliseconds(300),
+			Check(visible[index].Motion.AnimationDuration == (animate ? TimeSpan.FromMilliseconds(300) : CardVisualMotion.Duration),
 				"Cascade movement duration changed unexpectedly.");
+			if (!animate) Check(!visible[index].Motion.IsMoving, "Reduced-animation policy must snap cards into place.");
 		}
 		var lastTarget = targets.Single(target => target.Window?.Handle == visible[^1].Window.Handle);
-		Check(lastTarget.Projection?.IsInteractive == false,
-			"A delayed child became clickable before it started flowing out.");
-		var currentPolygon = lastTarget.Projection!.CurrentPolygon();
-		var currentCenter = new Point((int)currentPolygon.Average(point => point.X), (int)currentPolygon.Average(point => point.Y));
-		Check(renderer.HitTest(currentCenter)?.Window?.Handle != visible[^1].Window.Handle,
-			"Hit testing selected a child whose delayed animation had not started.");
+		if (animate)
+		{
+			Check(lastTarget.Projection?.IsInteractive == false,
+				"A delayed child became clickable before it started flowing out.");
+			var currentPolygon = lastTarget.Projection!.CurrentPolygon();
+			var currentCenter = new Point((int)currentPolygon.Average(point => point.X), (int)currentPolygon.Average(point => point.Y));
+			Check(renderer.HitTest(currentCenter)?.Window?.Handle != visible[^1].Window.Handle,
+				"Hit testing selected a child whose delayed animation had not started.");
+		}
+		else Check(lastTarget.Projection?.IsInteractive == true, "Reduced-animation cards must be immediately interactive.");
 		// Native window regions must retain the connector even after motion ends;
 		// card polygons alone leave holes between the children and clip the line.
 		renderer.SetAnimationsEnabled(false);
