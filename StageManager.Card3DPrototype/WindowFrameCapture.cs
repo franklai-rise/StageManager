@@ -27,6 +27,8 @@ internal sealed class CapturedCardFrame : IDisposable
 	public bool IsPlaceholder { get; }
 	public ReadOnlySpan<byte> Pixels => (_buffer ?? throw new ObjectDisposedException(nameof(CapturedCardFrame)))
 		.AsSpan(0, Width * Height * 4);
+	internal ReadOnlyMemory<byte> PixelMemory => (_buffer ?? throw new ObjectDisposedException(nameof(CapturedCardFrame)))
+		.AsMemory(0, Width * Height * 4);
 
 	public void Dispose()
 	{
@@ -41,11 +43,14 @@ internal sealed class WindowFrameCapture : IDisposable
 	private readonly ConcurrentDictionary<string, Bitmap> _icons = new(StringComparer.OrdinalIgnoreCase);
 	private bool _disposed;
 
-	public CapturedCardFrame Capture(IWindow window, int targetWidth, int targetHeight, string? countBadge = null)
+	public CapturedCardFrame Capture(IWindow window, int targetWidth, int targetHeight, string? countBadge = null) =>
+		Capture(CaptureWindow.FromWindow(window), targetWidth, targetHeight, countBadge);
+
+	internal CapturedCardFrame Capture(CaptureWindow window, int targetWidth, int targetHeight, string? countBadge = null)
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
-		targetWidth = Math.Max(32, targetWidth);
-		targetHeight = Math.Max(24, targetHeight);
+		targetWidth = Math.Clamp(targetWidth, 32, 1024);
+		targetHeight = Math.Clamp(targetHeight, 24, 1024);
 		// Minimized windows are rendered as lightweight placeholders. Calling PrintWindow on
 		// them can wake or flash GPU-heavy applications without producing a useful frame.
 		using var card = new Bitmap(targetWidth, targetHeight, PixelFormat.Format32bppArgb);
@@ -62,7 +67,10 @@ internal sealed class WindowFrameCapture : IDisposable
 		graphics.SetClip(clipPath);
 
 		var target = new Rectangle(1, 1, targetWidth - 2, targetHeight - 2);
-		var captured = !window.IsMinimized && TryDrawWindow(window.Handle, graphics, target);
+		// A normal-process caller is ALWAYS placeholder-only. Only the early worker
+		// entry point can enable native capture; even legacy call sites are safe.
+		var captured = CaptureWorkerEntryPoint.IsWorkerProcess && !window.IsMinimized &&
+			TryDrawWindow(window, graphics, target);
 		var placeholder = !captured;
 		if (placeholder)
 		{
@@ -80,17 +88,21 @@ internal sealed class WindowFrameCapture : IDisposable
 			targetHeight);
 		if (!string.IsNullOrWhiteSpace(countBadge))
 			DrawCountBadge(graphics, countBadge!, targetWidth);
+		DrawPermissionBadge(graphics, window, targetWidth, targetHeight, applicationCard: false);
 		using var border = new Pen(Color.FromArgb(118, 225, 232, 246), Math.Max(1, targetWidth / 220f));
 		graphics.DrawPath(border, clipPath);
 
 		return new CapturedCardFrame(window.Handle, CopyPremultipliedPixels(card), targetWidth, targetHeight, placeholder);
 	}
 
-	public CapturedCardFrame CaptureApplicationCard(IWindow window, int targetWidth, int targetHeight)
+	public CapturedCardFrame CaptureApplicationCard(IWindow window, int targetWidth, int targetHeight) =>
+		CaptureApplicationCard(CaptureWindow.FromWindow(window), targetWidth, targetHeight);
+
+	internal CapturedCardFrame CaptureApplicationCard(CaptureWindow window, int targetWidth, int targetHeight)
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
-		targetWidth = Math.Max(32, targetWidth);
-		targetHeight = Math.Max(24, targetHeight);
+		targetWidth = Math.Clamp(targetWidth, 32, 1024);
+		targetHeight = Math.Clamp(targetHeight, 24, 1024);
 		using var card = new Bitmap(targetWidth, targetHeight, PixelFormat.Format32bppArgb);
 		using var graphics = Graphics.FromImage(card);
 		graphics.Clear(Color.Transparent);
@@ -129,6 +141,7 @@ internal sealed class WindowFrameCapture : IDisposable
 		}
 
 		graphics.ResetClip();
+		DrawPermissionBadge(graphics, window, targetWidth, targetHeight, applicationCard: true);
 		using var border = new Pen(Color.FromArgb(105, 194, 202, 218), Math.Max(1, targetWidth / 220f));
 		graphics.DrawPath(border, clipPath);
 		return new CapturedCardFrame(window.Handle, CopyPremultipliedPixels(card), targetWidth, targetHeight, false);
@@ -144,14 +157,19 @@ internal sealed class WindowFrameCapture : IDisposable
 		_icons.Clear();
 	}
 
-	private static bool TryDrawWindow(IntPtr handle, Graphics destination, Rectangle target)
+	private static bool TryDrawWindow(CaptureWindow window, Graphics destination, Rectangle target)
 	{
-		if (!NativeMethods.IsWindow(handle) || !NativeMethods.GetWindowRect(handle, out var rectangle))
+		var handle = window.Handle;
+		if (!CaptureWorkerEntryPoint.IsWorkerProcess || !NativeMethods.IsWindow(handle) ||
+			!CaptureWindowIdentity.Matches(window) || IsHungAppWindow(handle) || IsIconic(handle) ||
+			!NativeMethods.GetWindowRect(handle, out var rectangle))
 			return false;
-		var width = rectangle.Right - rectangle.Left;
-		var height = rectangle.Bottom - rectangle.Top;
-		if (width < 2 || height < 2 || width > 8192 || height > 8192)
+		var sourceWidth = (long)rectangle.Right - rectangle.Left;
+		var sourceHeight = (long)rectangle.Bottom - rectangle.Top;
+		if (!IsSourceSizeAllowed(sourceWidth, sourceHeight))
 			return false;
+		var width = (int)sourceWidth;
+		var height = (int)sourceHeight;
 
 		var memoryDc = NativeMethods.CreateCompatibleDC(IntPtr.Zero);
 		if (memoryDc == IntPtr.Zero)
@@ -173,6 +191,7 @@ internal sealed class WindowFrameCapture : IDisposable
 		var bitmapHandle = NativeMethods.CreateDIBSection(memoryDc, ref bitmapInfo, NativeMethods.DibRgbColors, out var bits, IntPtr.Zero, 0);
 		if (bitmapHandle == IntPtr.Zero || bits == IntPtr.Zero)
 		{
+			if (bitmapHandle != IntPtr.Zero) NativeMethods.DeleteObject(bitmapHandle);
 			NativeMethods.DeleteDC(memoryDc);
 			return false;
 		}
@@ -180,10 +199,11 @@ internal sealed class WindowFrameCapture : IDisposable
 		var priorObject = NativeMethods.SelectObject(memoryDc, bitmapHandle);
 		try
 		{
+			if (!CaptureWindowIdentity.Matches(window)) return false;
 			var captured = NativeMethods.PrintWindow(handle, memoryDc, NativeMethods.PwRenderFullContent);
-			if (!captured)
+			if (!captured && CaptureWindowIdentity.Matches(window))
 				captured = NativeMethods.PrintWindow(handle, memoryDc, 0);
-			if (!captured && NativeMethods.GetForegroundWindow() == handle)
+			if (!captured && CaptureWindowIdentity.Matches(window) && NativeMethods.GetForegroundWindow() == handle)
 			{
 				var windowDc = NativeMethods.GetWindowDC(handle);
 				try
@@ -196,7 +216,7 @@ internal sealed class WindowFrameCapture : IDisposable
 						NativeMethods.ReleaseDC(handle, windowDc);
 				}
 			}
-			if (!captured)
+			if (!captured || !CaptureWindowIdentity.Matches(window))
 				return false;
 
 			var pixelCount = width * height;
@@ -226,7 +246,18 @@ internal sealed class WindowFrameCapture : IDisposable
 		}
 	}
 
-	private void DrawIconBadge(Graphics graphics, IWindow window, int width, int height)
+	internal static bool IsSourceSizeAllowed(long width, long height) =>
+		width is >= 2 and <= 8192 && height is >= 2 and <= 8192 && width * height <= 16_000_000;
+
+	[DllImport("user32.dll")]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static extern bool IsHungAppWindow(IntPtr handle);
+
+	[DllImport("user32.dll")]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static extern bool IsIconic(IntPtr handle);
+
+	private void DrawIconBadge(Graphics graphics, CaptureWindow window, int width, int height)
 	{
 		var badgeSize = Math.Max(22, (int)Math.Round(height * 0.25));
 		var padding = Math.Max(4, height / 20);
@@ -250,7 +281,7 @@ internal sealed class WindowFrameCapture : IDisposable
 		graphics.DrawString(letter, font, textBrush, badgeBounds.Left + (badgeBounds.Width - size.Width) / 2, badgeBounds.Top + (badgeBounds.Height - size.Height) / 2);
 	}
 
-	private Bitmap? GetCachedIcon(IWindow window)
+	private Bitmap? GetCachedIcon(CaptureWindow window)
 	{
 		var key = string.IsNullOrWhiteSpace(window.ProcessExecutable) ? window.ProcessName : window.ProcessExecutable;
 		_icons.TryGetValue(key, out var icon);
@@ -277,6 +308,37 @@ internal sealed class WindowFrameCapture : IDisposable
 		graphics.DrawString(text, font, foreground, badge.Left + 4, badge.Top + 1);
 	}
 
+	private static void DrawPermissionBadge(Graphics graphics, CaptureWindow window, int width, int height, bool applicationCard)
+	{
+		// Token queries happen exclusively in the disposable worker, never while
+		// the UI uploads a texture or draws a local failure placeholder.
+		if (!CaptureWorkerEntryPoint.IsWorkerProcess) return;
+		var access = WindowAccess.Query(window.Handle);
+		var text = WindowAccess.Describe(access, chinese: false).Badge;
+		var bounds = PermissionBadgeBounds(width, height, applicationCard);
+		if (string.IsNullOrEmpty(text) || bounds.IsEmpty) return;
+		using var font = new Font("Segoe UI", 9, FontStyle.Bold, GraphicsUnit.Pixel);
+		var measured = graphics.MeasureString(text, font);
+		bounds.Width = Math.Min(bounds.Width, measured.Width + 8);
+		using var path = CreateRoundedRectangle(Rectangle.Round(bounds), 4);
+		using var background = new SolidBrush(Color.FromArgb(225, 83, 69, 43));
+		using var foreground = new SolidBrush(Color.FromArgb(255, 255, 238, 193));
+		graphics.FillPath(background, path);
+		using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center,
+			FormatFlags = StringFormatFlags.NoWrap, Trimming = StringTrimming.EllipsisCharacter };
+		graphics.DrawString(text, font, foreground, bounds, format);
+	}
+
+	internal static RectangleF PermissionBadgeBounds(int width, int height, bool applicationCard)
+	{
+		// Bottom row, immediately to the right of the bottom-left app icon. Status
+		// and count occupy the TOP row. Do not overlap either on tiny test frames.
+		if (width < 96 || height < 64) return RectangleF.Empty;
+		var padding = Math.Max(4, height / 20);
+		var left = applicationCard ? padding : padding + Math.Max(22, (int)Math.Round(height * 0.25)) + 3;
+		return new RectangleF(left, height - padding - 17, width - padding - left, 17);
+	}
+
 	private static void DrawStatusBadge(Graphics graphics, string? text, int width, int height)
 	{
 		if (string.IsNullOrWhiteSpace(text))
@@ -295,12 +357,18 @@ internal sealed class WindowFrameCapture : IDisposable
 		graphics.DrawString(text, font, foreground, badge.Left + 5, badge.Top + 2);
 	}
 
-	private static Bitmap? ExtractIcon(IWindow window)
+	private static Bitmap? ExtractIcon(CaptureWindow window)
 	{
-		if (window is not WindowsWindow concrete)
+		// Shell/icon extraction can itself block. Keep it in the killable worker.
+		if (!CaptureWorkerEntryPoint.IsWorkerProcess)
 			return null;
-		using var icon = concrete.ExtractIcon();
-		return icon?.ToBitmap();
+		try
+		{
+			if (string.IsNullOrWhiteSpace(window.ProcessExecutable)) return null;
+			using var icon = Icon.ExtractAssociatedIcon(window.ProcessExecutable);
+			return icon?.ToBitmap();
+		}
+		catch { return null; }
 	}
 
 	private static Rectangle AspectFillCrop(Size source, Size target)

@@ -16,6 +16,8 @@ namespace StageManager.Card3DPrototype;
 
 internal sealed class PrototypeForm : Form
 {
+	private readonly Dictionary<IntPtr, long> _permissionRefresh = new();
+	private readonly HashSet<string> _launchesInFlight = new(StringComparer.OrdinalIgnoreCase);
 	private const int WsExToolWindow = 0x00000080;
 	private const int WsExNoActivate = 0x08000000;
 	private const int WsExNoRedirectionBitmap = 0x00200000;
@@ -75,7 +77,6 @@ internal sealed class PrototypeForm : Form
 	private bool _demoteOverlayAfterHide;
 	private volatile bool _closing;
 	private int _hiddenEdgeUiRequestPending;
-	private int _mouseWheelUiRequestPending;
 	private int _pendingMouseWheelDelta;
 	private bool _appBarReapplyPending;
 	private bool _leftPointerButtonDown;
@@ -113,7 +114,7 @@ internal sealed class PrototypeForm : Form
 			() => _renderer?.RefreshAllPreviews());
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => RunAfterContextMenuCloses(_contextMenu, Close);
-	_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v4.4.16") { Enabled = false });
+	_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v4.5.0") { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(refreshItem);
@@ -191,7 +192,7 @@ internal sealed class PrototypeForm : Form
 				_catalog.Settings.Current.LowMemoryRendering);
 			_renderer.Resize(ClientSize.Width, ClientSize.Height, DeviceDpi / 96f);
 			_renderer.ScrollPositionChanged += (_, _) => UpdateWindowRegion(_sidebarVisible);
-			_mouseWheelHook = new SidebarMouseWheelHook(HandleGlobalMouseWheel);
+			_mouseWheelHook = new SidebarMouseWheelHook();
 			CreateTrayIcon();
 			ApplyRuntimeSettings(updateStartup: false);
 			RefreshStages();
@@ -422,11 +423,9 @@ internal sealed class PrototypeForm : Form
 	protected override void OnMouseWheel(MouseEventArgs e)
 	{
 		base.OnMouseWheel(e);
-		// The global hook handles wheel input over cards and transparent gaps.
-		// Keep this fallback for systems where Windows declined the hook.
-		if (_mouseWheelHook?.IsActive == true &&
-			_mouseWheelHook.ReceivedWheelRecently(TimeSpan.FromMilliseconds(150)))
-			return;
+		// Accepted hook events return nonzero and never reach WM_MOUSEWHEEL.
+		// This is the fallback for passed-through input; timestamp suppression
+		// would lose distinct events during hook recovery or a UI heartbeat expiry.
 		if (_renderer?.CanScrollAt(e.Location) != true || _notificationAreaDragActive)
 			return;
 		CancelPendingSingleCardClick();
@@ -435,52 +434,31 @@ internal sealed class PrototypeForm : Form
 		_renderer.Scroll(e.Delta);
 	}
 
-	private bool HandleGlobalMouseWheel(Point screenPoint, int delta)
-	{
-		if (_closing || !_sidebarVisible || _renderer is null || !IsHandleCreated || _notificationAreaDragActive ||
-			!_sidebarScreenBounds.Contains(screenPoint))
-			return false;
-		var clientPoint = PointToClient(screenPoint);
-		if (!_renderer.CanScrollAt(clientPoint))
-			return false;
-		Interlocked.Add(ref _pendingMouseWheelDelta, delta);
-		if (Interlocked.Exchange(ref _mouseWheelUiRequestPending, 1) == 0)
-		{
-			try
-			{
-				BeginInvoke(new Action(ProcessPendingMouseWheel));
-			}
-			catch (InvalidOperationException)
-			{
-				Interlocked.Exchange(ref _mouseWheelUiRequestPending, 0);
-				Interlocked.Exchange(ref _pendingMouseWheelDelta, 0);
-				return false;
-			}
-		}
-		return true;
-	}
-
 	private void ProcessPendingMouseWheel()
 	{
-		while (!_closing)
-		{
-			var delta = Interlocked.Exchange(ref _pendingMouseWheelDelta, 0);
-			if (delta != 0 && _sidebarVisible && _renderer is not null)
-			{
-				CancelPendingSingleCardClick();
-				HideHoverHint();
-				_lastSidebarInteractionUtc = DateTime.UtcNow;
-				_renderer.Scroll(delta);
-			}
-			Interlocked.Exchange(ref _mouseWheelUiRequestPending, 0);
-			if (Volatile.Read(ref _pendingMouseWheelDelta) == 0 ||
-				Interlocked.Exchange(ref _mouseWheelUiRequestPending, 1) != 0)
-				break;
-		}
+		var delta = Interlocked.Exchange(ref _pendingMouseWheelDelta, 0);
+		if (_closing || delta == 0 || !_sidebarVisible || _renderer is null) return;
+		CancelPendingSingleCardClick();
+		HideHoverHint();
+		_lastSidebarInteractionUtc = DateTime.UtcNow;
+		_renderer.Scroll(delta);
 	}
 
 	protected override void WndProc(ref Message message)
 	{
+		if (message.Msg == SidebarMouseWheelHook.WheelMessage)
+		{
+			var delta = _mouseWheelHook?.TakePendingDelta() ?? 0;
+			// The hook already accepted this input at its event-time coordinates.
+			// Do not discard it just because the pointer moved before UI dispatch.
+			if (delta != 0 && !_closing && _sidebarVisible && !_notificationAreaDragActive)
+			{
+				Interlocked.Add(ref _pendingMouseWheelDelta, delta);
+				ProcessPendingMouseWheel();
+			}
+			message.Result = IntPtr.Zero;
+			return;
+		}
 		const int wmNcHitTest = 0x0084;
 		const int htClient = 1;
 		const int htTransparent = -1;
@@ -622,7 +600,7 @@ internal sealed class PrototypeForm : Form
 		var layoutRegionChanged = _renderer.SetSidebarVerticalOffset(settings.SidebarVerticalOffset);
 		if (_renderer.SetExplorerButtonEnabled(settings.ShowExplorerButton))
 			layoutRegionChanged = true;
-		if (_renderer.SetQuickLaunchButtonsEnabled(settings.ShowChromeQuickLaunch, settings.ShowEdgeQuickLaunch))
+		if (_renderer.SetQuickLaunchApps(settings.QuickLaunchApps ?? QuickLaunchDefinition.LegacyDefaults(settings.ShowChromeQuickLaunch, settings.ShowEdgeQuickLaunch)))
 			layoutRegionChanged = true;
 		if (_renderer.SetPinButtonEnabled(settings.ShowExpandedPinButton))
 			layoutRegionChanged = true;
@@ -835,16 +813,24 @@ internal sealed class PrototypeForm : Form
 			_renderer?.SetDesktopIconsVisible(_desktopIcons.IconsVisible);
 	}
 
-	private void OpenQuickLaunchApp(QuickLaunchApp app)
+	private async void OpenQuickLaunchApp(QuickLaunchDefinition app)
 	{
-		if (QuickLaunchAppResolver.Launch(app))
-			return;
-		MessageBox.Show(
-			this,
-			L($"{QuickLaunchAppResolver.DisplayName(app)} could not be opened.", $"无法打开 {QuickLaunchAppResolver.DisplayName(app)}。"),
-			L("Quick launch", "快捷启动"),
-			MessageBoxButtons.OK,
-			MessageBoxIcon.Warning);
+		if (!_launchesInFlight.Add(app.Id)) return;
+		try
+		{
+			var result = await QuickLaunchCatalog.LaunchAsync(app, _notificationAreaCancellation.Token);
+			if (_closing || result.Status is QuickLaunchStatus.Succeeded or QuickLaunchStatus.Cancelled) return;
+			var message = result.Status switch
+			{
+				QuickLaunchStatus.Busy => L("Windows launch requests are still busy. Try again later.", "Windows 启动请求仍在处理中，请稍后再试。"),
+				QuickLaunchStatus.TimedOut when result.ShellDispatched => L("Windows has not finished opening this app. It may still open later; avoid clicking repeatedly.", "Windows 尚未完成启动。应用仍可能稍后打开，请勿反复点击。"),
+				QuickLaunchStatus.TimedOut => L("The launch request timed out before being sent to Windows.", "启动请求在发送给 Windows 前超时。"),
+				_ => L($"{app.DisplayName} could not be opened. Check its path in Settings → Quick launch.", $"无法打开 {app.DisplayName}。请在设置 → 快捷应用中检查路径或重新添加。")
+			};
+			MessageBox.Show(this, message, L("Quick launch", "快捷启动"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+		}
+		catch (OperationCanceledException) { }
+		finally { _launchesInFlight.Remove(app.Id); }
 	}
 
 	private void ShowCardContextMenu(CardHitTarget target)
@@ -1230,7 +1216,7 @@ internal sealed class PrototypeForm : Form
 		if (target.IsNotificationAreaRefreshButton)
 			return L("Refresh hidden icons now", "立即刷新隐藏图标");
 		if (target.QuickLaunchApp is { } quickLaunchApp)
-			return L($"Open {QuickLaunchAppResolver.DisplayName(quickLaunchApp)}", $"打开 {QuickLaunchAppResolver.DisplayName(quickLaunchApp)}");
+			return L($"Open {quickLaunchApp.DisplayName}", $"打开 {quickLaunchApp.DisplayName}");
 		if (target.IsNotificationAreaCard)
 			return string.IsNullOrWhiteSpace(target.NotificationIconName)
 				? L("Windows hidden icons\nClick to open · Right-click for options", "Windows 隐藏图标\n单击打开 · 右键查看更多选项")
@@ -1265,9 +1251,18 @@ internal sealed class PrototypeForm : Form
 			return L("Next windows", "下一组窗口");
 		if (target.Window is { } window)
 		{
-			return CardHoverText.Window(CurrentLanguage, window.Title, window.ProcessName,
+			if (!_permissionRefresh.TryGetValue(window.Handle, out var queried) || Environment.TickCount64 - queried >= 5000)
+			{
+				if (_permissionRefresh.Count >= 512) _permissionRefresh.Clear();
+				_permissionRefresh[window.Handle] = Environment.TickCount64;
+				_ = Task.Run(() => { try { StageManager.Native.WindowAccessCache.Shared.Refresh(window.Handle); } catch { } });
+			}
+			var access = StageManager.Native.WindowAccess.Describe(StageManager.Native.WindowAccessCache.Shared.GetCached(window.Handle),
+				CurrentLanguage == UiLanguage.SimplifiedChinese);
+			var hint = CardHoverText.Window(CurrentLanguage, window.Title, window.ProcessName,
 				NativeMethods.IsIconic(window.Handle), NativeMethods.GetForegroundWindow() == window.Handle,
 				NativeMethods.IsZoomed(window.Handle));
+			return string.IsNullOrEmpty(access.Badge) ? hint : hint + "\n" + access.Description;
 		}
 
 		var stage = _renderer?.GetStageSnapshot(target.StageKey);
@@ -1424,59 +1419,79 @@ internal sealed class PrototypeForm : Form
 		ActivateSelectedWindow(window);
 	}
 
-	private void ActivateSelectedWindow(StageManager.Native.Window.IWindow window, bool allowMinimize = false,
+	private void ActivateSelectedWindow(IWindow window, bool allowMinimize = false,
 		WindowClickAction? requestedAction = null)
 	{
 		var exists = NativeMethods.IsWindow(window.Handle);
-		var action = requestedAction ?? WindowClickBehavior.Decide(
-			window.Handle, NativeMethods.GetForegroundWindow(),
-			exists && NativeMethods.IsIconic(window.Handle), exists, allowMinimize);
+		var action = requestedAction ?? WindowClickBehavior.Decide(window.Handle,
+			NativeMethods.GetForegroundWindow(), exists && NativeMethods.IsIconic(window.Handle), exists, allowMinimize);
 		if (!exists || action == WindowClickAction.Ignore) return;
-		TraceCardClick($"EXEC selected={window.Handle} foreground={NativeMethods.GetForegroundWindow()} action={action} allowMinimize={allowMinimize}");
-		// Honor the pointer-down intent before any tray-restore special case.
-		// WM_SYSCOMMAND follows the application's own minimize handling, including
-		// elevated windows where ShowWindowAsync can fail to change the state.
-		if (action == WindowClickAction.Minimize)
-		{
-			CancelActivationVerification();
-			if (allowMinimize && !NativeMethods.IsIconic(window.Handle))
-			{
-				var sent = NativeMethods.PostMessage(window.Handle, 0x0112, (IntPtr)0xF020, IntPtr.Zero);
-				TraceCardClick($"MINIMIZE selected={window.Handle} sent={sent} error={System.Runtime.InteropServices.Marshal.GetLastWin32Error()}");
-			}
-			return;
-		}
-		var trayApplication = window.ProcessName.Equals("VpnManager", StringComparison.OrdinalIgnoreCase)
-			? "VPN 管理器"
-			: window.ProcessName.Equals("Clash for Windows", StringComparison.OrdinalIgnoreCase)
-				? "Clash for Windows" : null;
-		if (trayApplication is not null && NativeMethods.IsWindow(window.Handle) &&
-			!Win32Helper.IsForegroundForWindow(window.Handle))
-		{
-			CancelActivationVerification();
-			_activationVerification = CancellationTokenSource.CreateLinkedTokenSource(_notificationAreaCancellation.Token);
-			_ = ActivateTrayApplicationAsync(window, trayApplication, _activationVerification);
-			return;
-		}
-		if (!ManagedWindowPresence.ShouldDisplay(
-			NativeMethods.IsWindowVisible(window.Handle),
-			NativeMethods.IsIconic(window.Handle)))
-		{
-			if (!_closing && IsHandleCreated) BeginInvoke(new Action(RefreshStages));
-			return;
-		}
-		// Card clicks retain the intent from pointer-down until pointer-up.
-		// Explicit menu/keyboard activation never toggles a foreground window off.
-		_desktopToggle.MarkDesktopDismissed();
-		_renderer?.SetDesktopShown(false);
+		if (action == WindowClickAction.Minimize && !allowMinimize) return;
+		CancelActivationVerification();
+		_activationVerification = CancellationTokenSource.CreateLinkedTokenSource(_notificationAreaCancellation.Token);
+		_ = ExecuteWindowActionAsync(window, action, _activationVerification);
+	}
 
-		// FocusStealer performs exactly one native restore when the window is
-		// minimized. Avoid issuing a second asynchronous restore here: that race can
-		// discard Windows' restore-to-maximized state on some applications.
-		var previousForeground = NativeMethods.GetForegroundWindow();
-		window.Focus();
-		QueueFocusWindowPlacement(window);
-		BeginActivationVerification(window, previousForeground);
+	private async Task ExecuteWindowActionAsync(IWindow window, WindowClickAction action, CancellationTokenSource source)
+	{
+		try
+		{
+			StageManager.Native.WindowOperationResult result;
+			if (action == WindowClickAction.Minimize)
+				result = await StageManager.Native.WindowActivation.MinimizeAsync(window.Handle, source.Token);
+			else
+			{
+				_desktopToggle.MarkDesktopDismissed();
+				_renderer?.SetDesktopShown(false);
+				var trayFirst = window.ProcessName.Equals("VpnManager", StringComparison.OrdinalIgnoreCase) ||
+					window.ProcessName.Equals("Clash for Windows", StringComparison.OrdinalIgnoreCase);
+				result = await StageManager.Native.WindowActivation.ActivateAsync(window.Handle, source.Token,
+					token => RestoreFromTrayAsync(window, token), trayFirst);
+				if (result.Succeeded && !_closing) QueueFocusWindowPlacement(window);
+			}
+			TraceCardClick($"RESULT selected={window.Handle} action={action} outcome={result.Outcome} error={result.NativeError}");
+			if (_closing || source.IsCancellationRequested) return;
+			if (!result.Succeeded && result.Outcome is StageManager.Native.WindowOperationOutcome.NotConfirmed or
+				StageManager.Native.WindowOperationOutcome.RequestRejected or StageManager.Native.WindowOperationOutcome.TimedOut)
+			{
+				Win32Helper.FlashTaskbar(window.Handle);
+				var access = StageManager.Native.WindowAccess.Describe(StageManager.Native.WindowAccess.Query(window.Handle),
+					CurrentLanguage == UiLanguage.SimplifiedChinese);
+				var message = result.NativeError == 5 || !string.IsNullOrEmpty(access.Badge)
+					? access.Description
+					: L("Windows did not confirm the window action. Use its taskbar button or Alt+Tab.", "Windows 未确认窗口操作。请使用该应用的任务栏按钮或 Alt+Tab。");
+				_trayIcon?.ShowBalloonTip(3500, "Stage_Manager_Lai", message, ToolTipIcon.Info);
+			}
+			RefreshStages();
+		}
+		catch (OperationCanceledException) { }
+		catch (Exception exception) { TraceCardClick($"ACTION failed={exception.GetType().Name}"); }
+		finally
+		{
+			if (ReferenceEquals(_activationVerification, source)) _activationVerification = null;
+			source.Dispose();
+		}
+	}
+
+	private async Task<bool> RestoreFromTrayAsync(IWindow window, CancellationToken token)
+	{
+		token.ThrowIfCancellationRequested();
+		if (window.ProcessName.Equals("VpnManager", StringComparison.OrdinalIgnoreCase))
+		{
+			try { using var signal = EventWaitHandle.OpenExisting("Local\\VpnManager.Activate"); if (signal.Set()) return true; }
+			catch (WaitHandleCannotBeOpenedException) { }
+			catch (UnauthorizedAccessException) { }
+			return await _notificationAreaClient.ActivateApplicationAsync("VPN 管理器", token);
+		}
+		if (window.ProcessName.Equals("Clash for Windows", StringComparison.OrdinalIgnoreCase))
+			return await _notificationAreaClient.ActivateApplicationAsync("Clash for Windows", token);
+		return await TryActivateFromNotificationAreaAsync(window, token);
+	}
+
+	private void CancelActivationVerification()
+	{
+		_activationVerification?.Cancel();
+		_activationVerification = null;
 	}
 
 	private static void TraceCardClick(string message)
@@ -1491,90 +1506,6 @@ internal sealed class PrototypeForm : Form
 		}
 		catch (IOException) { }
 		catch (UnauthorizedAccessException) { }
-	}
-
-	private async Task ActivateTrayApplicationAsync(IWindow window, string applicationName, CancellationTokenSource source)
-	{
-		try
-		{
-			var invoked = false;
-			if (window.ProcessName.Equals("VpnManager", StringComparison.OrdinalIgnoreCase))
-			{
-				try
-				{
-					using var signal = EventWaitHandle.OpenExisting("Local\\VpnManager.Activate");
-					invoked = signal.Set();
-				}
-				catch (WaitHandleCannotBeOpenedException) { }
-				catch (UnauthorizedAccessException) { }
-			}
-			if (!invoked)
-				invoked = await _notificationAreaClient.ActivateApplicationAsync(applicationName, source.Token);
-			await Task.Delay(250, source.Token);
-			var foreground = Win32Helper.IsForegroundForWindow(window.Handle);
-			var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Stage_Manager_Lai", "Logs");
-			Directory.CreateDirectory(directory);
-			File.AppendAllText(Path.Combine(directory, "activation.log"),
-				$"{DateTimeOffset.Now:O} {applicationName}: invoked={invoked}, foreground={foreground}, iconic={NativeMethods.IsIconic(window.Handle)}{Environment.NewLine}");
-			if (!foreground && NativeMethods.IsWindow(window.Handle)) window.Focus();
-			if (!_closing) RefreshStages();
-		}
-		catch (OperationCanceledException) { }
-		catch (Exception exception) { Debug.WriteLine(exception); }
-		finally
-		{
-			if (ReferenceEquals(_activationVerification, source)) _activationVerification = null;
-			source.Dispose();
-		}
-	}
-
-	private void BeginActivationVerification(IWindow window, IntPtr previousForeground)
-	{
-		CancelActivationVerification();
-		_activationVerification = CancellationTokenSource.CreateLinkedTokenSource(_notificationAreaCancellation.Token);
-		var source = _activationVerification;
-		_ = VerifyWindowActivationAsync(window, previousForeground, source);
-	}
-
-	private void CancelActivationVerification()
-	{
-		_activationVerification?.Cancel();
-		_activationVerification = null;
-	}
-
-	private async Task VerifyWindowActivationAsync(IWindow window, IntPtr previousForeground, CancellationTokenSource source)
-	{
-		try
-		{
-			await Task.Delay(150, source.Token);
-			if (_closing || !NativeMethods.IsWindow(window.Handle) || Win32Helper.IsForegroundForWindow(window.Handle)) return;
-			var foreground = NativeMethods.GetForegroundWindow();
-			if (foreground != IntPtr.Zero && foreground != previousForeground) return;
-
-			window.Focus();
-			await Task.Delay(180, source.Token);
-			if (_closing || !NativeMethods.IsWindow(window.Handle) || Win32Helper.IsForegroundForWindow(window.Handle)) return;
-			foreground = NativeMethods.GetForegroundWindow();
-			if (foreground != IntPtr.Zero && foreground != previousForeground) return;
-
-			// A restore request can clear WS_MINIMIZE before Windows actually grants
-			// foreground activation. Keep the notification-area fallback available
-			// whenever both verified foreground attempts failed, not only while the
-			// original HWND still reports itself as iconic.
-			if (await TryActivateFromNotificationAreaAsync(window, source.Token))
-			{
-				await Task.Delay(220, source.Token);
-				RefreshStages();
-				if (!NativeMethods.IsIconic(window.Handle) || Win32Helper.IsForegroundForWindow(window.Handle)) return;
-			}
-			Win32Helper.FlashTaskbar(window.Handle);
-		}
-		catch (OperationCanceledException) { }
-		finally
-		{
-			if (ReferenceEquals(_activationVerification, source)) _activationVerification = null;
-			source.Dispose();
-		}
 	}
 
 	private async Task<bool> TryActivateFromNotificationAreaAsync(IWindow window, CancellationToken cancellationToken)
@@ -1689,6 +1620,7 @@ internal sealed class PrototypeForm : Form
 	{
 		if (_closing)
 			return;
+		PublishWheelRegion();
 		var screenPoint = Cursor.Position;
 		DismissContextMenusOnOutsideClick(screenPoint);
 		if (_renderer is null || _catalog is null)
@@ -1984,8 +1916,18 @@ internal sealed class PrototypeForm : Form
 		UpdateWindowRegion(_sidebarVisible);
 	}
 
+	private void PublishWheelRegion()
+	{
+		var bounds = _sidebarVisible && !_notificationAreaDragActive && _renderer is not null && IsHandleCreated
+			? Rectangle.Intersect(_sidebarScreenBounds, new Rectangle(PointToScreen(Point.Empty),
+				new Size((int)Math.Ceiling(_renderer.SidebarInteractionWidth), ClientSize.Height)))
+			: Rectangle.Empty;
+		_mouseWheelHook?.PublishRegion(IsHandleCreated ? Handle : IntPtr.Zero, bounds);
+	}
+
 	private void UpdateWindowRegion(bool includeCards)
 	{
+		PublishWheelRegion();
 		if (!IsHandleCreated)
 			return;
 		if (_notificationAreaDragActive)
@@ -2041,7 +1983,7 @@ internal sealed class PrototypeForm : Form
 		var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 		_trayIcon = new NotifyIcon
 		{
-			Text = "Stage_Manager_Lai v4.4.16",
+			Text = "Stage_Manager_Lai v4.5.0",
 			Icon = icon,
 			ContextMenuStrip = _contextMenu,
 			Visible = true

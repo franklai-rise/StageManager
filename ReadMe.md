@@ -1,4 +1,14 @@
-# Stage_Manager_Lai v4.4.16
+# Stage_Manager_Lai v4.5.0
+
+**Production source:** main. **Website:** https://franklai.com/StageManager/
+**Feedback:** [GitHub Issues](https://github.com/franklai-rise/StageManager/issues).
+
+v4.5.0 isolates mouse input and window capture, adds permission diagnostics and
+configurable application launcher cards. Existing v4.4.16 interactions are retained.
+See [release policy](docs/RELEASE-POLICY.md) for the sole production project,
+CI provenance verification, draft validation and the experimental App/Core sources.
+
+## v4.4.16
 
 v4.4.16 gives the whole-sidebar pin its own pushpin icon. An angled pushpin
 means auto-hide is available; an upright highlighted pushpin means the

@@ -9,6 +9,11 @@ internal static class Program
 	[SupportedOSPlatform("windows10.0.19041.0")]
 	private static void Main(string[] args)
 	{
+		if (CaptureWorkerEntryPoint.IsCaptureWorker(args))
+		{
+			Environment.ExitCode = CaptureWorkerEntryPoint.Run(args);
+			return;
+		}
 		Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 		if (args.Length > 0 && string.Equals(args[0], "--notification-area-worker", StringComparison.Ordinal))
 		{

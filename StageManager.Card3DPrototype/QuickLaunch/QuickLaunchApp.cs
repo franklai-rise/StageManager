@@ -1,10 +1,10 @@
 using Microsoft.Win32;
-using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using Windows.UI.Composition;
+using StageManager.Settings;
 
 namespace StageManager.Card3DPrototype.QuickLaunch;
 
@@ -70,21 +70,21 @@ internal static class QuickLaunchAppResolver
 	}
 
 	public static bool Launch(QuickLaunchApp app)
-	{
-		try
+		=> QuickLaunchCatalog.Launch(Definition(app));
+
+	public static QuickLaunchDefinition Definition(QuickLaunchApp app) =>
+		QuickLaunchDefinition.LegacyDefaults()[app switch
 		{
-			Process.Start(new ProcessStartInfo
-			{
-				FileName = ResolveExecutable(app) ?? CommandName(app),
-				UseShellExecute = true
-			});
-			return true;
-		}
-		catch
-		{
-			return false;
-		}
-	}
+			QuickLaunchApp.Chrome => 0,
+			QuickLaunchApp.Edge => 1,
+			_ => throw new ArgumentOutOfRangeException(nameof(app))
+		}];
+
+	public static bool Launch(QuickLaunchDefinition app) => QuickLaunchCatalog.Launch(app);
+	public static Task<QuickLaunchResult> LaunchAsync(QuickLaunchDefinition app, CancellationToken token = default) =>
+		QuickLaunchCatalog.LaunchAsync(app, token);
+	public static Task<QuickLaunchResult> LaunchAsync(QuickLaunchApp app, CancellationToken token = default) =>
+		LaunchAsync(Definition(app), token);
 }
 
 internal sealed class SidebarQuickLaunchVisual : IDisposable
@@ -96,23 +96,25 @@ internal sealed class SidebarQuickLaunchVisual : IDisposable
 	private readonly CompositionRoundedRectangleGeometry _geometry;
 	private readonly CompositionGeometricClip _clip;
 	private readonly SpriteVisual _content;
-	private readonly Bitmap? _icon;
+	private Bitmap _icon = SystemIcons.Application.ToBitmap();
+	private QuickLaunchIconRequest? _iconRequest;
+	private bool _disposed;
 	private CardSwapChain? _surface;
 	private CompositionSurfaceBrush? _surfaceBrush;
 	private bool _hovered;
 	private bool _pressed;
 
 	public SidebarQuickLaunchVisual(Compositor compositor, D3DCompositionDevice graphics, QuickLaunchApp app)
+		: this(compositor, graphics, QuickLaunchAppResolver.Definition(app))
+	{
+		App = app;
+	}
+
+	public SidebarQuickLaunchVisual(Compositor compositor, D3DCompositionDevice graphics, QuickLaunchDefinition definition)
 	{
 		_compositor = compositor;
 		_graphics = graphics;
-		App = app;
-		ExecutablePath = QuickLaunchAppResolver.ResolveExecutable(app);
-		if (ExecutablePath is not null)
-		{
-			using var icon = Icon.ExtractAssociatedIcon(ExecutablePath);
-			_icon = icon?.ToBitmap();
-		}
+		Definition = definition with { };
 		Root = compositor.CreateContainerVisual();
 		_backgroundBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(112, 22, 27, 36));
 		_background = compositor.CreateSpriteVisual();
@@ -127,8 +129,13 @@ internal sealed class SidebarQuickLaunchVisual : IDisposable
 	}
 
 	public QuickLaunchApp App { get; }
-	public string? ExecutablePath { get; }
-	public bool IsAvailable => _icon is not null;
+	public QuickLaunchDefinition Definition { get; }
+	public string Id => Definition.Id;
+	public string DisplayName => Definition.DisplayName;
+	public string? ExecutablePath => Definition.Kind is QuickLaunchTargetKind.Executable or QuickLaunchTargetKind.Shortcut ? Definition.Target : null;
+	public bool IsAvailable => !string.IsNullOrWhiteSpace(Definition.Target);
+	public bool Launch() => QuickLaunchCatalog.Launch(Definition);
+	public Task<QuickLaunchResult> LaunchAsync(CancellationToken token = default) => QuickLaunchCatalog.LaunchAsync(Definition, token);
 	public ContainerVisual Root { get; }
 	public Vector2 Size { get; private set; }
 	public Vector2 Pivot { get; private set; }
@@ -136,6 +143,13 @@ internal sealed class SidebarQuickLaunchVisual : IDisposable
 
 	public void SetLayout(float dpiScale, float cardWidth)
 	{
+		if (_iconRequest is null && SynchronizationContext.Current is { } context)
+			_iconRequest = new QuickLaunchIconRequest(Definition, context, icon =>
+			{
+				_icon.Dispose();
+				_icon = icon;
+				RecreateSurface();
+			});
 		var scale = Math.Max(0.75f, dpiScale);
 		var nextSize = new Vector2(Math.Max(64f * scale, cardWidth), 36f * scale);
 		var surfaceChanged = (int)Math.Ceiling(Size.X) != (int)Math.Ceiling(nextSize.X) ||
@@ -209,6 +223,9 @@ internal sealed class SidebarQuickLaunchVisual : IDisposable
 
 	public void Dispose()
 	{
+		if (_disposed) return;
+		_disposed = true;
+		_iconRequest?.Dispose();
 		_content.Brush = null;
 		_surfaceBrush?.Dispose();
 		_surface?.Dispose();

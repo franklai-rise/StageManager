@@ -1,5 +1,6 @@
 using StageManager.Services;
 using StageManager.Settings;
+using StageManager.Card3DPrototype.QuickLaunch;
 
 namespace StageManager.Card3DPrototype;
 
@@ -9,8 +10,9 @@ internal sealed class SettingsForm : Form
 	private readonly Label _cardSizeValue;
 	private readonly NumericUpDown _sidebarVerticalOffset;
 	private readonly CheckBox _showExplorerButton;
-	private readonly CheckBox _showChromeQuickLaunch;
-	private readonly CheckBox _showEdgeQuickLaunch;
+	private readonly Button _quickLaunchButton;
+	private readonly Label _quickLaunchSummary;
+	private List<QuickLaunchDefinition> _quickLaunchApps;
 	private readonly CheckBox _showExpandedPinButton;
 	private readonly CheckBox _showNotificationAreaCard;
 	private readonly CheckBox _showDesktopButton;
@@ -36,6 +38,8 @@ internal sealed class SettingsForm : Form
 	public SettingsForm(AppSettings draft, IReadOnlyList<PrototypeApplicationChoice>? applicationChoices = null)
 	{
 		Draft = draft;
+		_quickLaunchApps = (draft.QuickLaunchApps ?? QuickLaunchDefinition.LegacyDefaults(draft.ShowChromeQuickLaunch, draft.ShowEdgeQuickLaunch))
+			.Select(app => app with { }).ToList();
 		Text = "Stage_Manager_Lai Settings";
 		FormBorderStyle = FormBorderStyle.Sizable;
 		StartPosition = FormStartPosition.CenterScreen;
@@ -53,7 +57,7 @@ internal sealed class SettingsForm : Form
 
 		Controls.Add(new Label
 		{
-			Text = "Stage_Manager_Lai v4.4.12",
+			Text = "Stage_Manager_Lai v4.5.0",
 			Font = new Font("Segoe UI", 17f, FontStyle.Bold),
 			AutoSize = true,
 			Location = new Point(22, 18)
@@ -120,20 +124,16 @@ internal sealed class SettingsForm : Form
 			195,
 			520);
 		appearanceGroup.Controls.Add(_showExplorerButton);
-		_showChromeQuickLaunch = CreateCheckBox(
-			"Show Google Chrome quick-launch card",
-			draft.ShowChromeQuickLaunch,
-			18,
-			225,
-			520);
-		appearanceGroup.Controls.Add(_showChromeQuickLaunch);
-		_showEdgeQuickLaunch = CreateCheckBox(
-			"Show Microsoft Edge quick-launch card",
-			draft.ShowEdgeQuickLaunch,
-			18,
-			255,
-			520);
-		appearanceGroup.Controls.Add(_showEdgeQuickLaunch);
+		_quickLaunchButton = new Button { Location = new Point(18, 225), Size = new Size(270, 30) };
+		_quickLaunchButton.Click += (_, _) =>
+		{
+			using var picker = new QuickLaunchSettingsForm(_quickLaunchApps, Draft.UiLanguage);
+			if (picker.ShowDialog(this) != DialogResult.OK) return;
+			_quickLaunchApps = picker.GetSelection();
+			UpdateQuickLaunchSummary();
+		};
+		_quickLaunchSummary = CreateLabel(string.Empty, 18, 255, 540);
+		appearanceGroup.Controls.AddRange(new Control[] { _quickLaunchButton, _quickLaunchSummary });
 		_showExpandedPinButton = CreateCheckBox(
 			"Show pin button when multi-window cards are expanded",
 			draft.ShowExpandedPinButton,
@@ -320,8 +320,10 @@ internal sealed class SettingsForm : Form
 		Draft.CardScale = _cardSizeSlider.Value / 100d;
 		Draft.SidebarVerticalOffset = (int)_sidebarVerticalOffset.Value;
 		Draft.ShowExplorerButton = _showExplorerButton.Checked;
-		Draft.ShowChromeQuickLaunch = _showChromeQuickLaunch.Checked;
-		Draft.ShowEdgeQuickLaunch = _showEdgeQuickLaunch.Checked;
+		Draft.QuickLaunchApps = _quickLaunchApps.Select(app => app with { }).ToList();
+		Draft.SchemaVersion = Math.Max(Draft.SchemaVersion, 17);
+		Draft.ShowChromeQuickLaunch = _quickLaunchApps.Any(app => app.Id == "browser:chrome" && app.Enabled);
+		Draft.ShowEdgeQuickLaunch = _quickLaunchApps.Any(app => app.Id == "browser:edge" && app.Enabled);
 		Draft.ShowExpandedPinButton = _showExpandedPinButton.Checked;
 		Draft.ShowNotificationAreaCard = _showNotificationAreaCard.Checked;
 		Draft.ShowDesktopButton = _showDesktopButton.Checked;
@@ -429,7 +431,17 @@ internal sealed class SettingsForm : Form
 		UiText.Apply(this, Draft.UiLanguage);
 		_languageButton.Text = UiText.Get(Draft.UiLanguage, "简体中文", "English");
 		_languageButton.AccessibleName = UiText.Get(Draft.UiLanguage, "Switch to Simplified Chinese", "切换到英文");
+		UpdateQuickLaunchSummary();
 		_applyingLanguage = false;
+	}
+
+	private void UpdateQuickLaunchSummary()
+	{
+		_quickLaunchButton.Text = UiText.Get(Draft.UiLanguage, "Choose quick-launch apps…", "选择快捷启动应用…");
+		var count = _quickLaunchApps.Count(app => app.Enabled);
+		_quickLaunchSummary.Text = UiText.Get(Draft.UiLanguage,
+			$"{count} enabled • below File Explorer • select, reorder or add EXE / LNK",
+			$"已启用 {count} 个 · 位于文件资源管理器下方 · 可选择、排序或添加 EXE / LNK");
 	}
 
 	private void ResetDefaults()
@@ -437,8 +449,8 @@ internal sealed class SettingsForm : Form
 		_cardSizeSlider.Value = 60;
 		_sidebarVerticalOffset.Value = -80;
 		_showExplorerButton.Checked = true;
-		_showChromeQuickLaunch.Checked = true;
-		_showEdgeQuickLaunch.Checked = true;
+		_quickLaunchApps = QuickLaunchDefinition.LegacyDefaults();
+		UpdateQuickLaunchSummary();
 		_showExpandedPinButton.Checked = true;
 		_showNotificationAreaCard.Checked = true;
 		_showDesktopButton.Checked = true;

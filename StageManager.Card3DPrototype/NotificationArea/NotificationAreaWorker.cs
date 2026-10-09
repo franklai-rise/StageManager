@@ -226,6 +226,7 @@ internal static class NotificationAreaWorker
 	{
 		if (!GetCursorPos(out var original))
 			return false;
+		Point? borrowedPosition = null;
 		try
 		{
 			var automationBounds = taskbar.Current.BoundingRectangle;
@@ -255,12 +256,16 @@ internal static class NotificationAreaWorker
 			}
 			if (!SetCursorPos(x, y))
 				return false;
+			borrowedPosition = new Point(x, y);
 			Thread.Sleep(550);
 			return true;
 		}
 		finally
 		{
-			SetCursorPos(original.X, original.Y);
+			// Do not snap the pointer back if the person moved it during the reveal.
+			if (borrowedPosition is { } moved && GetCursorPos(out var current) &&
+				current.X == moved.X && current.Y == moved.Y)
+				SetCursorPos(original.X, original.Y);
 		}
 	}
 

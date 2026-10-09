@@ -10,7 +10,7 @@ namespace StageManager.Settings;
 
 public sealed class SettingsService
 {
-	private const int CurrentSchemaVersion = 16;
+	private const int CurrentSchemaVersion = 17;
 	private readonly JsonSerializerOptions _jsonOptions = new()
 	{
 		WriteIndented = true,
@@ -70,6 +70,11 @@ public sealed class SettingsService
 				if (loaded is not null)
 				{
 					var loadedSchemaVersion = loaded.SchemaVersion;
+					if (loadedSchemaVersion < 17)
+					{
+						var backupPath = _settingsPath + ".pre-v4.5.0.bak";
+						if (!File.Exists(backupPath)) File.Copy(_settingsPath, backupPath, overwrite: false);
+					}
 					var normalized = Normalize(loaded);
 					if (loadedSchemaVersion != normalized.SchemaVersion)
 						Save(normalized);
@@ -105,6 +110,23 @@ public sealed class SettingsService
 	{
 		var sourceSchemaVersion = settings.SchemaVersion;
 		settings.SchemaVersion = CurrentSchemaVersion;
+		if (sourceSchemaVersion < 17)
+			settings.QuickLaunchApps = QuickLaunchDefinition.LegacyDefaults(settings.ShowChromeQuickLaunch, settings.ShowEdgeQuickLaunch);
+		settings.QuickLaunchApps ??= new List<QuickLaunchDefinition>();
+		var launcherIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		settings.QuickLaunchApps = settings.QuickLaunchApps
+			.Where(app => app is not null && !string.IsNullOrWhiteSpace(app.Target) && Enum.IsDefined(app.Kind))
+			.Select(app =>
+			{
+				app.Target = app.Target.Trim();
+				if (string.IsNullOrWhiteSpace(app.Id))
+					app.Id = "launcher:" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+						System.Text.Encoding.UTF8.GetBytes($"{app.Kind}:{app.Target.ToUpperInvariant()}")));
+				if (string.IsNullOrWhiteSpace(app.DisplayName)) app.DisplayName = app.Target;
+				return app;
+			})
+			.Where(app => launcherIds.Add(app.Id))
+			.ToList();
 		if (!Enum.IsDefined(settings.StageMode))
 			settings.StageMode = StageMode.Coexist;
 		if (!Enum.IsDefined(settings.AppWindowsMode))

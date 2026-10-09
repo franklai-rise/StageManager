@@ -1,46 +1,37 @@
 ﻿using StageManager.Native.PInvoke;
 using System;
+using System.Runtime.InteropServices;
 
 namespace StageManager.Native
 {
     public static class FocusStealer
     {
-        public static bool Steal(IntPtr windowToFocus)
+        public static bool Steal(IntPtr windowToFocus) => Steal(windowToFocus, restoreIfMinimized: true);
+
+        public static bool Steal(IntPtr windowToFocus, bool restoreIfMinimized)
         {
             if (windowToFocus == IntPtr.Zero || !Win32.IsWindow(windowToFocus))
                 return false;
             if (Win32.GetForegroundWindow() == windowToFocus)
                 return true;
+            // Best effort only: recently hung windows may not yet be marked unresponsive.
+            // No synchronous message probe or input-queue attachment on the UI thread.
+            try { if (IsHungAppWindow(windowToFocus)) return false; }
+            catch (EntryPointNotFoundException) { }
 
-            var currentThread = Win32.GetCurrentThreadId();
-            var foreground = Win32.GetForegroundWindow();
-            var foregroundThread = foreground == IntPtr.Zero ? 0 : Win32.GetWindowThreadProcessId(foreground, out _);
-            var targetThread = Win32.GetWindowThreadProcessId(windowToFocus, out _);
-            var attachedToForeground = false;
-            var attachedToTarget = false;
-            try
-            {
-                if (foregroundThread != 0 && foregroundThread != currentThread)
-                    attachedToForeground = Win32.AttachThreadInput(currentThread, foregroundThread, true);
-                if (targetThread != 0 && targetThread != currentThread && targetThread != foregroundThread)
-                    attachedToTarget = Win32.AttachThreadInput(currentThread, targetThread, true);
-
-                if (Win32.IsIconic(windowToFocus))
-                    Win32.ShowWindowAsync(windowToFocus, Win32.SW.SW_RESTORE);
-                Win32.BringWindowToTop(windowToFocus);
-                Win32.SetForegroundWindow(windowToFocus);
-                Win32.SetActiveWindow(windowToFocus);
-                Win32.SetFocus(windowToFocus);
-            }
-            finally
-            {
-                if (attachedToTarget)
-                    Win32.AttachThreadInput(currentThread, targetThread, false);
-                if (attachedToForeground)
-                    Win32.AttachThreadInput(currentThread, foregroundThread, false);
-            }
+            // Honor Windows' foreground policy. Attaching input queues can block on a hung
+            // application and disturb keyboard state; never synthesize Alt/input to bypass it.
+            // SW_RESTORE is only issued once by a WindowActivation operation. In particular,
+            // never normalize an already maximized window or repeat a pending async restore.
+            if (restoreIfMinimized && Win32.IsIconic(windowToFocus))
+                Win32.ShowWindowAsync(windowToFocus, Win32.SW.SW_RESTORE);
+            Win32.SetForegroundWindow(windowToFocus);
 
             return Win32.GetForegroundWindow() == windowToFocus;
         }
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsHungAppWindow(IntPtr window);
     }
 }

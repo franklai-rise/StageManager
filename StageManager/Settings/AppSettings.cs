@@ -2,6 +2,30 @@ using System.Collections.Generic;
 
 namespace StageManager.Settings;
 
+public enum QuickLaunchTargetKind
+{
+	Executable,
+	Shortcut,
+	AppsFolder,
+	LegacyBrowser
+}
+
+/// <summary>List position is display order; Id is identity, never the translated name.</summary>
+public sealed record QuickLaunchDefinition
+{
+	public string Id { get; set; } = "";
+	public string DisplayName { get; set; } = "";
+	public QuickLaunchTargetKind Kind { get; set; }
+	public string Target { get; set; } = "";
+	public bool Enabled { get; set; } = true;
+
+	public static List<QuickLaunchDefinition> LegacyDefaults(bool chrome = true, bool edge = true) => new()
+	{
+		new() { Id = "browser:chrome", DisplayName = "Google Chrome", Kind = QuickLaunchTargetKind.LegacyBrowser, Target = "chrome.exe", Enabled = chrome },
+		new() { Id = "browser:edge", DisplayName = "Microsoft Edge", Kind = QuickLaunchTargetKind.LegacyBrowser, Target = "msedge.exe", Enabled = edge }
+	};
+}
+
 public enum StageMode
 {
 	Coexist,
@@ -41,6 +65,8 @@ public sealed class AppSettings
 	public bool ShowExplorerButton { get; set; } = true;
 	public bool ShowChromeQuickLaunch { get; set; } = true;
 	public bool ShowEdgeQuickLaunch { get; set; } = true;
+	// Null means an unmigrated file; an empty list deliberately means no launchers.
+	public List<QuickLaunchDefinition>? QuickLaunchApps { get; set; }
 	public bool ShowExpandedPinButton { get; set; } = true;
 	public bool ShowNotificationAreaCard { get; set; } = true;
 	public bool ShowDesktopButton { get; set; } = true;

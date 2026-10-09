@@ -1,0 +1,33 @@
+name: Bug report / 问题反馈
+description: Report a reproducible issue / 提交可以复现的问题
+title: "[Bug] "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: App version / 程序版本
+      placeholder: v4.5.0
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version and build / 系统版本与构建号
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps, expected and actual result / 复现步骤、预期与实际表现
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context / 环境
+      description: Focus mode, displays/DPI, target app, elevated permissions / 模式、屏幕缩放、目标软件及是否以管理员运行
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs / 脱敏日志
+      description: Remove personal paths, window/document titles, tokens and private information before posting. 请先移除个人路径、文档标题、令牌等隐私。

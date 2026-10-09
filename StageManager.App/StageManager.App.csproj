@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+	<ApplicationIcon>..\StageManager.Legacy\StageManager.ico</ApplicationIcon>
+	<AssemblyName>Stage_Manager_Lai</AssemblyName>
+    <RootNamespace>StageManager.Desktop</RootNamespace>
+		<Product>Stage_Manager_Lai</Product>
+	<Authors>Andreas Wäscher; Frank Lai (modified fork)</Authors>
+	<Description>Stage Manager for Windows with cross-application stages, low-memory 3D cards, isolated static previews, virtual-desktop sessions, and accessible controls.</Description>
+	<Copyright>Original copyright (c) 2022 Andreas Wäscher; Lai modifications (c) 2026 Frank Lai</Copyright>
+	<RepositoryUrl>https://github.com/franklai-rise/StageManager</RepositoryUrl>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\StageManager.Core\StageManager.Core.csproj" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
+  </ItemGroup>
+</Project>

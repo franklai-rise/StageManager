@@ -10,6 +10,9 @@ using System.IO;
 using System.Numerics;
 using System.Windows.Forms;
 
+if (CaptureWorkerEntryPoint.IsCaptureWorker(args))
+	return CaptureWorkerEntryPoint.Run(args);
+
 if (args.Length > 0 && args[0] == "--notification-area-worker")
 {
 	return InteractionMaintenanceTests.RunNotificationWorker(args.Skip(1).ToArray());
@@ -51,6 +54,23 @@ internal static class TestRunner
 
 	public static int Run()
 	{
+		RunTest("Wheel snapshots expire and preserve outside/mixed-DPI input", Stability450Tests.WheelHitTestingIsIndependentAndExpires);
+		RunTest("Permission and window-operation state transitions", () => WindowAccessActivationTests.RunAll().GetAwaiter().GetResult());
+		RunTest("Capture isolation bounds blocked I/O and discards stale frames", CaptureIsolationRegressionTests.RunAll);
+		RunTest("Launcher migration preserves all existing settings", QuickLaunchRegressionTests.MigrationPreservesFlagsAndOtherSettings);
+		RunTest("Launcher order, empty selection and copies persist", QuickLaunchRegressionTests.OrderedListsCloneAndEmptyRoundTrip);
+		RunTest("Launcher identities are stable and invalid entries normalize", QuickLaunchRegressionTests.StableIdentityAndInvalidRows);
+		RunTest("Launcher Shell requests preserve shortcuts without elevation", QuickLaunchRegressionTests.ShellLaunchPreservesShortcutAndDoesNotElevate);
+		RunTest("Launcher icon failures and cancellation are safe", QuickLaunchRegressionTests.IconFailureAndCancellation);
+		RunTest("Launcher picker cancel does not mutate settings", QuickLaunchRegressionTests.PickerDoesNotMutateInput);
+		RunTest("Launcher background discovery cancellation is bounded", QuickLaunchRegressionTests.InFlightAndQueuedCancellation);
+		RunTest("Launcher late icons are disposed after close", QuickLaunchRegressionTests.PendingIconsAreDisposedOnClose);
+		RunTest("Arbitrary launcher cards render and hit-test in order", QuickLaunchRegressionTests.RendererWorksWithoutOwnerHwnd);
+		RunTest("Stalled Shell launches are bounded and busy clicks never replay", QuickLaunchRegressionTests.StalledLaunchIsBoundedAndBusyClicksNeverReplay);
+		RunTest("Cancelled launch preparation never dispatches later", QuickLaunchRegressionTests.TimedOutOrCancelledPreparationNeverDispatches);
+		RunTest("Launch failures and cancellation are explicit", QuickLaunchRegressionTests.LaunchCancellationAndFailuresAreExplicit);
+		RunTest("Stalled icons do not starve discovery or launch", QuickLaunchRegressionTests.StalledIconsDoNotStarveDiscoveryOrLaunch);
+		RunTest("Wheel hook owns its message loop and bounded shutdown", Stability450Tests.HookLifecycleDoesNotNeedCallerMessagePump);
 		RunTest("Stage groups multiple applications and rejects duplicate handles", StageGrouping);
 		RunTest("Stage window cycling is deterministic", StageCycling);
 		RunTest("Composite preview exposes three thumbnails and overflow count", CompositePreview);
@@ -258,7 +278,7 @@ internal static class TestRunner
 				}
 				""");
 			var service = new SettingsService(path);
-			Assert(service.Current.SchemaVersion == 16, "Settings schema was not upgraded for the desktop-icons card.");
+			Assert(service.Current.SchemaVersion == 17, "Settings schema was not upgraded for configurable launchers.");
 			Assert(service.Current.LowMemoryRendering, "Low-memory rendering should be enabled by default.");
 			Assert(!service.Current.IgnoredProcesses.Contains("explorer", StringComparer.OrdinalIgnoreCase),
 				"The legacy default Explorer ignore entry was not migrated.");
@@ -267,7 +287,7 @@ internal static class TestRunner
 			Assert(service.Current.IgnoredProcesses.Contains("custom-app", StringComparer.OrdinalIgnoreCase),
 				"A user-selected ignored process was lost during migration.");
 			var migratedJson = File.ReadAllText(path);
-			Assert(migratedJson.Contains("\"SchemaVersion\": 16", StringComparison.Ordinal),
+			Assert(migratedJson.Contains("\"SchemaVersion\": 17", StringComparison.Ordinal),
 				"The migrated schema was not written back to disk.");
 			Assert(!migratedJson.Contains("\"explorer\"", StringComparison.OrdinalIgnoreCase),
 				"The legacy Explorer ignore entry remained in the persisted settings.");

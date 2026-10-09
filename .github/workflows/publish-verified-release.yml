@@ -1,0 +1,79 @@
+name: Publish a locally verified draft
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing draft tag (vX.Y.Z)
+        required: true
+        type: string
+      validation_record:
+        description: Link to completed 24-hour Windows test record
+        required: true
+        type: string
+      trial_started_utc:
+        description: UTC start of the uninterrupted trial of this exact EXE (ISO 8601)
+        required: true
+        type: string
+      exe_sha256:
+        description: SHA-256 of the actual EXE used for the local trial
+        required: true
+        type: string
+      manual_checks_completed:
+        description: I completed the app, Focus, DPI and independent-startup checklist
+        required: true
+        default: false
+        type: boolean
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish existing assets without rebuilding
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          VALIDATION_RECORD: ${{ inputs.validation_record }}
+          TRIAL_STARTED: ${{ inputs.trial_started_utc }}
+          TESTED_SHA256: ${{ inputs.exe_sha256 }}
+          MANUAL_CHECKS_COMPLETED: ${{ inputs.manual_checks_completed }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          [[ "$VALIDATION_RECORD" == https://* ]] || exit 1
+          [[ "$MANUAL_CHECKS_COMPLETED" == true ]] || exit 1
+          [[ "$TESTED_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || exit 1
+          draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)
+          [[ "$draft" == true ]] || exit 1
+          gh release download "$RELEASE_TAG" --pattern build-info.json --pattern "Stage_Manager_Lai_$RELEASE_TAG.exe"
+          python - <<'PY'
+          import datetime, hashlib, json, os, pathlib
+          info = json.loads(pathlib.Path("build-info.json").read_text(encoding="utf-8-sig"))
+          tag = os.environ["RELEASE_TAG"]
+          exe = pathlib.Path("Stage_Manager_Lai_" + tag + ".exe")
+          sha = hashlib.file_digest(exe.open("rb"), "sha256").hexdigest()
+          assert sha == info["sha256"] == os.environ["TESTED_SHA256"].lower(), "Tested/downloaded/build hashes differ"
+          assert info["tag"] == tag and info["file"] == exe.name, "Manifest tag or filename mismatch"
+          started = datetime.datetime.fromisoformat(os.environ["TRIAL_STARTED"].replace("Z", "+00:00"))
+          built = datetime.datetime.fromisoformat(info["builtAtUtc"].replace("Z", "+00:00"))
+          now = datetime.datetime.now(datetime.timezone.utc)
+          assert started.tzinfo is not None and built <= started <= now, "Trial must start after this binary was built"
+          assert now - started >= datetime.timedelta(hours=24), "24-hour trial has not elapsed"
+          PY
+          gh attestation verify "Stage_Manager_Lai_$RELEASE_TAG.exe" --repo "$GH_REPO"
+          commit=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)
+          [[ "$commit" == "$(jq -r .commit build-info.json)" ]] || exit 1
+          base=$(gh api "repos/$GH_REPO/compare/$commit...main" --jq .merge_base_commit.sha)
+          [[ "$base" == "$commit" ]] || exit 1
+          gh release view "$RELEASE_TAG" --json body --jq .body > release-notes.md
+          printf '\nLocal validation record: %s\n' "$VALIDATION_RECORD" >> release-notes.md
+          gh release edit "$RELEASE_TAG" --draft=false --latest --notes-file release-notes.md
+  website:
+    needs: publish
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/site-pages.yml

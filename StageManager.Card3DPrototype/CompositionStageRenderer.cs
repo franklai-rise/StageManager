@@ -36,14 +36,14 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private long _lastScrollTick;
 	private readonly D3DCompositionDevice _graphics;
 	private readonly WindowFrameCapture _capture = new();
+	private readonly CaptureWorkerClient _captureWorker = new();
 	private readonly SidebarExpandAllButtonVisual _expandAllButton;
 	private readonly SidebarExplorerButtonVisual _explorerButton;
 	private readonly SidebarCollapseButtonVisual _collapseButton;
 	private readonly SidebarTopPinButtonVisual _sidebarPinButton;
 	private readonly SidebarDesktopButtonVisual _desktopButton;
 	private readonly SidebarDesktopIconsButtonVisual _desktopIconsButton;
-	private readonly SidebarQuickLaunchVisual _chromeButton;
-	private readonly SidebarQuickLaunchVisual _edgeButton;
+	private readonly List<SidebarQuickLaunchVisual> _quickLaunchButtons = new();
 	private readonly NotificationTrayCardVisual _notificationAreaCard;
 	private readonly Dictionary<string, StageCardVisual> _stages = new(StringComparer.OrdinalIgnoreCase);
 	private readonly System.Windows.Forms.Timer _captureTimer;
@@ -73,9 +73,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private bool _explorerButtonEnabled = true;
 	private bool _explorerButtonHovered;
 	private bool _explorerRequested;
-	private bool _chromeQuickLaunchEnabled;
-	private bool _edgeQuickLaunchEnabled;
-	private QuickLaunchApp? _quickLaunchRequested;
+	private QuickLaunchDefinition? _quickLaunchRequested;
 	private bool _pinButtonEnabled;
 	private bool _pinButtonHovered;
 	private bool _collapseButtonEnabled = true;
@@ -124,8 +122,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_sidebarPinButton = new SidebarTopPinButtonVisual(_compositor);
 		_desktopButton = new SidebarDesktopButtonVisual(_compositor);
 		_desktopIconsButton = new SidebarDesktopIconsButtonVisual(_compositor);
-		_chromeButton = new SidebarQuickLaunchVisual(_compositor, _graphics, QuickLaunchApp.Chrome);
-		_edgeButton = new SidebarQuickLaunchVisual(_compositor, _graphics, QuickLaunchApp.Edge);
+
 		_notificationAreaCard = new NotificationTrayCardVisual(_compositor, _graphics);
 		_mainCamera.Children.InsertAtTop(_expandAllButton.Root);
 		_mainCamera.Children.InsertAtTop(_explorerButton.Root);
@@ -133,8 +130,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_mainCamera.Children.InsertAtTop(_sidebarPinButton.Root);
 		_mainCamera.Children.InsertAtTop(_desktopButton.Root);
 		_mainCamera.Children.InsertAtTop(_desktopIconsButton.Root);
-		_mainCamera.Children.InsertAtTop(_chromeButton.Root);
-		_mainCamera.Children.InsertAtTop(_edgeButton.Root);
+
 		_mainCamera.Children.InsertAtTop(_notificationAreaCard.Root);
 		_captureTimer = new System.Windows.Forms.Timer { Interval = 350 };
 		_captureTimer.Tick += (_, _) => ScheduleCaptures();
@@ -188,8 +184,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_sidebarPinButton.SetPressed(false);
 		_desktopButton.SetPressed(false);
 		_desktopIconsButton.SetPressed(false);
-		_chromeButton.SetPressed(false);
-		_edgeButton.SetPressed(false);
+		foreach (var button in _quickLaunchButtons) button.SetPressed(false);
 		_notificationAreaCard.SetControlPressed(false, false);
 		_notificationAreaCard.SetPressed(false);
 		if (_expandedStageKey is not null && _stages.TryGetValue(_expandedStageKey, out var stage))
@@ -224,7 +219,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		return requested;
 	}
 
-	public QuickLaunchApp? ConsumeQuickLaunchRequest()
+	public QuickLaunchDefinition? ConsumeQuickLaunchRequest()
 	{
 		var requested = _quickLaunchRequested;
 		_quickLaunchRequested = null;
@@ -340,26 +335,33 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_explorerRequested = false;
 		_explorerButton.SetPressed(false);
 		SetExplorerButtonHovered(false);
-		_chromeButton.SetPressed(false);
-		_chromeButton.SetHovered(false);
-		_edgeButton.SetPressed(false);
-		_edgeButton.SetHovered(false);
+		foreach (var button in _quickLaunchButtons) { button.SetPressed(false); button.SetHovered(false); }
 		_explorerButton.SetVisible(false);
 		LayoutStages(true);
 		return true;
 	}
 
-	public bool SetQuickLaunchButtonsEnabled(bool chromeEnabled, bool edgeEnabled)
+	public bool SetQuickLaunchButtonsEnabled(bool chromeEnabled, bool edgeEnabled) =>
+		SetQuickLaunchApps(QuickLaunchDefinition.LegacyDefaults(chromeEnabled, edgeEnabled));
+
+	public bool SetQuickLaunchApps(IEnumerable<QuickLaunchDefinition> definitions)
 	{
-		chromeEnabled &= _chromeButton.IsAvailable;
-		edgeEnabled &= _edgeButton.IsAvailable;
-		if (_chromeQuickLaunchEnabled == chromeEnabled && _edgeQuickLaunchEnabled == edgeEnabled)
-			return false;
-		_chromeQuickLaunchEnabled = chromeEnabled;
-		_edgeQuickLaunchEnabled = edgeEnabled;
+		var next = definitions.Where(app => app.Enabled).ToArray();
+		if (_quickLaunchButtons.Select(button => button.Definition).SequenceEqual(next)) return false;
+		foreach (var button in _quickLaunchButtons)
+		{
+			_mainCamera.Children.Remove(button.Root);
+			button.Dispose();
+		}
+		_quickLaunchButtons.Clear();
+		foreach (var definition in next)
+		{
+			var button = new SidebarQuickLaunchVisual(_compositor, _graphics, definition);
+			button.SetLayout(_dpiScale, CardSize.X);
+			_quickLaunchButtons.Add(button);
+			_mainCamera.Children.InsertAtTop(button.Root);
+		}
 		_quickLaunchRequested = null;
-		_chromeButton.SetVisible(false);
-		_edgeButton.SetVisible(false);
 		LayoutStages(true);
 		return true;
 	}
@@ -865,7 +867,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (hit.QuickLaunchApp is { } quickLaunchApp)
 		{
 			_quickLaunchRequested = quickLaunchApp;
-			(quickLaunchApp == QuickLaunchApp.Chrome ? _chromeButton : _edgeButton).SetPressed(true);
+			_quickLaunchButtons.FirstOrDefault(button => button.Id == quickLaunchApp.Id)?.SetPressed(true);
 			return null;
 		}
 		if (hit.IsNotificationAreaDragHandle)
@@ -1060,6 +1062,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (_disposed)
 			return;
 		_disposed = true;
+		_captureWorker.Dispose();
 		lock (_captureGate)
 		{
 			_pendingCapture?.Frame?.Dispose();
@@ -1083,8 +1086,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_sidebarPinButton.Dispose();
 		_desktopButton.Dispose();
 		_desktopIconsButton.Dispose();
-		_chromeButton.Dispose();
-		_edgeButton.Dispose();
+		foreach (var button in _quickLaunchButtons) button.Dispose();
+		_quickLaunchButtons.Clear();
 		_notificationAreaCard.Dispose();
 		_cameraRoot.Children.Remove(_mainCamera);
 		_cameraRoot.Children.Remove(_fixedCamera);
@@ -1126,8 +1129,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 			_toolbarLayoutKey = toolbarKey;
 			_expandAllButton.SetLayout(_dpiScale, CardSize.X);
 			_explorerButton.SetLayout(_dpiScale, CardSize.X);
-			_chromeButton.SetLayout(_dpiScale, CardSize.X);
-			_edgeButton.SetLayout(_dpiScale, CardSize.X);
+			foreach (var button in _quickLaunchButtons) button.SetLayout(_dpiScale, CardSize.X);
 			_collapseButton.SetLayout(_dpiScale, CardSize.X);
 			_sidebarPinButton.SetLayout(_dpiScale, -7.5f, _sidebarPinned);
 			_desktopButton.SetLayout(_dpiScale, CardSize.X);
@@ -1137,8 +1139,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var headerCardGap = 12f * _dpiScale;
 		var headerHeight = _expandAllButton.Size.Y + headerCardGap +
 			(_explorerButtonEnabled ? _explorerButton.Size.Y + headerCardGap : 0f) +
-			(_chromeQuickLaunchEnabled ? _chromeButton.Size.Y + headerCardGap : 0f) +
-			(_edgeQuickLaunchEnabled ? _edgeButton.Size.Y + headerCardGap : 0f);
+			_quickLaunchButtons.Sum(button => button.Size.Y + headerCardGap);
 		var trailingGap = 12f * _dpiScale;
 		var trailingHeight =
 			(_notificationAreaCardEnabled ? trailingGap + _notificationAreaCard.Size.Y : 0f) +
@@ -1174,23 +1175,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 		{
 			_explorerButton.SetVisible(false);
 		}
-		if (_chromeQuickLaunchEnabled)
+		foreach (var button in _quickLaunchButtons)
 		{
-			lowestVisibleCardBottom = LayoutQuickLaunchButton(_chromeButton, currentY);
-			currentY += _chromeButton.Size.Y + headerCardGap;
-		}
-		else
-		{
-			_chromeButton.SetVisible(false);
-		}
-		if (_edgeQuickLaunchEnabled)
-		{
-			lowestVisibleCardBottom = LayoutQuickLaunchButton(_edgeButton, currentY);
-			currentY += _edgeButton.Size.Y + headerCardGap;
-		}
-		else
-		{
-			_edgeButton.SetVisible(false);
+			lowestVisibleCardBottom = LayoutQuickLaunchButton(button, currentY);
+			currentY += button.Size.Y + headerCardGap;
 		}
 
 		for (var stageIndex = 0; stageIndex < _snapshots.Count; stageIndex++)
@@ -1378,11 +1366,11 @@ internal sealed class CompositionStageRenderer : IDisposable
 			new Vector2(_viewportWidth / 2f, _viewportHeight / 2f),
 			PerspectiveDistance * _dpiScale);
 		_hitTargets.Add(new CardHitTarget(
-			$"__quick_launch_{button.App}__",
+			$"__quick_launch_{button.Id}__",
 			null,
 			polygon,
 			int.MaxValue - 1,
-			QuickLaunchApp: button.App));
+			QuickLaunchApp: button.Definition));
 		return y + button.Size.Y;
 	}
 
@@ -1562,10 +1550,9 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_explorerButton.SetHovered(hovered);
 	}
 
-	private void SetQuickLaunchHovered(QuickLaunchApp? app)
+	private void SetQuickLaunchHovered(QuickLaunchDefinition? app)
 	{
-		_chromeButton.SetHovered(_chromeQuickLaunchEnabled && app == QuickLaunchApp.Chrome);
-		_edgeButton.SetHovered(_edgeQuickLaunchEnabled && app == QuickLaunchApp.Edge);
+		foreach (var button in _quickLaunchButtons) button.SetHovered(app?.Id == button.Id);
 	}
 
 	private void SetExpandAllButtonHovered(bool hovered)
@@ -1909,6 +1896,9 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	private void StartCapture(WindowCardVisual card)
 	{
+		CaptureWindow snapshot;
+		try { snapshot = CaptureWindow.FromWindow(card.Window); }
+		catch { card.MarkCaptureFailed(card.MarkCaptureStarted()); return; }
 		lock (_captureGate)
 		{
 			if (!_capturesInFlight.Add(card.Window.Handle))
@@ -1920,9 +1910,22 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var height = card.SurfaceHeight;
 		var revision = card.MarkCaptureStarted();
 		var isGroup = card.IsApplicationGroupCard;
-		_ = Task.Run(() => isGroup
-			? _capture.CaptureApplicationCard(window, width, height)
-			: _capture.Capture(window, width, height, badge)).ContinueWith(task =>
+		var hadSurface = card.HasSurface;
+		_ = Task.Run(async () =>
+		{
+			try
+			{
+				return await _captureWorker.CaptureAsync(snapshot, width, height, isGroup, badge).ConfigureAwait(false);
+			}
+			catch (Exception exception) when (!_disposed)
+			{
+				Debug.WriteLine($"Capture failed ({exception.GetType().Name}); preserving existing preview.");
+				if (hadSurface) throw;
+				// This instance is placeholder-only. It never runs PrintWindow or Shell icon extraction.
+				return isGroup ? _capture.CaptureApplicationCard(snapshot, width, height) :
+					_capture.Capture(snapshot, width, height, badge);
+			}
+		}).ContinueWith(task =>
 		{
 			// Observe failures and deliver them through the same UI path as pixels.
 			var error = task.Exception;
@@ -1989,6 +1992,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 		using (frame)
 		{
 			if (_disposed || !card.IsCaptureCurrent(completion.Revision)) return;
+			if (frame.IsPlaceholder && card.HasSurface && !card.Window.IsMinimized &&
+				!card.IsApplicationGroupCard && !card.LastFrameWasPlaceholder)
+			{
+				card.MarkCaptureFailed(completion.Revision);
+				return;
+			}
 			if (_sidebarVisible && card.IsVisible && card.Window.Handle == frame.Handle)
 				card.TryUpload(frame, completion.Revision);
 			else if (!card.HasSurface)
@@ -2010,7 +2019,7 @@ internal sealed record CardHitTarget(
 	bool IsExplorerButton = false,
 	bool IsExpandAllButton = false,
 	bool IsPinButton = false,
-	QuickLaunchApp? QuickLaunchApp = null,
+	QuickLaunchDefinition? QuickLaunchApp = null,
 	bool IsNotificationAreaCard = false,
 	bool IsNotificationAreaDragHandle = false,
 	bool IsNotificationAreaRefreshButton = false,
@@ -3407,6 +3416,7 @@ internal sealed class WindowCardVisual : IDisposable
 	public CardFeedback Feedback => _feedback;
 	public CardVisualMotion Motion { get; }
 	public bool HasSurface => _surface is not null;
+	public bool LastFrameWasPlaceholder { get; private set; } = true;
 	public DateTime HiddenSinceUtc { get; private set; }
 	public long EstimatedSurfaceBytes => (long)SurfaceWidth * SurfaceHeight * 8;
 
@@ -3542,6 +3552,7 @@ internal sealed class WindowCardVisual : IDisposable
 		if (!IsCaptureCurrent(revision) || Window.Handle != frame.Handle ||
 			frame.Width != SurfaceWidth || frame.Height != SurfaceHeight) return false;
 		Upload(frame);
+		LastFrameWasPlaceholder = frame.IsPlaceholder;
 		return true;
 	}
 

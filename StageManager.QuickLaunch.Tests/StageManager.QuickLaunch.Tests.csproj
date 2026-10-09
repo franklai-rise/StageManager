@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Reuse the existing friend assembly without changing shared registration. -->
+    <AssemblyName>StageManager.Tests</AssemblyName>
+    <DefineConstants>$(DefineConstants);QUICK_LAUNCH_STANDALONE</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../StageManager.Card3DPrototype/StageManager.Card3DPrototype.csproj" />
+    <Compile Include="../StageManager.Tests/QuickLaunchRegressionTests.cs" Link="QuickLaunchRegressionTests.cs" />
+  </ItemGroup>
+</Project>
