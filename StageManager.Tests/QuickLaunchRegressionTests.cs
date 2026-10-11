@@ -178,11 +178,103 @@ internal static class QuickLaunchRegressionTests
 		CheckDisposed(icon);
 		var late = new TaskCompletionSource<Bitmap>(TaskCreationOptions.RunContinuationsAsynchronously);
 		var lateIcon = new Bitmap(8, 8);
-		using (var request = new QuickLaunchIconRequest(app, context, value => { accepted++; value.Dispose(); }, (_, _) => late.Task)) { }
+		var lateRequest = new QuickLaunchIconRequest(app, context, value => { accepted++; value.Dispose(); }, (_, _) => late.Task);
+		lateRequest.Dispose();
 		late.SetResult(lateIcon);
-		Check(SpinWait.SpinUntil(() => IsDisposed(lateIcon), TimeSpan.FromSeconds(5)), "Late icon result leaked after shutdown.");
+		Check(lateRequest.Completion.Wait(TimeSpan.FromSeconds(5)), "Late result cleanup did not complete.");
+		// GDI+ properties must not be probed while another thread is disposing the
+		// image. Observe completion first, then assert the actual disposal outcome.
+		CheckDisposed(lateIcon);
 		context.Drain();
 		Check(accepted == 0, "Late result updated a closed UI.");
+	}
+
+	public static void TransientIconFailuresRetryAndDeliverOnlyRealIcon()
+	{
+		var app = QuickLaunchCatalog.FromFile(@"C:\Apps\Retry.exe");
+		var context = new QueuedContext();
+		var calls = 0;
+		Bitmap? delivered = null;
+		using var request = new QuickLaunchIconRequest(app, context, icon => delivered = icon,
+			(_, _) => ++calls < 3 ? Task.FromException<Bitmap>(new InvalidOperationException("Transient test failure")) :
+				Task.FromResult(new Bitmap(9, 7)), TimeSpan.FromMilliseconds(1));
+		Check(request.Completion.Wait(TimeSpan.FromSeconds(5)), "Icon retries did not complete.");
+		Check(calls == 3 && context.Callbacks.Count == 1, "Retries delivered a placeholder or duplicated the real icon.");
+		context.Drain();
+		Check(delivered is { Width: 9, Height: 7 }, "Recovered icon did not reach the UI.");
+		Check(!request.CanRetry, "A successfully loaded icon requested another native read.");
+		delivered!.Dispose();
+
+		using var cancelled = new QuickLaunchIconRequest(app, context, icon => icon.Dispose(),
+			(_, _) => { calls++; return Task.FromException<Bitmap>(new IOException("Unavailable")); }, TimeSpan.FromSeconds(1));
+		cancelled.Dispose();
+		Check(cancelled.Completion.Wait(TimeSpan.FromSeconds(2)), "Closing the card did not cancel its retry delay.");
+		Check(calls == 4 && context.Callbacks.IsEmpty, "Closed card retried or published a stale icon.");
+	}
+
+	public static void LateIconCleanupIsDeterministic()
+	{
+		var app = QuickLaunchCatalog.FromFile(@"C:\Apps\Close.exe");
+		for (var iteration = 0; iteration < 100; iteration++)
+		{
+			var completion = new TaskCompletionSource<Bitmap>(TaskCreationOptions.RunContinuationsAsynchronously);
+			var context = new QueuedContext();
+			var accepted = false;
+			var icon = new Bitmap(8, 8);
+			var request = new QuickLaunchIconRequest(app, context, value => { accepted = true; value.Dispose(); }, (_, _) => completion.Task);
+			request.Dispose();
+			completion.SetResult(icon);
+			Check(request.Completion.Wait(TimeSpan.FromSeconds(2)), "Disposed request retained its native result.");
+			CheckDisposed(icon);
+			context.Drain();
+			Check(!accepted, "Late icon updated a disposed card.");
+		}
+	}
+
+	public static void NativeIconLoadsOwnIndependentBitmaps()
+	{
+		// An SDK-generated test apphost need not embed any icon resources. Use the
+		// Windows executable that exists on both local and hosted Windows runners.
+		var target = QuickLaunchCatalog.FromFile(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"));
+		for (var iteration = 0; iteration < 8; iteration++)
+		{
+			var tasks = Enumerable.Range(0, 4)
+				.Select(_ => QuickLaunchIcons.LoadRequiredAsync(target, CancellationToken.None)).ToArray();
+			var icons = Task.WhenAll(tasks).GetAwaiter().GetResult();
+			try
+			{
+				Check(icons.All(icon => icon.Width > 0 && icon.Height > 0), "Native extraction returned an empty image.");
+				Check(!ReferenceEquals(icons[0], icons[1]), "Native results share a mutable bitmap.");
+				var previous = icons[1].GetPixel(0, 0);
+				icons[0].SetPixel(0, 0, previous.ToArgb() == Color.Magenta.ToArgb() ? Color.Lime : Color.Magenta);
+				icons[0].Dispose();
+				Check(icons[1].GetPixel(0, 0) == previous, "Disposing or editing one icon corrupted another.");
+			}
+			finally { foreach (var icon in icons) icon.Dispose(); }
+		}
+	}
+
+	public static void VerifyInstalledBrowserIcons(string outputDirectory)
+	{
+		Directory.CreateDirectory(outputDirectory);
+		foreach (var browser in new[] { QuickLaunchApp.Chrome, QuickLaunchApp.Edge })
+		{
+			var executable = QuickLaunchAppResolver.ResolveExecutable(browser);
+			Check(executable is not null, $"{browser} is not installed for this local probe.");
+			var definition = QuickLaunchAppResolver.Definition(browser);
+			for (var iteration = 0; iteration < 25; iteration++)
+			{
+				using var actual = QuickLaunchIcons.LoadRequiredAsync(definition, CancellationToken.None).GetAwaiter().GetResult();
+				using var expectedIcon = Icon.ExtractAssociatedIcon(executable!);
+				using var expected = expectedIcon!.ToBitmap();
+				Check(actual.Size == expected.Size, $"{browser} returned a fallback-sized icon.");
+				for (var x = 0; x < actual.Width; x++)
+				for (var y = 0; y < actual.Height; y++)
+					Check(actual.GetPixel(x, y) == expected.GetPixel(x, y), $"{browser} icon differs from its executable resource.");
+				if (iteration == 24) actual.Save(Path.Combine(outputDirectory, browser + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+			}
+			Console.WriteLine($"{browser}: 25 real native icon loads match the executable resource.");
+		}
 	}
 
 	private static bool IsDisposed(Bitmap bitmap)

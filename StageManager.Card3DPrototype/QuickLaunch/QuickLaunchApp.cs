@@ -96,7 +96,7 @@ internal sealed class SidebarQuickLaunchVisual : IDisposable
 	private readonly CompositionRoundedRectangleGeometry _geometry;
 	private readonly CompositionGeometricClip _clip;
 	private readonly SpriteVisual _content;
-	private Bitmap _icon = SystemIcons.Application.ToBitmap();
+	private Bitmap _icon = QuickLaunchIcons.CreateFallback();
 	private QuickLaunchIconRequest? _iconRequest;
 	private bool _disposed;
 	private CardSwapChain? _surface;
@@ -143,13 +143,6 @@ internal sealed class SidebarQuickLaunchVisual : IDisposable
 
 	public void SetLayout(float dpiScale, float cardWidth)
 	{
-		if (_iconRequest is null && SynchronizationContext.Current is { } context)
-			_iconRequest = new QuickLaunchIconRequest(Definition, context, icon =>
-			{
-				_icon.Dispose();
-				_icon = icon;
-				RecreateSurface();
-			});
 		var scale = Math.Max(0.75f, dpiScale);
 		var nextSize = new Vector2(Math.Max(64f * scale, cardWidth), 36f * scale);
 		var surfaceChanged = (int)Math.Ceiling(Size.X) != (int)Math.Ceiling(nextSize.X) ||
@@ -166,11 +159,25 @@ internal sealed class SidebarQuickLaunchVisual : IDisposable
 		if (surfaceChanged || _surface is null)
 			RecreateSurface();
 		ApplyState();
+		EnsureIconRequested();
+	}
+
+	private void EnsureIconRequested()
+	{
+		if (_disposed || (_iconRequest is not null && !_iconRequest.CanRetry) ||
+			SynchronizationContext.Current is not { } context) return;
+		_iconRequest?.Dispose();
+		_iconRequest = new QuickLaunchIconRequest(Definition, context, icon =>
+		{
+			_icon.Dispose();
+			_icon = icon;
+			RecreateSurface();
+		});
 	}
 
 	public void SetOffset(Vector3 offset) => Root.Offset = offset;
 	public void SetVisible(bool visible) => Root.IsVisible = visible;
-	public void SetHovered(bool hovered) { _hovered = hovered; ApplyState(); }
+	public void SetHovered(bool hovered) { _hovered = hovered; ApplyState(); if (hovered) EnsureIconRequested(); }
 	public void SetPressed(bool pressed) { _pressed = pressed; ApplyState(); }
 
 	private void ApplyState()

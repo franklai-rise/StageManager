@@ -29,6 +29,12 @@ if (args is ["--maintenance-worker-probe"])
 	return 0;
 }
 
+if (args is ["--browser-icon-probe", var iconOutputDirectory])
+{
+	QuickLaunchRegressionTests.VerifyInstalledBrowserIcons(iconOutputDirectory);
+	return 0;
+}
+
 if (args is ["--desktop-toggle-probe", var probeMode])
 {
 	ApplicationConfiguration.Initialize();
@@ -65,6 +71,9 @@ internal static class TestRunner
 		RunTest("Launcher picker cancel does not mutate settings", QuickLaunchRegressionTests.PickerDoesNotMutateInput);
 		RunTest("Launcher background discovery cancellation is bounded", QuickLaunchRegressionTests.InFlightAndQueuedCancellation);
 		RunTest("Launcher late icons are disposed after close", QuickLaunchRegressionTests.PendingIconsAreDisposedOnClose);
+		RunTest("Transient launcher icon failures retry without caching a placeholder", QuickLaunchRegressionTests.TransientIconFailuresRetryAndDeliverOnlyRealIcon);
+		RunTest("Late icon cleanup is synchronized across 100 close/load races", QuickLaunchRegressionTests.LateIconCleanupIsDeterministic);
+		RunTest("Native icon loads initialize Shell and own independent bitmaps", QuickLaunchRegressionTests.NativeIconLoadsOwnIndependentBitmaps);
 		RunTest("Arbitrary launcher cards render and hit-test in order", QuickLaunchRegressionTests.RendererWorksWithoutOwnerHwnd);
 		RunTest("Stalled Shell launches are bounded and busy clicks never replay", QuickLaunchRegressionTests.StalledLaunchIsBoundedAndBusyClicksNeverReplay);
 		RunTest("Cancelled launch preparation never dispatches later", QuickLaunchRegressionTests.TimedOutOrCancelledPreparationNeverDispatches);

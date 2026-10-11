@@ -145,7 +145,13 @@ internal sealed class QuickLaunchSettingsForm : Form
 
 	private void RequestIcon(QuickLaunchDefinition app)
 	{
-		if (_closed || _iconRequests.ContainsKey(app.Id) || SynchronizationContext.Current is not { } context) return;
+		if (_closed || SynchronizationContext.Current is not { } context) return;
+		if (_iconRequests.TryGetValue(app.Id, out var existing))
+		{
+			if (!existing.CanRetry) return;
+			existing.Dispose();
+			_iconRequests.Remove(app.Id);
+		}
 		_iconRequests.Add(app.Id, new QuickLaunchIconRequest(app, context, icon =>
 		{
 			// ImageList may defer copying images until its native handle is created.
