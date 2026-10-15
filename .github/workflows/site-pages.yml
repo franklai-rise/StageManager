@@ -21,7 +21,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  dispatch-from-release:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Deploy published release metadata from the approved main branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run site-pages.yml --ref main
   publish:
+    if: github.event_name != 'release'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
