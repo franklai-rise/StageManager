@@ -26,6 +26,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet run --project $env:TEST_PROJECT -c Release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify isolated updater processes and rollback
+        shell: pwsh
+        run: |
+          dotnet publish StageManager.Update.Tests -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/updater-fixture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & artifacts/updater-fixture/StageManager.Update.Tests.exe --scenarios
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Validate website scripts
         run: |
           node --check site/app.js

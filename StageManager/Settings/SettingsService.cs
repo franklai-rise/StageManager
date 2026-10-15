@@ -10,7 +10,7 @@ namespace StageManager.Settings;
 
 public sealed class SettingsService
 {
-	private const int CurrentSchemaVersion = 17;
+	private const int CurrentSchemaVersion = 19;
 	private readonly JsonSerializerOptions _jsonOptions = new()
 	{
 		WriteIndented = true,
@@ -70,10 +70,19 @@ public sealed class SettingsService
 				if (loaded is not null)
 				{
 					var loadedSchemaVersion = loaded.SchemaVersion;
+					if (loadedSchemaVersion < CurrentSchemaVersion)
+					{
+						var backupPath = _settingsPath + ".pre-schema19.bak";
+						try { if (!File.Exists(backupPath)) File.Copy(_settingsPath, backupPath, overwrite: false); }
+						catch (IOException) { }
+						catch (UnauthorizedAccessException) { }
+					}
 					if (loadedSchemaVersion < 17)
 					{
 						var backupPath = _settingsPath + ".pre-v4.5.0.bak";
-						if (!File.Exists(backupPath)) File.Copy(_settingsPath, backupPath, overwrite: false);
+						try { if (!File.Exists(backupPath)) File.Copy(_settingsPath, backupPath, overwrite: false); }
+						catch (IOException) { }
+						catch (UnauthorizedAccessException) { }
 					}
 					var normalized = Normalize(loaded);
 					if (loadedSchemaVersion != normalized.SchemaVersion)
@@ -110,6 +119,11 @@ public sealed class SettingsService
 	{
 		var sourceSchemaVersion = settings.SchemaVersion;
 		settings.SchemaVersion = CurrentSchemaVersion;
+		if (sourceSchemaVersion < 18)
+		{
+			settings.ShowAiUsageCard = false;
+			settings.AiUsageEnabled = false;
+		}
 		if (sourceSchemaVersion < 17)
 			settings.QuickLaunchApps = QuickLaunchDefinition.LegacyDefaults(settings.ShowChromeQuickLaunch, settings.ShowEdgeQuickLaunch);
 		settings.QuickLaunchApps ??= new List<QuickLaunchDefinition>();
@@ -140,6 +154,7 @@ public sealed class SettingsService
 		settings.NotificationAreaVerticalOffset = 0;
 		settings.IdleAutoHideSeconds = Math.Clamp(settings.IdleAutoHideSeconds, 15, 600);
 		settings.PreviewRefreshMinutes = Math.Clamp(settings.PreviewRefreshMinutes, 1, 60);
+		settings.CodexCliPath = settings.CodexCliPath?.Trim() ?? "";
 		settings.SidebarOpacity = Math.Clamp(settings.SidebarOpacity, 0.65, 1.0);
 		settings.IgnoredProcesses ??= new List<string>();
 		settings.IgnoredProcesses = settings.IgnoredProcesses

@@ -83,6 +83,8 @@ def render_index(release: dict) -> str:
             raise ValueError(f"Expected one download link with id {element_id}")
 
     version = release["version"]
+    if tuple(map(int, version.removeprefix("v").split("."))) >= (4, 6, 0):
+        page = page.replace("v4.6.0 · 即将发布", "v4.6.0 · 已发布").replace("v4.6.0 · Coming soon", "v4.6.0 · Available now")
     size = f'{release["asset"]["size_bytes"] / 1_000_000:.1f}'
     page = page.replace("Windows x64 · 免费 · 单文件 EXE", f"{version} · Windows x64 · {size} MB · 免费")
     page = page.replace("Windows x64 · Free · Single-file EXE", f"{version} · Windows x64 · {size} MB · Free")

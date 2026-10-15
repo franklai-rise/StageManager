@@ -67,6 +67,13 @@ public sealed class AppSettings
 	public bool ShowEdgeQuickLaunch { get; set; } = true;
 	// Null means an unmigrated file; an empty list deliberately means no launchers.
 	public List<QuickLaunchDefinition>? QuickLaunchApps { get; set; }
+	public bool ShowAiUsageCard { get; set; }
+	public bool AiUsageEnabled { get; set; }
+	public bool AiUsageCodexEnabled { get; set; } = true;
+	public bool AiUsageDeepSeekEnabled { get; set; } = true;
+	public bool AiUsageKimiEnabled { get; set; }
+	public bool AiUsageKimiInternational { get; set; }
+	public string CodexCliPath { get; set; } = "";
 	public bool ShowExpandedPinButton { get; set; } = true;
 	public bool ShowNotificationAreaCard { get; set; } = true;
 	public bool ShowDesktopButton { get; set; } = true;

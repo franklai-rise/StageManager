@@ -36,6 +36,40 @@ internal static class ExpansionRegressionTests
         return new Point((int)points.Average(p => p.X), (int)(points.Average(p => p.Y) + scroll));
     }
 
+    public static void IndependentPins() => OnSta(() =>
+    {
+        using var dispatcher = new DispatcherQueueHelper(); dispatcher.EnsureDispatcherQueue();
+        using var compositor = new Compositor();
+        using var root = compositor.CreateContainerVisual();
+        using var owner = new Form();
+        using var renderer = new CompositionStageRenderer(owner, compositor, root, 0.8, false, true);
+        renderer.SetAnimationsEnabled(false);
+        renderer.SetPinButtonEnabled(true);
+        renderer.Resize(900, 2400, 1);
+        renderer.Synchronize(new[] { "a", "b", "c" }.Select((key, n) => new PrototypeStageSnapshot(key, key,
+            Enumerable.Range(1, 7).Select(i => (IWindow)new FakeWindow(1000 + n * 10 + i, key, key + ".exe")).ToArray(), DateTime.UtcNow)).ToArray());
+        CardHitTarget Pin(string key) => Hits(renderer).Single(hit => hit.StageKey == key && hit.IsPinButton);
+        renderer.Activate(Primary(renderer, "a")); renderer.Activate(Pin("a"));
+        Check(renderer.CanExpandOnHover(Primary(renderer, "b")), "A fixed group blocks another group's hover.");
+        Check(renderer.TryExpandHoveredPrimaryCard(Center(Primary(renderer, "b"), renderer.ScrollTranslationY), "b"),
+            "Actual hover failed while A was fixed.");
+        renderer.Activate(Pin("b"));
+        Check(renderer.IsStagePinned("a") && renderer.IsStagePinned("b"), "Pins are not independent.");
+        renderer.Activate(Hits(renderer).First(hit => hit.StageKey == "a" && hit.PageDelta == 1));
+        var aHandles = Hits(renderer).Where(hit => hit.StageKey == "a" && hit.Window is not null).Select(hit => hit.Window!.Handle).ToArray();
+        Check(aHandles.Length == 2 && Hits(renderer).Count(hit => hit.StageKey == "b" && hit.Window is not null) == 5,
+            "Paging A also changed B's page.");
+        renderer.Activate(Primary(renderer, "a"));
+        renderer.Activate(Hits(renderer).First(hit => hit.StageKey == "a" && hit.Window is not null));
+        Check(renderer.IsStageExpanded("a") && renderer.IsStageExpanded("b"), "Clicking a pinned group or child collapsed a group.");
+        renderer.Activate(Primary(renderer, "c")); renderer.CollapseExpandedStage();
+        Check(!renderer.IsStageExpanded("c") && renderer.IsStageExpanded("a") && renderer.IsStageExpanded("b"), "Transient collapse affected fixed groups.");
+        renderer.Activate(Pin("a")); renderer.CollapseExpandedStage();
+        Check(!renderer.IsStageExpanded("a") && renderer.IsStagePinned("b"), "Unpinning A altered B.");
+        renderer.CollapseExpandedStage(true);
+        Check(!renderer.IsStageExpanded("b"), "Forced collapse retained a stale pin.");
+    });
+
     public static void AnchoredExpansion() => OnSta(() =>
     {
         using var dispatcher = new DispatcherQueueHelper();

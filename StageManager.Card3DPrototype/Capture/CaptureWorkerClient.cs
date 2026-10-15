@@ -161,8 +161,14 @@ internal sealed class CaptureWorkerClient : IDisposable
             };
             // Support framework-dependent `dotnet app.dll` as well as the normal apphost EXE.
             if (string.Equals(Path.GetFileNameWithoutExtension(executable), "dotnet", StringComparison.OrdinalIgnoreCase))
-                start.ArgumentList.Add(System.Reflection.Assembly.GetEntryAssembly()?.Location ??
-                    throw new InvalidOperationException("No current application assembly."));
+            {
+                var entryAssembly = System.Reflection.Assembly.GetEntryAssembly() ??
+                    throw new InvalidOperationException("No current application assembly.");
+                var assemblyPath = Path.Combine(AppContext.BaseDirectory, entryAssembly.GetName().Name + ".dll");
+                if (!File.Exists(assemblyPath))
+                    throw new InvalidOperationException("The current application assembly was not found beside the executable.");
+                start.ArgumentList.Add(assemblyPath);
+            }
             foreach (var value in new[] { "--capture-worker", "--pipe", _pipeName, "--token", _secret })
                 start.ArgumentList.Add(value);
             var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start capture worker.");

@@ -7,21 +7,22 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 	<ApplicationIcon>..\StageManager\StageManager.ico</ApplicationIcon>
-		<AssemblyName>Stage_Manager_Lai_v4.5.1</AssemblyName>
+		<AssemblyName>Stage_Manager_Lai_v4.6.0</AssemblyName>
     <RootNamespace>StageManager.Card3DPrototype</RootNamespace>
-		<Version>4.5.1</Version>
-		<AssemblyVersion>4.5.1.0</AssemblyVersion>
-		<FileVersion>4.5.1.0</FileVersion>
-		<InformationalVersion>Stage_Manager_Lai_v4.5.1</InformationalVersion>
+		<Version>4.6.0</Version>
+		<AssemblyVersion>4.6.0.0</AssemblyVersion>
+		<FileVersion>4.6.0.0</FileVersion>
+		<InformationalVersion>Stage_Manager_Lai_v4.6.0</InformationalVersion>
 	<IncludeSourceRevisionInInformationalVersion>true</IncludeSourceRevisionInInformationalVersion>
-		<Product>Stage_Manager_Lai_v4.5.1</Product>
+		<Product>Stage_Manager_Lai_v4.6.0</Product>
 	<Authors>Andreas Wäscher; Frank Lai (modified fork)</Authors>
-	<Description>Stage Manager for Windows with low-memory 3D window cards, Focus enhanced workspace reservation, stable click targeting, adjustable card positioning, and optional Explorer and expanded-card pin buttons.</Description>
+	<Description>Stage Manager for Windows with low-memory 3D window cards, Focus enhanced workspace reservation, stable click targeting, optional quick-launch controls, and a privacy-conscious AI usage card for Codex, DeepSeek, and Kimi.</Description>
 	<Copyright>Original copyright (c) 2022 Andreas Wäscher; Lai modifications (c) 2026 Frank Lai</Copyright>
 	<RepositoryUrl>https://github.com/franklai-rise/StageManager</RepositoryUrl>
   </PropertyGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="AiUsage\Assets\*.png" />
     <ProjectReference Include="..\StageManager\StageManager.csproj" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.DXGI" Version="3.8.3" />

@@ -11,7 +11,7 @@ internal static class CardInteraction
 	public static bool IsWindowCard(CardHitTarget? target) => target is not null &&
 		!target.IsExplorerButton && target.QuickLaunchApp is null && !target.IsExpandAllButton &&
 		!target.IsPinButton && !target.IsSidebarCollapseButton && !target.IsSidebarPinButton && !target.IsDesktopButton &&
-		!target.IsDesktopIconsButton &&
+		!target.IsDesktopIconsButton && !target.IsAiUsageCard &&
 		!target.IsNotificationAreaCard && target.PageDelta == 0;
 
 	public static string Key(CardHitTarget target) =>

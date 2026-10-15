@@ -9,6 +9,11 @@ internal static class Program
 	[SupportedOSPlatform("windows10.0.19041.0")]
 	private static void Main(string[] args)
 	{
+		if (args.Length == 2 && args[0] is "--apply-update" or "--recover-update")
+		{
+			Environment.ExitCode = Updates.UpdateTransaction.Apply(args[1], args[0] == "--recover-update");
+			return;
+		}
 		if (CaptureWorkerEntryPoint.IsCaptureWorker(args))
 		{
 			Environment.ExitCode = CaptureWorkerEntryPoint.Run(args);
@@ -27,11 +32,14 @@ internal static class Program
 
 		try
 		{
+			var updated = args is ["--updated", var journal] ? journal : null;
+			if (updated is null && Updates.UpdateTransaction.RecoverInterrupted()) return;
 			Application.ThreadException += (_, eventArgs) => WriteError(eventArgs.Exception);
 			Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
 			Application.EnableVisualStyles();
 			Application.SetCompatibleTextRenderingDefault(false);
 			using var form = new PrototypeForm();
+			form.StartupReady += (_, _) => Updates.UpdateTransaction.SignalReady(updated);
 			try { Application.Run(form); }
 			finally
 			{

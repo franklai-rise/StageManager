@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>StageManager.Tests</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../StageManager.Card3DPrototype/StageManager.Card3DPrototype.csproj" />
+    <Compile Include="../StageManager.Tests/AiUsageRegressionTests.cs" Link="AiUsageRegressionTests.cs" />
+  </ItemGroup>
+</Project>

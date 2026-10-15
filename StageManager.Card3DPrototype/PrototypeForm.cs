@@ -4,6 +4,8 @@ using StageManager.Native.Window;
 using StageManager.Native.PInvoke;
 using StageManager.Card3DPrototype.NotificationArea;
 using StageManager.Card3DPrototype.QuickLaunch;
+using StageManager.Card3DPrototype.AiUsage;
+using StageManager.Card3DPrototype.Updates;
 using Microsoft.Win32;
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
@@ -16,6 +18,9 @@ namespace StageManager.Card3DPrototype;
 
 internal sealed class PrototypeForm : Form
 {
+	internal event EventHandler? StartupReady;
+	private readonly System.Windows.Forms.Timer _whatsNewTimer = new() { Interval = 2000 };
+	private WhatsNewForm? _whatsNew;
 	private readonly Dictionary<IntPtr, long> _permissionRefresh = new();
 	private readonly HashSet<string> _launchesInFlight = new(StringComparer.OrdinalIgnoreCase);
 	private const int WsExToolWindow = 0x00000080;
@@ -37,6 +42,7 @@ internal sealed class PrototypeForm : Form
 	private readonly System.Windows.Forms.Timer _regionCollapseTimer = new() { Interval = 260 };
 	private readonly System.Windows.Forms.Timer _displayChangeTimer = new() { Interval = 250 };
 	private readonly System.Windows.Forms.Timer _previewReleaseTimer = new() { Interval = 30000 };
+	private readonly System.Windows.Forms.Timer _aiUsageRefreshTimer = new() { Interval = 300000 };
 	private readonly System.Threading.Timer _hiddenEdgeTimer;
 	private readonly ToolTip _toolTip = new() { InitialDelay = 250, ReshowDelay = 80, AutoPopDelay = 3000, ShowAlways = true };
 	private readonly ContextMenuStrip _contextMenu = new() { AutoClose = true };
@@ -47,6 +53,8 @@ internal sealed class PrototypeForm : Form
 	private readonly DesktopToggleService _desktopToggle = new();
 	private readonly DesktopIconVisibilityService _desktopIcons = new();
 	private readonly CancellationTokenSource _notificationAreaCancellation = new();
+	private CancellationTokenSource _aiUsageCancellation = new();
+	private readonly AiUsageService _aiUsageService;
 	private readonly List<NotificationIconActivation> _notificationActivations = new();
 	private readonly HashSet<int> _registeredHotkeys = new();
 	private readonly CardClickGesture _cardClick = new();
@@ -64,6 +72,9 @@ internal sealed class PrototypeForm : Form
 	private NotifyIcon? _trayIcon;
 	private string? _toolTipKey;
 	private CardHitTarget? _hoverHintTarget;
+	private AiUsageDetailsForm? _aiUsageDetails;
+	private readonly AiUsagePopupController _aiUsagePopup = new();
+	private bool _settingsOpen;
 	private DateTime _lastSidebarInteractionUtc = DateTime.UtcNow;
 	private DateTime _transientRevealUtc = DateTime.MinValue;
 	private DateTime _nextFocusConstraintUtc = DateTime.MinValue;
@@ -94,6 +105,8 @@ internal sealed class PrototypeForm : Form
 	public PrototypeForm()
 	{
 		_hiddenEdgeTimer = new(_ => PollHiddenEdgeFromBackground(), null, Timeout.Infinite, Timeout.Infinite);
+		_aiUsageService = new AiUsageService();
+		_aiUsageService.Updated += AiUsageService_Updated;
 		Text = "Stage_Manager_Lai";
 		FormBorderStyle = FormBorderStyle.None;
 		ShowInTaskbar = false;
@@ -114,11 +127,20 @@ internal sealed class PrototypeForm : Form
 			() => _renderer?.RefreshAllPreviews());
 		var exitItem = new ToolStripMenuItem("Exit Stage_Manager_Lai");
 		exitItem.Click += (_, _) => RunAfterContextMenuCloses(_contextMenu, Close);
-	_contextMenu.Items.Add(new ToolStripMenuItem("Stage_Manager_Lai v4.5.1") { Enabled = false });
+	_contextMenu.Items.Add(new ToolStripMenuItem(AppVersion.Label) { Enabled = false });
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(toggleItem);
 		_contextMenu.Items.Add(refreshItem);
 		_contextMenu.Items.Add(settingsItem);
+		var updatesItem = new ToolStripMenuItem("Check for updates");
+		updatesItem.Click += (_, _) => RunAfterContextMenuCloses(_contextMenu, () => { using var dialog = new UpdateForm(_catalog?.Settings.Current.UiLanguage ?? UiLanguage.English); dialog.ShowDialog(); });
+		_contextMenu.Items.Add(updatesItem);
+		_whatsNewTimer.Tick += (_, _) =>
+		{
+			if (_closing || _settingsOpen || _catalog is null || Screen.AllScreens.Any(screen => FullScreenService.IsExclusiveFullScreenOn(NativeMethods.GetForegroundWindow(), screen))) return;
+			_whatsNewTimer.Stop();
+			if (WhatsNewState.ShouldShow()) ShowWhatsNew();
+		};
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(exitItem);
 		_stageTimer.Tick += (_, _) =>
@@ -127,6 +149,7 @@ internal sealed class PrototypeForm : Form
 			RefreshDesktopIconState();
 		};
 		_pointerTimer.Tick += (_, _) => PollPointer();
+		_aiUsageRefreshTimer.Tick += (_, _) => _ = RefreshAiUsageAsync(manual: false);
 		_hoverHintTimer.Tick += (_, _) => ShowHoverHint();
 		_regionCollapseTimer.Tick += (_, _) =>
 		{
@@ -200,6 +223,8 @@ internal sealed class PrototypeForm : Form
 			_ = RefreshNotificationAreaAsync(initialDelay: true);
 			_stageTimer.Start();
 			_pointerTimer.Start();
+			StartupReady?.Invoke(this, EventArgs.Empty);
+			if (WhatsNewState.ShouldShow()) _whatsNewTimer.Start();
 		}
 		catch (Exception exception)
 		{
@@ -283,6 +308,8 @@ internal sealed class PrototypeForm : Form
 			var target = _renderer?.HitTest(e.Location);
 			if (target?.IsNotificationAreaCard == true)
 				ShowNotificationAreaContextMenu(target);
+			else if (target?.IsAiUsageCard == true)
+				OpenAiUsageDetails(fromClick: true);
 			else if (target is not null && !target.IsExplorerButton && target.QuickLaunchApp is null &&
 				!target.IsExpandAllButton && !target.IsPinButton && !target.IsSidebarCollapseButton && !target.IsSidebarPinButton &&
 				!target.IsDesktopButton && !target.IsDesktopIconsButton && target.PageDelta == 0)
@@ -359,8 +386,7 @@ internal sealed class PrototypeForm : Form
 		var window = _renderer.Activate(clickTarget);
 		if (!wasExpanded && _renderer.HasExpandedStage)
 			NativeMethods.SetWindowPos(Handle, NativeMethods.HwndTop, 0, 0, 0, 0, NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
-		if (wasExpanded != _renderer.HasExpandedStage)
-			UpdateWindowRegion(true);
+		UpdateWindowRegion(true);
 		if (_renderer.ConsumeExplorerLaunchRequest())
 		{
 			OpenFileExplorer();
@@ -369,6 +395,11 @@ internal sealed class PrototypeForm : Form
 		if (_renderer.ConsumeQuickLaunchRequest() is { } quickLaunch)
 		{
 			OpenQuickLaunchApp(quickLaunch);
+			return;
+		}
+		if (_renderer.ConsumeAiUsageClickRequest())
+		{
+			OpenAiUsageDetails(clickTarget, fromClick: true);
 			return;
 		}
 		if (_renderer.ConsumeSidebarCollapseRequest())
@@ -505,6 +536,7 @@ internal sealed class PrototypeForm : Form
 
 	protected override void OnFormClosed(FormClosedEventArgs e)
 	{
+		_whatsNewTimer.Stop(); _whatsNewTimer.Dispose(); _whatsNew?.Dispose();
 		_closing = true;
 		_desktopToggle.TryRestore(out _);
 		_mouseWheelHook?.Dispose();
@@ -521,6 +553,7 @@ internal sealed class PrototypeForm : Form
 		_regionCollapseTimer.Stop();
 		_displayChangeTimer.Stop();
 		_previewReleaseTimer.Stop();
+		_aiUsageRefreshTimer.Stop();
 		_stageTimer.Dispose();
 		_pointerTimer.Dispose();
 		_hoverHintTimer.Dispose();
@@ -528,12 +561,23 @@ internal sealed class PrototypeForm : Form
 		_regionCollapseTimer.Dispose();
 		_displayChangeTimer.Dispose();
 		_previewReleaseTimer.Dispose();
+		_aiUsageRefreshTimer.Dispose();
 		_toolTip.Dispose();
 		_contextMenu.Dispose();
 		_cardContextMenu.Dispose();
 		_initialWindowLayouts.Clear();
 		_notificationAreaClient.Dispose();
 		_notificationAreaCancellation.Dispose();
+		_aiUsageCancellation.Cancel();
+		_aiUsageService.Updated -= AiUsageService_Updated;
+		_aiUsageService.Dispose();
+		if (_aiUsageDetails is { } aiDetails)
+		{
+			_aiUsageDetails = null;
+			aiDetails.Close();
+			aiDetails.Dispose();
+		}
+		_aiUsageCancellation.Dispose();
 		SystemEvents.DisplaySettingsChanged -= SystemEvents_DisplaySettingsChanged;
 		if (_trayIcon is not null)
 		{
@@ -563,7 +607,12 @@ internal sealed class PrototypeForm : Form
 		base.OnFormClosed(e);
 	}
 
-	internal Task WaitForBackgroundShutdownAsync() => _notificationAreaClient.ShutdownAsync();
+	internal async Task WaitForBackgroundShutdownAsync()
+	{
+		await _notificationAreaClient.ShutdownAsync().ConfigureAwait(false);
+		try { await _aiUsageService.WaitForShutdownAsync().ConfigureAwait(false); }
+		catch (OperationCanceledException) { }
+	}
 
 	private void RefreshStages()
 	{
@@ -595,6 +644,7 @@ internal sealed class PrototypeForm : Form
 		if (_catalog is null || _renderer is null)
 			return;
 		var settings = _catalog.Settings.Current;
+		var aiConfigurationChanged = _aiUsageService.Configure(settings);
 		_renderer.SetAnimationsEnabled(settings.AnimationsEnabled);
 		_renderer.SetCardScale(settings.CardScale);
 		var layoutRegionChanged = _renderer.SetSidebarVerticalOffset(settings.SidebarVerticalOffset);
@@ -602,6 +652,31 @@ internal sealed class PrototypeForm : Form
 			layoutRegionChanged = true;
 		if (_renderer.SetQuickLaunchApps(settings.QuickLaunchApps ?? QuickLaunchDefinition.LegacyDefaults(settings.ShowChromeQuickLaunch, settings.ShowEdgeQuickLaunch)))
 			layoutRegionChanged = true;
+		if (_renderer.SetAiUsageCardEnabled(settings.ShowAiUsageCard && settings.AiUsageEnabled))
+			layoutRegionChanged = true;
+		_renderer.SetAiUsageLanguage(settings.UiLanguage);
+		_renderer.SetAiUsageSnapshots(_aiUsageService.Current);
+		_aiUsageDetails?.SetLanguage(settings.UiLanguage);
+		_aiUsageDetails?.SetSnapshots(_aiUsageService.Current);
+		if (settings.ShowAiUsageCard && settings.AiUsageEnabled)
+		{
+			if (_aiUsageCancellation.IsCancellationRequested)
+			{
+				_aiUsageCancellation.Dispose();
+				_aiUsageCancellation = new CancellationTokenSource();
+			}
+			if (!_aiUsageRefreshTimer.Enabled)
+				_aiUsageRefreshTimer.Start();
+			if (aiConfigurationChanged) _ = RefreshAiUsageAsync(manual: false);
+		}
+		else
+		{
+			_aiUsageRefreshTimer.Stop();
+			if (!_aiUsageCancellation.IsCancellationRequested)
+				_aiUsageCancellation.Cancel();
+			_aiUsagePopup.Dismiss();
+			CloseAiUsageDetails(immediate: true);
+		}
 		if (_renderer.SetPinButtonEnabled(settings.ShowExpandedPinButton))
 			layoutRegionChanged = true;
 		if (_renderer.SetCollapseButtonEnabled(FocusEnhancedBehavior.ShouldShowCollapseButton(settings.StageMode)))
@@ -663,14 +738,179 @@ internal sealed class PrototypeForm : Form
 		UpdateFocusReservation(force: true);
 	}
 
-	private void ShowSettings()
+	private void ShowSettings() => ShowSettings(false);
+	private void ShowWhatsNew()
 	{
-		if (_catalog is null)
+		if (_whatsNew is { IsDisposed: false }) return;
+		_whatsNew = new WhatsNewForm(_catalog?.Settings.Current.UiLanguage ?? UiLanguage.English);
+		_whatsNew.OpenAiSettings += (_, _) => ShowSettings(aiUsage: true);
+		_whatsNew.Show(this);
+	}
+	private void ShowSettings(bool aiUsage)
+	{
+		if (_catalog is null || _settingsOpen)
 			return;
 		SetSidebarVisible(true);
-		using var dialog = new SettingsForm(_catalog.Settings.CloneCurrent(), _catalog.GetApplicationChoices());
+		_aiUsagePopup.Dismiss();
+		CloseAiUsageDetails(immediate: true);
+		CancelPendingSingleCardClick();
+		HideHoverHint();
+		_settingsOpen = true;
+		PublishWheelRegion();
+		try
+		{
+		using var dialog = new SettingsForm(_catalog.Settings.CloneCurrent(), _catalog.GetApplicationChoices(), _aiUsageService);
+		if (aiUsage) dialog.Shown += (_, _) => dialog.ScrollToAiUsage();
 		if (dialog.ShowDialog() == DialogResult.OK)
 			_catalog.Settings.Apply(dialog.Draft);
+		}
+		finally { _settingsOpen = false; _lastSidebarInteractionUtc = DateTime.UtcNow; PublishWheelRegion(); }
+	}
+
+	private async Task RefreshAiUsageAsync(bool manual)
+	{
+		if (_closing || _catalog is null)
+			return;
+		try
+		{
+			_aiUsageDetails?.SetRefreshing(true);
+			await _aiUsageService.RefreshAsync(_catalog.Settings.Current, manual, _aiUsageCancellation.Token);
+		}
+		catch (OperationCanceledException) { }
+		catch (ObjectDisposedException) when (_closing) { }
+		catch (Exception exception)
+		{
+			// Keep provider errors out of logs: exception messages may contain request details.
+			System.Diagnostics.Debug.WriteLine($"AI usage refresh failed: {exception.GetType().Name}");
+		}
+		finally { if (!_closing) _aiUsageDetails?.SetRefreshing(false); }
+	}
+
+	private void AiUsageService_Updated(object? sender, EventArgs e)
+	{
+		if (_closing || !IsHandleCreated)
+			return;
+		try
+		{
+			BeginInvoke(() =>
+			{
+				if (_closing) return;
+				_renderer?.SetAiUsageSnapshots(_aiUsageService.Current);
+				_aiUsageDetails?.SetSnapshots(_aiUsageService.Current);
+			});
+		}
+		catch (InvalidOperationException) when (_closing) { }
+	}
+
+	private void OpenAiUsageDetails(CardHitTarget? target = null, bool fromClick = false)
+	{
+		if (_closing || _settingsOpen || _catalog is null || _renderer is null)
+			return;
+		if (fromClick)
+		{
+			_contextMenu.Close(ToolStripDropDownCloseReason.AppClicked);
+			_cardContextMenu.Close(ToolStripDropDownCloseReason.AppClicked);
+		}
+		else if (_contextMenu.Visible || _cardContextMenu.Visible) return;
+		var settings = _catalog.Settings.Current;
+		if (!settings.ShowAiUsageCard || !settings.AiUsageEnabled)
+			return;
+		target ??= _renderer.HitTest(PointToClient(Cursor.Position));
+		var selected = AiProviderAtPointer(target);
+		if (fromClick)
+		{
+			_aiUsagePopup.Click();
+			if (_aiUsageService.Current.FirstOrDefault(s => s.ProviderId == selected)?.NeedsConnection == true)
+			{
+				_aiUsagePopup.Dismiss(); CloseAiUsageDetails(immediate: true); ShowSettings(aiUsage: true); return;
+			}
+		}
+		if (_aiUsageDetails is { IsDisposed: false } existing)
+		{
+			existing.KeepOpen(); existing.SelectProvider(selected);
+			return;
+		}
+
+		var panel = new AiUsageDetailsForm(_aiUsageService, settings.UiLanguage);
+		HideHoverHint();
+		_ = NativeMethods.GetAsyncKeyState(0x1B); // Discard an Esc press that predates this popup.
+		_aiUsageDetails = panel;
+		panel.SetSnapshots(_aiUsageService.Current);
+		panel.SelectProvider(selected);
+		panel.CloseRequested += (_, _) => { _aiUsagePopup.Dismiss(); CloseAiUsageDetails(immediate: true); };
+		panel.RefreshRequested += async (_, _) => await RefreshAiUsageAsync(manual: true);
+		panel.SettingsRequested += (_, _) =>
+		{
+			_aiUsagePopup.Dismiss();
+			CloseAiUsageDetails(immediate: true);
+			ShowSettings(aiUsage: true);
+		};
+		panel.FormClosed += (_, _) =>
+		{
+			if (ReferenceEquals(_aiUsageDetails, panel)) _aiUsageDetails = null;
+		};
+		var cardBounds = target?.IsAiUsageCard == true && target.Polygon.Count > 0
+			? RectangleF.FromLTRB(target.Polygon.Min(point => point.X), target.Polygon.Min(point => point.Y),
+				target.Polygon.Max(point => point.X), target.Polygon.Max(point => point.Y))
+			: new RectangleF(12, ClientSize.Height / 2f, 196, 46);
+		if (target?.IsAiUsageCard == true) cardBounds.Offset(0, _renderer.ScrollTranslationY);
+		var topLeft = PointToScreen(Point.Round(new PointF(cardBounds.Left, cardBounds.Top)));
+		var bottomRight = PointToScreen(Point.Round(new PointF(cardBounds.Right, cardBounds.Bottom)));
+		var cardScreenBounds = Rectangle.FromLTRB(topLeft.X, topLeft.Y, bottomRight.X, bottomRight.Y);
+		var workingArea = Screen.FromPoint(new Point(cardScreenBounds.Left, cardScreenBounds.Top)).WorkingArea;
+		panel.FitToWorkingArea(workingArea, DeviceDpi / 96f);
+		var x = cardScreenBounds.Right + 10;
+		if (x + panel.Width > workingArea.Right)
+			x = cardScreenBounds.Left - panel.Width - 10;
+		var maxY = Math.Max(workingArea.Top, workingArea.Bottom - panel.Height);
+		var maxX = Math.Max(workingArea.Left, workingArea.Right - panel.Width);
+		var y = Math.Clamp(cardScreenBounds.Top - 8, workingArea.Top, maxY);
+		panel.Location = new Point(Math.Clamp(x, workingArea.Left, maxX), y);
+		panel.Show(this);
+		panel.BringToFront();
+		_lastSidebarInteractionUtc = DateTime.UtcNow;
+	}
+
+	private string? AiProviderAtPointer(CardHitTarget? target)
+	{
+		var providers = _aiUsageService.Current;
+		if (providers.Count == 0 || target?.IsAiUsageCard != true || target.Polygon.Count == 0) return null;
+		var left = target.Polygon.Min(p => p.X); var right = target.Polygon.Max(p => p.X);
+		var x = PointToClient(Cursor.Position).X;
+		var index = Math.Clamp((int)((x - left) / Math.Max(1, right - left) * providers.Count), 0, providers.Count - 1);
+		return providers[index].ProviderId;
+	}
+
+	private void CloseAiUsageDetails(bool immediate = false)
+	{
+		if (_aiUsageDetails is not { IsDisposed: false } panel)
+			return;
+		if (!immediate)
+		{
+			panel.BeginFadeOut();
+			return;
+		}
+		_aiUsageDetails = null;
+		panel.Close();
+		panel.Dispose();
+	}
+
+	private void UpdateAiUsagePointer(CardHitTarget? hit, Point screenPoint, DateTime nowUtc)
+	{
+		var onCard = hit?.IsAiUsageCard == true;
+		var onPanel = _aiUsageDetails is { IsDisposed: false } panel && panel.IsPointerInside(screenPoint);
+		var open = _aiUsageDetails is { IsDisposed: false };
+		if (open && (NativeMethods.GetAsyncKeyState(0x1B) & 0x8001) != 0)
+		{ _aiUsagePopup.Dismiss(); CloseAiUsageDetails(immediate: true); return; }
+		switch (_aiUsagePopup.Update(onCard, onPanel, open, nowUtc))
+		{
+			case AiPopupAction.Open: OpenAiUsageDetails(hit); break;
+			case AiPopupAction.KeepOpen:
+				_aiUsageDetails?.KeepOpen();
+				if (onCard) _aiUsageDetails?.SelectProvider(AiProviderAtPointer(hit));
+				break;
+			case AiPopupAction.FadeOut: CloseAiUsageDetails(); break;
+		}
 	}
 
 	protected override void OnMouseLeave(EventArgs e)
@@ -1021,6 +1261,8 @@ internal sealed class PrototypeForm : Form
 
 	private void ShowOwnedContextMenu(ContextMenuStrip menu)
 	{
+		_aiUsagePopup.Dismiss();
+		CloseAiUsageDetails(immediate: true);
 		CancelPendingSingleCardClick();
 		HideHoverHint();
 		if (menu.Visible)
@@ -1046,6 +1288,9 @@ internal sealed class PrototypeForm : Form
 
 		CloseIfClickedOutside(_cardContextMenu, screenPoint);
 		CloseIfClickedOutside(_contextMenu, screenPoint);
+		if (_aiUsageDetails is { IsDisposed: false } aiPanel && !aiPanel.IsPointerInside(screenPoint) &&
+			_renderer?.HitTest(PointToClient(screenPoint))?.IsAiUsageCard != true)
+		{ _aiUsagePopup.Dismiss(); CloseAiUsageDetails(immediate: true); }
 	}
 
 	private static bool PointerButtonStarted(int virtualKey, ref bool wasDown)
@@ -1211,6 +1456,8 @@ internal sealed class PrototypeForm : Form
 
 	private string GetToolTipText(CardHitTarget target)
 	{
+		if (target.IsAiUsageCard)
+			return string.Empty; // The usage popup replaces the application-window tooltip.
 		if (target.IsNotificationAreaDragHandle)
 			return L("Drag vertically to move this hidden-icons card", "上下拖动以移动这张隐藏图标卡片");
 		if (target.IsNotificationAreaRefreshButton)
@@ -1228,7 +1475,7 @@ internal sealed class PrototypeForm : Form
 				? L("FIXED · Click to release all groups\nIndividually fixed groups stay open", "FIXED · 单击解除全部展开\n单独固定的分组仍保持展开")
 				: L("FIX · Expand and keep all groups open", "FIX · 展开并固定全部多窗口分组");
 		if (target.IsPinButton)
-			return _renderer?.IsExpandedStagePinned == true
+			return _renderer?.IsStagePinned(target.StageKey) == true
 				? L("FIXED · Click to release", "FIXED · 点击解除固定")
 				: L("FIX · Keep expanded", "FIX · 保持展开");
 		if (target.IsSidebarPinButton)
@@ -1319,6 +1566,7 @@ internal sealed class PrototypeForm : Form
 		}
 		if (!visible)
 		{
+			_aiUsagePopup.Dismiss(); CloseAiUsageDetails(immediate: true);
 			CancelPendingSingleCardClick();
 			HideHoverHint();
 		}
@@ -1618,7 +1866,7 @@ internal sealed class PrototypeForm : Form
 
 	private void PollPointer()
 	{
-		if (_closing)
+		if (_closing || _settingsOpen)
 			return;
 		PublishWheelRegion();
 		var screenPoint = Cursor.Position;
@@ -1626,6 +1874,13 @@ internal sealed class PrototypeForm : Form
 		if (_renderer is null || _catalog is null)
 			return;
 		var nowUtc = DateTime.UtcNow;
+		if (_aiUsageDetails is { IsDisposed: false } activePanel && activePanel.IsPointerInside(screenPoint))
+		{
+			UpdateAiUsagePointer(null, screenPoint, nowUtc);
+			HideHoverHint();
+			_lastSidebarInteractionUtc = nowUtc;
+			return; // Never hover-expand or scroll a card underneath the popup.
+		}
 		var pointerAtLeftEdge = IsNearLeftEdge(screenPoint);
 		var foreground = NativeMethods.GetForegroundWindow();
 		var largeWindowActive = UsesTransientSidebar(foreground);
@@ -1633,6 +1888,14 @@ internal sealed class PrototypeForm : Form
 		EnsureFocusSidebarAnchored(largeWindowActive, nowUtc);
 		if (!_sidebarVisible)
 		{
+			var aiPanelVisible = _aiUsageDetails is { IsDisposed: false } hiddenAiPanel && hiddenAiPanel.IsPointerInside(screenPoint);
+			UpdateAiUsagePointer(null, screenPoint, nowUtc);
+			if (aiPanelVisible)
+			{
+				_lastSidebarInteractionUtc = nowUtc;
+				SetSidebarVisible(true);
+				return;
+			}
 			if (pointerAtLeftEdge)
 			{
 				_edgeRevealSession = true;
@@ -1645,17 +1908,20 @@ internal sealed class PrototypeForm : Form
 		}
 
 		var client = PointToClient(screenPoint);
-		var wasExpanded = _renderer.HasExpandedStage;
+		var previousLayoutRevision = _renderer.LayoutRevision;
 		if (!_renderer.IsScrolling && !_notificationAreaDragActive && _cardClick.Pending is null)
 			_renderer.PollPointer(client);
 		var hit = _renderer.HitTest(client);
+		UpdateAiUsagePointer(hit, screenPoint, nowUtc);
 		if (!_renderer.IsScrolling && !_notificationAreaDragActive && _cardClick.Pending is null)
 			UpdateHoverExpandCandidate(hit, client);
 		UpdateHoverHint(hit);
-		var pointerNearSidebar = client.X >= 0 &&
+			var pointerNearSidebar = client.X >= 0 &&
 			client.X <= _renderer.SidebarInteractionWidth &&
 			client.Y >= 0 &&
 			client.Y < ClientSize.Height;
+		var pointerInsideAiPanel = _aiUsageDetails is { IsDisposed: false } aiPanel && aiPanel.IsPointerInside(screenPoint);
+		pointerNearSidebar |= pointerInsideAiPanel;
 		var pointerWithinTransientSidebar = hit is not null || pointerNearSidebar || pointerAtLeftEdge;
 		if (hit is not null || pointerNearSidebar)
 			_lastSidebarInteractionUtc = nowUtc;
@@ -1663,7 +1929,7 @@ internal sealed class PrototypeForm : Form
 		{
 			HideHoverHint();
 		}
-		if (wasExpanded != _renderer.HasExpandedStage)
+		if (previousLayoutRevision != _renderer.LayoutRevision)
 			UpdateWindowRegion(true);
 
 		var transientOverlayActive = largeWindowActive || _edgeRevealSession;
@@ -1918,7 +2184,8 @@ internal sealed class PrototypeForm : Form
 
 	private void PublishWheelRegion()
 	{
-		var bounds = _sidebarVisible && !_notificationAreaDragActive && _renderer is not null && IsHandleCreated
+		var pointerInPopup = _aiUsageDetails is { IsDisposed: false } panel && panel.IsPointerInside(Cursor.Position);
+		var bounds = !_settingsOpen && !pointerInPopup && _sidebarVisible && !_notificationAreaDragActive && _renderer is not null && IsHandleCreated
 			? Rectangle.Intersect(_sidebarScreenBounds, new Rectangle(PointToScreen(Point.Empty),
 				new Size((int)Math.Ceiling(_renderer.SidebarInteractionWidth), ClientSize.Height)))
 			: Rectangle.Empty;
@@ -1983,7 +2250,7 @@ internal sealed class PrototypeForm : Form
 		var icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 		_trayIcon = new NotifyIcon
 		{
-			Text = "Stage_Manager_Lai v4.5.1",
+			Text = AppVersion.Label,
 			Icon = icon,
 			ContextMenuStrip = _contextMenu,
 			Visible = true

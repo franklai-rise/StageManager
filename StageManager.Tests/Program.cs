@@ -60,6 +60,8 @@ internal static class TestRunner
 
 	public static int Run()
 	{
+		RunTest("AI usage parsers, popup, lifetime and encrypted storage", AiUsageRegressionTests.RunAll);
+		RunTest("Manual updates, trusted releases and opt-in migration", UpdateRegressionTests.RunAll);
 		RunTest("Wheel snapshots expire and preserve outside/mixed-DPI input", Stability450Tests.WheelHitTestingIsIndependentAndExpires);
 		RunTest("Permission and window-operation state transitions", () => WindowAccessActivationTests.RunAll().GetAwaiter().GetResult());
 		RunTest("Capture isolation bounds blocked I/O and discards stale frames", CaptureIsolationRegressionTests.RunAll);
@@ -92,6 +94,7 @@ internal static class TestRunner
 		RunTest("Moving card hits use the same easing and snap correctly when animations stop", ExpansionRegressionTests.MotionAndHits);
 		RunTest("Expansion preserves an in-flight wheel spring", ExpansionRegressionTests.ScrollDuringExpansion);
 		RunTest("Rapid expansion remains anchored and targets its own child windows", ExpansionRegressionTests.RapidExpansion);
+		RunTest("Different application groups pin and expand independently", ExpansionRegressionTests.IndependentPins);
 		RunTest("Recently hidden previews are reused within a bounded expiring cache", ExpansionRegressionTests.WarmPreviews);
 		RunTest("Changing DPI rebuilds visuals, textures and hits without changing group state", ExpansionRegressionTests.DpiChangesRebuildExistingCards);
 		RunTest("Late or failed captures cannot overwrite newer card state", ExpansionRegressionTests.LateCaptureCannotUndoInvalidation);
@@ -287,7 +290,7 @@ internal static class TestRunner
 				}
 				""");
 			var service = new SettingsService(path);
-			Assert(service.Current.SchemaVersion == 17, "Settings schema was not upgraded for configurable launchers.");
+			Assert(service.Current.SchemaVersion == 19, "Settings schema was not upgraded for optional AI usage.");
 			Assert(service.Current.LowMemoryRendering, "Low-memory rendering should be enabled by default.");
 			Assert(!service.Current.IgnoredProcesses.Contains("explorer", StringComparer.OrdinalIgnoreCase),
 				"The legacy default Explorer ignore entry was not migrated.");
@@ -296,7 +299,7 @@ internal static class TestRunner
 			Assert(service.Current.IgnoredProcesses.Contains("custom-app", StringComparer.OrdinalIgnoreCase),
 				"A user-selected ignored process was lost during migration.");
 			var migratedJson = File.ReadAllText(path);
-			Assert(migratedJson.Contains("\"SchemaVersion\": 17", StringComparison.Ordinal),
+			Assert(migratedJson.Contains("\"SchemaVersion\": 19", StringComparison.Ordinal),
 				"The migrated schema was not written back to disk.");
 			Assert(!migratedJson.Contains("\"explorer\"", StringComparison.OrdinalIgnoreCase),
 				"The legacy Explorer ignore entry remained in the persisted settings.");
@@ -603,6 +606,13 @@ internal static class TestRunner
 				var notificationTarget = FindTarget(target => target.IsNotificationAreaCard);
 				var desktopTarget = FindTarget(target => target.IsDesktopButton);
 				var sidebarPinTarget = FindTarget(target => target.IsSidebarPinButton);
+				var aiTarget = FindTarget(target => target.IsAiUsageCard);
+				Assert(aiTarget is not null && !CardInteraction.IsWindowCard(aiTarget),
+					"AI usage must not enter the window activation gesture pipeline.");
+				Assert(!renderer.CanExpandOnHover(aiTarget!), "AI usage must not expand an application group.");
+				renderer.Activate(aiTarget!);
+				Assert(renderer.ConsumeAiUsageClickRequest() && !renderer.ConsumeAiUsageClickRequest(),
+					"AI click must be consumed once without leaking into the next application click.");
 				Assert(notificationTarget is not null && desktopTarget is not null && sidebarPinTarget is not null,
 					"The integrated utility controls were not laid out below the cards.");
 				Assert(!CardInteraction.IsWindowCard(sidebarPinTarget),

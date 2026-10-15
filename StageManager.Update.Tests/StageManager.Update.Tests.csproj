@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <DefineConstants>$(DefineConstants);UPDATE_TEST_HOST</DefineConstants>
+    <Version>4.6.1</Version>
+    <FileVersion>4.6.1.0</FileVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../StageManager.Card3DPrototype/Updates/UpdateTransaction.cs" Link="UpdateTransaction.cs" />
+  </ItemGroup>
+</Project>
