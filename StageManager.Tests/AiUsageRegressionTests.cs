@@ -18,7 +18,46 @@ internal static class AiUsageRegressionTests
 
 	private static async Task RunAsync()
 	{
+		var gemini = AiUsageService.Empty("gemini", "Gemini browser connection required");
+		var stamp = DateTimeOffset.UtcNow;
+		var record = new GeminiQuotaRecord("Connected", stamp, new string('a', 32), new[] { new GeminiQuotaMeter(1, 0, stamp.AddHours(1)), new GeminiQuotaMeter(2, 100, stamp.AddDays(1)) });
+		Check(GeminiQuotaRecord.IsValid(record, stamp), "Valid Gemini quota rejected.");
+		Check(!GeminiQuotaRecord.IsValid(record with { Meters = new[] { new GeminiQuotaMeter(1, -1, null) } }, stamp), "Negative Gemini usage accepted.");
+		Check(!GeminiQuotaRecord.IsValid(record with { Status = "LoginRequired" }, stamp), "Unauthenticated quota accepted.");
+		Check(!GeminiQuotaRecord.IsValid(record with { UpdatedUtc = stamp.AddHours(1) }, stamp), "Future Gemini data accepted.");
+		Check(gemini.Name == "Gemini" && gemini.NeedsConnection && !gemini.HasData && gemini.TrendValue is null, "Gemini placeholder must not fabricate usage.");
+		foreach (var dpi in new[] { 1f, 1.25f, 1.5f, 2f })
+		{
+			var size = new System.Drawing.Size((int)(116 * dpi), (int)(AiUsagePresentation.CardHeight * dpi));
+			var cells = Enumerable.Range(0, 4).Select(i => AiUsagePresentation.CellBounds(i, size)).ToArray();
+			Check(cells[0].Bottom == cells[2].Top && cells[0].Right == cells[1].Left && cells[3].Bottom == size.Height, "Four-provider grid overlaps or exceeds card bounds.");
+		}
+		using (var icons = new AiProviderIcons())
+		using (var bitmap = new System.Drawing.Bitmap(48, 48))
+		using (var graphics = System.Drawing.Graphics.FromImage(bitmap))
+		{
+			graphics.Clear(System.Drawing.Color.Transparent);
+			icons.Draw(graphics, "codex", new System.Drawing.RectangleF(0, 0, 48, 48));
+			var dark = 0; var light = 0;
+			for (var y = 0; y < 48; y++) for (var x = 0; x < 48; x++)
+			{
+				var pixel = bitmap.GetPixel(x, y);
+				if (pixel.A == 0) continue;
+				Check(pixel.R == pixel.G && pixel.G == pixel.B, "Codex logo must be monochrome.");
+				if (pixel.R < 20) dark++; if (pixel.R > 235) light++;
+			}
+			Check(dark > 100 && light > 100, "Codex logo lost its black background or white mark.");
+		}
 		var quota = CodexFixture();
+		using (var preview = new System.Drawing.Bitmap(232, 240))
+		using (var graphics = System.Drawing.Graphics.FromImage(preview))
+		using (var icons = new AiProviderIcons())
+		{
+			graphics.Clear(System.Drawing.Color.FromArgb(22, 27, 36));
+			AiUsagePresentation.PaintCard(graphics, preview.Size, 2f,
+				new[] { quota, AiUsageService.Empty("deepseek", "Waiting for API key"), gemini, AiUsageService.Empty("kimi", "Waiting for API key") }, UiLanguage.SimplifiedChinese, icons);
+			preview.Save(Path.Combine(AppContext.BaseDirectory, "ai-grid-preview.png"));
+		}
 		Check(quota.TrendValue == 63 && quota.Windows?.Count == 2 && quota.Windows[1].RemainingPercent == 22, "Quota parser lost windows or inverted usage.");
 		foreach (var (minutes, label) in new[] { (15, "15m"), (90, "90m"), (1440, "1d"), (10080, "7d") })
 			Check(AiUsagePresentation.Duration(minutes) == label, "Incorrect duration label.");
@@ -46,6 +85,14 @@ internal static class AiUsageRegressionTests
 		Directory.CreateDirectory(temp);
 		try
 		{
+			var geminiPath = Path.Combine(temp, "gemini-browser-quota.json");
+			File.WriteAllText(geminiPath, JsonSerializer.Serialize(record));
+			var browserQuota = GeminiBrowserUsage.Read(temp);
+			Check(browserQuota.Windows?.Count == 2 && browserQuota.TrendValue == 100 && browserQuota.Windows[1].RemainingPercent == 0, "Gemini browser cache lost quota windows.");
+			File.WriteAllText(geminiPath, JsonSerializer.Serialize(record with { UpdatedUtc = stamp.AddMinutes(-20) }));
+			Check(GeminiBrowserUsage.Read(temp).Status == "Gemini browser stale", "Old Gemini cache marked current.");
+			File.WriteAllText(geminiPath, JsonSerializer.Serialize(record with { Status = "LoginRequired", Meters = Array.Empty<GeminiQuotaMeter>() }));
+			Check(!GeminiBrowserUsage.Read(temp).HasData, "Signed-out Gemini cache retained quota.");
 			await ServiceTests(temp);
 			var store = new AiUsageCredentialStore(Path.Combine(temp, "vault"));
 			store.Save("synthetic-deepseek-key", "synthetic-kimi-key");

@@ -16,7 +16,7 @@ internal sealed record AiUsageSnapshot(
 	IReadOnlyList<AiQuotaWindow>? Windows = null)
 {
 	public bool HasData => TrendValue.HasValue || Details.Count > 0;
-	public bool NeedsConnection => Status is "Waiting for API key" or "Codex CLI not found" or "Codex login required" or "API key rejected";
+	public bool NeedsConnection => Status is "Gemini browser connection required" or "Waiting for API key" or "Codex CLI not found" or "Codex login required" or "API key rejected";
 }
 
 internal sealed record AiQuotaWindow(string LimitId, string Label, decimal RemainingPercent,

@@ -120,8 +120,8 @@ internal sealed class WhatsNewForm : Form
         BackColor = Color.FromArgb(24, 27, 33); ForeColor = Color.FromArgb(236, 241, 248);
         var title = new Label { Text = AppVersion.Label, Dock = DockStyle.Top, Height = 66, Padding = new Padding(22, 20, 0, 0), Font = new Font("Segoe UI", 18, FontStyle.Bold) };
         var body = new Label { Dock = DockStyle.Fill, Padding = new Padding(22, 8, 22, 8), Text = T(
-            "Optional AI usage card\nOff by default; keep your existing choice. Enable it in Settings.\n\nRefined usage details\nClearer text, balances and quota windows.\n\nIndependent FIXED groups\nPin multiple applications without blocking others.\n\nManual updates\nCheck for updates, confirm installation and restart safely.",
-            "可选 AI 额度卡片\n默认关闭；保留已有选择，可在设置中开启。\n\n改进的额度详情\n更清晰的文字、余额与额度窗口。\n\n各应用独立 FIXED\n多个应用可以分别展开和固定，互不阻挡。\n\n手动检查与一键升级\n确认后下载、校验并重启，失败时回退。") };
+            "Four-provider AI grid\nCodex / DeepSeek above Gemini / Kimi. Existing choices are preserved.\n\nExperimental Gemini web quota\nOptional browser companion reads subscription quota, not API credits. Install it separately from the release page.\n\nConnection status\nShows missing login and stale browser data. Real-account validation is pending.\n\nMonochrome Codex logo\nBlack-and-white mark and corrected grid selection.",
+            "两行两列 AI 额度卡片\n上排 Codex / DeepSeek，下排 Gemini / Kimi，保留已有选择。\n\n实验性 Gemini 网页额度\n读取订阅用量而非 API 余额，需从发布页另装浏览器配套扩展。\n\n连接与过期状态\n明确提示待登录或旧数据，真实账号读取尚待验证。\n\n黑白 Codex 图标\n更新标识，并修正四格平台点击定位。") };
         var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(10) };
         var done = new Button { Text = T("Got it", "知道了"), AutoSize = true, ForeColor = Color.Black, BackColor = Color.FromArgb(225, 234, 245) };
         var settings = new Button { Text = T("AI settings", "打开 AI 设置"), AutoSize = true, ForeColor = Color.Black, BackColor = Color.FromArgb(225, 234, 245) };

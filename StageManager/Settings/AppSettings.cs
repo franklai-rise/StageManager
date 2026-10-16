@@ -71,6 +71,7 @@ public sealed class AppSettings
 	public bool AiUsageEnabled { get; set; }
 	public bool AiUsageCodexEnabled { get; set; } = true;
 	public bool AiUsageDeepSeekEnabled { get; set; } = true;
+	public bool AiUsageGeminiEnabled { get; set; } = true;
 	public bool AiUsageKimiEnabled { get; set; }
 	public bool AiUsageKimiInternational { get; set; }
 	public string CodexCliPath { get; set; } = "";

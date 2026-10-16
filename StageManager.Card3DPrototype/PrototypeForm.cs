@@ -876,9 +876,12 @@ internal sealed class PrototypeForm : Form
 		var providers = _aiUsageService.Current;
 		if (providers.Count == 0 || target?.IsAiUsageCard != true || target.Polygon.Count == 0) return null;
 		var left = target.Polygon.Min(p => p.X); var right = target.Polygon.Max(p => p.X);
-		var x = PointToClient(Cursor.Position).X;
-		var index = Math.Clamp((int)((x - left) / Math.Max(1, right - left) * providers.Count), 0, providers.Count - 1);
-		return providers[index].ProviderId;
+		var pointer = PointToClient(Cursor.Position);
+		var top = target.Polygon.Min(p => p.Y) + (_renderer?.ScrollTranslationY ?? 0);
+		var bottom = target.Polygon.Max(p => p.Y) + (_renderer?.ScrollTranslationY ?? 0);
+		var column = Math.Clamp((int)((pointer.X - left) / Math.Max(1, right - left) * 2), 0, 1);
+		var row = Math.Clamp((int)((pointer.Y - top) / Math.Max(1, bottom - top) * 2), 0, 1);
+		return AiUsagePresentation.ProviderOrder[row * 2 + column];
 	}
 
 	private void CloseAiUsageDetails(bool immediate = false)

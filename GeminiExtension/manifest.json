@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Stage Manager · Gemini subscription quota",
+  "version": "0.1.0",
+  "description": "Read Gemini web subscription quota into your local Stage Manager. No API key required.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzyw2mlGFuVTPBmRt2tImLl+Ien1ZrrvmykNXTzc/wm86JvAfRKG8jF+43KMBdDNr/WgBJivh67pSI3aaS2+ci47Rn1x9xrwQfKtoeW5i3wFHKEvl7XSQIyjz2RzM+z8QQTyyTNFWpu4VXHchDLiIC+zVLycPZh0TCuQxaVXqsxInK6D+0RX/J0j2slX7nzmdqm0zno8V4fYAd63thudEu/hfPxSF6MNkArhsHyEfB9P9WrHGd7UoVjYGE6SnzijwDc13Sc8OQM9BXEIY5ds76RSpymYh4D7O1Ighwh5XoBaGEUd1DZo51sHcdjoHbyv8hST94exi7roTjgKYAx4Y4QIDAQAB",
+  "permissions": ["nativeMessaging", "storage", "alarms"],
+  "optional_host_permissions": ["https://gemini.google.com/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html" }
+}

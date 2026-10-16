@@ -40,9 +40,9 @@ internal sealed class AiUsageDetailsForm : Form
 		DoubleBuffered = true;
 		Opacity = preview ? 1 : 0;
 
-		_tabs = new[] { "codex", "deepseek", "kimi" }.Select(id =>
+		_tabs = AiUsagePresentation.ProviderOrder.Select(id =>
 		{
-			var button = MakeButton(id == "codex" ? "Codex" : id == "deepseek" ? "DeepSeek" : "Kimi");
+			var button = MakeButton(id == "codex" ? "Codex" : id == "deepseek" ? "DeepSeek" : id == "gemini" ? "Gemini" : "Kimi");
 			button.Tag = id;
 			button.Click += (_, _) => SelectProvider(id);
 			return button;
@@ -177,7 +177,7 @@ internal sealed class AiUsageDetailsForm : Form
 		_icons.Draw(g, item.ProviderId, R(20, 108, 32, 32));
 		var (value, caption) = AiUsagePresentation.Compact(item, _language);
 		Draw(g, value, R(64, 99, 140, 46), 34 * s, ForeColor, true);
-		Draw(g, item.HasData ? item.ProviderId == "codex" ? T($"{caption} remaining", $"{caption} 剩余额度") : T($"{caption} API balance", $"{caption} API 余额")
+		Draw(g, item.HasData ? item.Windows is { Count: > 0 } ? T($"{caption} remaining", $"{caption} 剩余额度") : T($"{caption} API balance", $"{caption} API 余额")
 			: T("Not connected", "尚未连接"), R(205, 112, 152, 25), 12 * s, Color.FromArgb(172, 181, 195));
 		Draw(g, AiUsagePresentation.Status(item, _language), R(20, 144, 340, 22), 12 * s,
 			item.Status == "Connected" ? AiUsagePresentation.Accent(item.ProviderId) : Color.FromArgb(223, 187, 128));

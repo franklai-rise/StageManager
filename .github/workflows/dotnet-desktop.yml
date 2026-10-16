@@ -37,6 +37,19 @@ jobs:
         run: |
           node --check site/app.js
           python -m py_compile site/build_release.py
+      - name: Verify Gemini subscription bridge and extension
+        shell: pwsh
+        run: |
+          node --check GeminiExtension/background.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --check GeminiExtension/popup.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node GeminiExtension/quota.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet publish StageManager.GeminiBridge -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o artifacts/bridge-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node GeminiExtension/native.test.mjs artifacts/bridge-test/StageManager.GeminiBridge.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   draft:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: verify
@@ -73,10 +86,25 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 "artifacts/release/$name").Hash.ToLowerInvariant()
           "$hash  $name" | Set-Content "artifacts/release/SHA256SUMS.txt" -Encoding utf8NoBOM
           @{tag=$env:GITHUB_REF_NAME; commit=(git rev-parse HEAD); file=$name; sha256=$hash; run="https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"; sdk=(dotnet --version); builtAtUtc=[DateTimeOffset]::UtcNow.ToString("O")} | ConvertTo-Json | Set-Content artifacts/release/build-info.json -Encoding utf8NoBOM
-      - name: Attest final executable bytes
+      - name: Package optional Gemini browser companion
+        shell: pwsh
+        run: |
+          dotnet publish StageManager.GeminiBridge -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:ContinuousIntegrationBuild=true -p:SourceRevisionId=$env:GITHUB_SHA -o artifacts/bridge-publish
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Path artifacts/companion/Bridge,artifacts/companion/Extension -Force | Out-Null
+          Copy-Item artifacts/bridge-publish/StageManager.GeminiBridge.exe artifacts/companion/Bridge/
+          Copy-Item GeminiExtension/manifest.json,GeminiExtension/background.js,GeminiExtension/quota.mjs,GeminiExtension/popup.html,GeminiExtension/popup.js,GeminiExtension/THIRD-PARTY-NOTICES.txt artifacts/companion/Extension/
+          Copy-Item GeminiExtension/INSTALL.txt artifacts/companion/
+          $zip = "Stage_Manager_Lai_Gemini_Companion_$env:GITHUB_REF_NAME.zip"
+          Compress-Archive -Path artifacts/companion/* -DestinationPath "artifacts/release/$zip"
+          $hash = (Get-FileHash "artifacts/release/$zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $zip" | Add-Content artifacts/release/SHA256SUMS.txt -Encoding utf8NoBOM
+      - name: Attest final executable and companion bytes
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
-          subject-path: artifacts/release/*.exe
+          subject-path: |
+            artifacts/release/*.exe
+            artifacts/release/*.zip
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-${{ github.ref_name }}

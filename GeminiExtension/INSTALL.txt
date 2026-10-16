@@ -1,0 +1,38 @@
+Stage Manager Lai - Gemini subscription companion (experimental)
+
+中文安装步骤
+1. 将整个 ZIP 解压到一个固定文件夹，不要从 ZIP 内直接运行。
+2. 在解压后的文件夹打开 PowerShell，执行：
+   .\Bridge\StageManager.GeminiBridge.exe --register
+   仅注册当前 Windows 用户的 Chrome / Edge 本机通信，不需要管理员权限。
+3. Chrome 打开 chrome://extensions；Edge 打开 edge://extensions。
+   开启开发者模式，选择“加载已解压的扩展程序”，选择 Extension 文件夹。
+4. 在同一浏览器登录 https://gemini.google.com/usage。
+   在 StageManager 设置中启用 AI 额度卡片和 Gemini。
+5. 点击浏览器扩展的“连接 Gemini”，批准仅 Gemini 网站的访问权限。
+   扩展显示“已同步”后，点击 StageManager AI 详情页的刷新。
+6. 首次请对照 Gemini 网页核对当前/每周额度及重置时间。
+
+限制与隐私
+- 读取 Gemini 网页订阅额度，不读取 Gemini API 余额，不使用 API Key。
+- 实验性内部接口：可能随 Google 更新、账号或地区变化而失效。
+- 发布前只完成模拟及协议测试，未验证真实 Google 账号的端到端读取。
+- 浏览器登录凭据留在浏览器，不传给 StageManager；本机仅保存额度和时间。
+- 每五分钟查询；关闭浏览器后无法保证更新，过期数据会标注。
+- 使用默认 Google 账号；切换账号后点击“连接 Gemini”重建会话。
+- 多个浏览器/配置文件不要同时启用，否则最后一次同步会覆盖数据。
+- 主程序自动更新不会安装/更新此可选扩展与桥接。
+- 卸载扩展可在浏览器扩展管理页移除；注册项仅为
+  HKCU\Software\Google\Chrome\NativeMessagingHosts\com.franklai.stage_manager.gemini
+  HKCU\Software\Microsoft\Edge\NativeMessagingHosts\com.franklai.stage_manager.gemini
+  不再使用时可删除这两项。不要删除其他 NativeMessagingHosts 项。
+
+English quick start
+Extract to a permanent folder. Run Bridge\StageManager.GeminiBridge.exe --register
+from PowerShell. Enable developer mode in Chrome/Edge extensions; load the Extension
+folder unpacked. Sign in to Gemini in that browser, enable Gemini and AI usage in
+StageManager, then click Connect in the extension and grant Gemini site access.
+Verify values against the Gemini usage page. Uses the default browser Google
+account. Reconnect after switching accounts. Keep only one browser/profile connected.
+This is experimental, undocumented web quota access; real-account validation and
+24-hour stability acceptance were not completed for this release.

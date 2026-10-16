@@ -33,7 +33,7 @@ internal static class UpdateRegressionTests
                 body = "fixture notes", published_at = DateTimeOffset.UtcNow, assets = Array.Empty<object>()
             });
             Check(ReleaseUpdateService.Parse(Release()).Version > AppVersion.Current, "Version comparison wrong.");
-            Check(ReleaseUpdateService.Parse(Release(tag: "v4.6.0")).Version == AppVersion.Current, "Same version differs.");
+            Check(ReleaseUpdateService.Parse(Release(tag: "v" + AppVersion.Current.ToString(3))).Version == AppVersion.Current, "Same version differs.");
             Check(ReleaseUpdateService.Parse(Release(tag: "v4.4.16")).Version < AppVersion.Current, "Older release marked newer.");
             foreach (var bytes in new[] { Release(draft: true), Release(prerelease: true), Release(tag: "v4.7.0-beta"), Encoding.UTF8.GetBytes("{}") })
             { var rejected = false; try { ReleaseUpdateService.Parse(bytes); } catch { rejected = true; } Check(rejected, "Invalid release accepted."); }

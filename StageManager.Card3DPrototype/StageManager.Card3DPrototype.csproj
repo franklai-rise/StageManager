@@ -7,14 +7,14 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 	<ApplicationIcon>..\StageManager\StageManager.ico</ApplicationIcon>
-		<AssemblyName>Stage_Manager_Lai_v4.6.0</AssemblyName>
+		<AssemblyName>Stage_Manager_Lai_v4.6.1</AssemblyName>
     <RootNamespace>StageManager.Card3DPrototype</RootNamespace>
-		<Version>4.6.0</Version>
-		<AssemblyVersion>4.6.0.0</AssemblyVersion>
-		<FileVersion>4.6.0.0</FileVersion>
-		<InformationalVersion>Stage_Manager_Lai_v4.6.0</InformationalVersion>
+		<Version>4.6.1</Version>
+		<AssemblyVersion>4.6.1.0</AssemblyVersion>
+		<FileVersion>4.6.1.0</FileVersion>
+		<InformationalVersion>Stage_Manager_Lai_v4.6.1</InformationalVersion>
 	<IncludeSourceRevisionInInformationalVersion>true</IncludeSourceRevisionInInformationalVersion>
-		<Product>Stage_Manager_Lai_v4.6.0</Product>
+		<Product>Stage_Manager_Lai_v4.6.1</Product>
 	<Authors>Andreas Wäscher; Frank Lai (modified fork)</Authors>
 	<Description>Stage Manager for Windows with low-memory 3D window cards, Focus enhanced workspace reservation, stable click targeting, optional quick-launch controls, and a privacy-conscious AI usage card for Codex, DeepSeek, and Kimi.</Description>
 	<Copyright>Original copyright (c) 2022 Andreas Wäscher; Lai modifications (c) 2026 Frank Lai</Copyright>
@@ -22,6 +22,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../StageManager.GeminiBridge/GeminiQuotaRecord.cs" Link="AiUsage/GeminiQuotaRecord.cs" />
     <EmbeddedResource Include="AiUsage\Assets\*.png" />
     <ProjectReference Include="..\StageManager\StageManager.csproj" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />

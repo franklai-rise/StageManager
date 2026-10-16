@@ -8,11 +8,15 @@ namespace StageManager.Card3DPrototype.AiUsage;
 // Shared by the composition texture and the visual regression host.
 internal static class AiUsagePresentation
 {
-	public const float CardHeight = 60;
+	public const float CardHeight = 120;
+	internal static readonly string[] ProviderOrder = { "codex", "deepseek", "gemini", "kimi" };
+	internal static RectangleF CellBounds(int index, Size size) =>
+		new(index % 2 * size.Width / 2f, index / 2 * size.Height / 2f, size.Width / 2f, size.Height / 2f);
 	public static Color Accent(string id) => id switch
 	{
 		"codex" => Color.FromArgb(127, 223, 189),
 		"deepseek" => Color.FromArgb(143, 172, 255),
+		"gemini" => Color.FromArgb(154, 186, 255),
 		_ => Color.FromArgb(189, 173, 255)
 	};
 
@@ -26,6 +30,7 @@ internal static class AiUsagePresentation
 
 	public static (string Value, string Caption) Compact(AiUsageSnapshot item, UiLanguage language)
 	{
+		if (item.Status == "Disabled") return ("—", UiText.Get(language, "Disabled", "未启用"));
 		if (item.Windows?.FirstOrDefault() is { } window)
 			return ($"{window.RemainingPercent:0}%", Duration(window.DurationMinutes));
 		if (item.TrendValue is { } value)
@@ -42,6 +47,9 @@ internal static class AiUsagePresentation
 		var text = item.Status switch
 		{
 			"Connected" => ("Up to date", "已更新"),
+			"Gemini browser connection required" => ("Browser connection pending · Google AI Pro, not API credits", "待连接浏览器订阅额度 · 非 API 余额"),
+			"Gemini browser unavailable" => ("Browser quota query failed; refresh in the extension", "浏览器额度查询失败，请在扩展中刷新"),
+			"Gemini browser stale" => ("Old data · open your browser and refresh the extension", "数据已过期 · 请打开浏览器并刷新扩展"),
 			"Loading" => ("Reading usage…", "正在读取额度…"),
 			"Waiting for API key" => ("Add an API key in Settings", "请在设置中填写 API Key"),
 			"Codex CLI not found" => ("Select a Codex CLI in Settings", "请在设置中选择 Codex CLI"),
@@ -68,16 +76,19 @@ internal static class AiUsagePresentation
 				new RectangleF(4 * dpi, 0, size.Width - 8 * dpi, size.Height), 10 * dpi, Color.Gainsboro);
 			return;
 		}
-		var column = size.Width / (float)items.Count;
-		for (var i = 0; i < items.Count; i++)
+		var column = size.Width / 2f;
+		for (var i = 0; i < ProviderOrder.Length; i++)
 		{
-			var item = items[i];
-			var left = i * column;
+			var item = items.FirstOrDefault(s => s.ProviderId == ProviderOrder[i]) ?? AiUsageService.Empty(ProviderOrder[i], "Disabled");
+			var cell = CellBounds(i, size);
+			var state = g.Save();
+			g.TranslateTransform(0, cell.Top);
+			var left = cell.Left;
 			var center = left + column / 2;
-			if (i != 0)
+			if (i % 2 != 0)
 			{
 				using var divider = new Pen(Color.FromArgb(32, 255, 255, 255), dpi);
-				g.DrawLine(divider, left, 10 * dpi, left, size.Height - 10 * dpi);
+				g.DrawLine(divider, left, 10 * dpi, left, cell.Height - 10 * dpi);
 			}
 			icons.Draw(g, item.ProviderId, new RectangleF(center - 9 * dpi, 5 * dpi, 18 * dpi, 18 * dpi));
 			var (value, caption) = Compact(item, language);
@@ -89,6 +100,7 @@ internal static class AiUsagePresentation
 			if (item.HasData && item.Status != "Connected")
 				using (var warning = new SolidBrush(Color.FromArgb(244, 190, 91)))
 					g.FillEllipse(warning, center + 10 * dpi, 6 * dpi, 3 * dpi, 3 * dpi);
+			g.Restore(state);
 		}
 	}
 
@@ -132,10 +144,36 @@ internal sealed class AiProviderIcons : IDisposable
 			if (stream is null) continue;
 			using var original = new Bitmap(stream);
 			_images[id] = new Bitmap(original);
+			if (id == "codex")
+			{
+				// The embedded mark is white on blue. Its red channel encodes the
+				// antialiased white mark; use it as coverage on a black background.
+				var monochrome = _images[id];
+				for (var y = 0; y < monochrome.Height; y++)
+					for (var x = 0; x < monochrome.Width; x++)
+					{
+						var pixel = monochrome.GetPixel(x, y);
+						monochrome.SetPixel(x, y, Color.FromArgb(pixel.A, pixel.R, pixel.R, pixel.R));
+					}
+			}
 		}
 	}
 	public void Draw(Graphics g, string id, RectangleF bounds)
 	{
+		if (id == "gemini")
+		{
+			// Vector sparkle avoids a raster fallback and remains crisp at mixed DPI.
+			using var path = new GraphicsPath();
+			var x = bounds.X; var y = bounds.Y; var w = bounds.Width; var h = bounds.Height;
+			path.AddBezier(x + w / 2, y, x + w * .57f, y + h * .34f, x + w * .66f, y + h * .43f, x + w, y + h / 2);
+			path.AddBezier(x + w, y + h / 2, x + w * .66f, y + h * .57f, x + w * .57f, y + h * .66f, x + w / 2, y + h);
+			path.AddBezier(x + w / 2, y + h, x + w * .43f, y + h * .66f, x + w * .34f, y + h * .57f, x, y + h / 2);
+			path.AddBezier(x, y + h / 2, x + w * .34f, y + h * .43f, x + w * .43f, y + h * .34f, x + w / 2, y);
+			path.CloseFigure();
+			using var brush = new LinearGradientBrush(bounds, Color.FromArgb(82, 158, 255), Color.FromArgb(208, 124, 222), 35f);
+			g.FillPath(brush, path);
+			return;
+		}
 		if (!_images.TryGetValue(id, out var icon)) return;
 		var state = g.Save();
 		using var clip = AiUsagePresentation.Rounded(bounds, bounds.Width * .24f);

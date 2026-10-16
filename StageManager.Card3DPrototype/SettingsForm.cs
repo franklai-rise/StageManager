@@ -42,6 +42,7 @@ internal sealed class SettingsForm : Form
 	private readonly CheckBox _deepSeekEnabled;
 	private readonly TextBox _deepSeekKey;
 	private readonly CheckBox _kimiEnabled;
+	private readonly CheckBox _geminiEnabled;
 	private readonly TextBox _kimiKey;
 	private readonly ComboBox _kimiRegion;
 	private readonly AiUsageService? _aiUsageService;
@@ -216,6 +217,8 @@ internal sealed class SettingsForm : Form
 		_kimiRegion = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(124, 158), Size = new Size(180, 30) };
 		_kimiRegion.Items.AddRange(new object[] { "CN", "Global" });
 		_kimiRegion.SelectedIndex = draft.AiUsageKimiInternational ? 1 : 0;
+		_geminiEnabled = CreateCheckBox("Gemini (web plan)", draft.AiUsageGeminiEnabled, 320, 158, 240);
+		aiGroup.Controls.Add(_geminiEnabled);
 		var clearKimi = new Button { Text = "Clear", Location = new Point(411, 123), Size = new Size(70, 30) };
 		clearKimi.Anchor = AnchorStyles.Top | AnchorStyles.Right;
 		clearKimi.Click += (_, _) => { _kimiKey.Clear(); _clearKimiKey = true; };
@@ -412,6 +415,7 @@ internal sealed class SettingsForm : Form
 		Draft.AiUsageCodexEnabled = _codexEnabled.Checked;
 		Draft.AiUsageDeepSeekEnabled = _deepSeekEnabled.Checked;
 		Draft.AiUsageKimiEnabled = _kimiEnabled.Checked;
+		Draft.AiUsageGeminiEnabled = _geminiEnabled.Checked;
 		Draft.AiUsageKimiInternational = _kimiRegion.SelectedIndex == 1;
 		Draft.CodexCliPath = _codexPath.Text.Trim();
 		if (_aiUsageService is not null)

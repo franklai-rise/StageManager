@@ -35,6 +35,7 @@ internal sealed class AiUsageService : IDisposable
 		{
 			new Provider("codex", s => s.AiUsageCodexEnabled, (s, token) => CodexUsageClient.ReadAsync(s.CodexCliPath, token)),
 			new Provider("deepseek", s => s.AiUsageDeepSeekEnabled, (_, token) => ReadBalanceAsync("deepseek", _credentials.Get("deepseek"), false, token)),
+			new Provider("gemini", s => s.AiUsageGeminiEnabled, (_, _) => Task.FromResult(GeminiBrowserUsage.Read(directory))),
 			new Provider("kimi", s => s.AiUsageKimiEnabled, (s, token) => ReadBalanceAsync("kimi", _credentials.Get("kimi"), s.AiUsageKimiInternational, token))
 		};
 		_providerGates = _providers.ToDictionary(p => p.ProviderId, _ => new SemaphoreSlim(1, 1));
@@ -47,7 +48,7 @@ internal sealed class AiUsageService : IDisposable
 		lock (_gate)
 		{
 			if (_disposed) return false;
-			var key = $"{settings.ShowAiUsageCard}:{settings.AiUsageEnabled}:{settings.AiUsageCodexEnabled}:{settings.AiUsageDeepSeekEnabled}:{settings.AiUsageKimiEnabled}:{settings.AiUsageKimiInternational}:{settings.CodexCliPath}";
+			var key = $"{settings.ShowAiUsageCard}:{settings.AiUsageEnabled}:{settings.AiUsageCodexEnabled}:{settings.AiUsageDeepSeekEnabled}:{settings.AiUsageGeminiEnabled}:{settings.AiUsageKimiEnabled}:{settings.AiUsageKimiInternational}:{settings.CodexCliPath}";
 			if (key == _configuration) return false;
 			_configuration = key; _generation++;
 			_session.Cancel(); _session.Dispose(); _session = new CancellationTokenSource();
@@ -56,6 +57,7 @@ internal sealed class AiUsageService : IDisposable
 			{
 				ShowAiUsageCard = settings.ShowAiUsageCard, AiUsageEnabled = settings.AiUsageEnabled,
 				AiUsageCodexEnabled = settings.AiUsageCodexEnabled, AiUsageDeepSeekEnabled = settings.AiUsageDeepSeekEnabled,
+				AiUsageGeminiEnabled = settings.AiUsageGeminiEnabled,
 				AiUsageKimiEnabled = settings.AiUsageKimiEnabled, AiUsageKimiInternational = settings.AiUsageKimiInternational,
 				CodexCliPath = settings.CodexCliPath
 			};
@@ -202,7 +204,7 @@ internal sealed class AiUsageService : IDisposable
 			AiUsageParsers.Kimi(json.RootElement, international, scope, DateTimeOffset.UtcNow);
 	}
 	internal static AiUsageSnapshot Empty(string id, string status) =>
-		new(id, id == "codex" ? "Codex" : id == "deepseek" ? "DeepSeek" : "Kimi", id, "—", status, null, Array.Empty<AiUsageDetail>(), null, "", "");
+		new(id, id == "codex" ? "Codex" : id == "deepseek" ? "DeepSeek" : id == "gemini" ? "Gemini" : "Kimi", id, "—", status, null, Array.Empty<AiUsageDetail>(), null, "", "");
 
 	private void AppendPoint(AiUsageSnapshot snapshot)
 	{
@@ -229,7 +231,7 @@ internal sealed class AiUsageService : IDisposable
 			var items = JsonSerializer.Deserialize<List<AiUsagePoint?>>(File.ReadAllText(_historyPath));
 			lock (_historyGate)
 			{
-				_points.AddRange((items ?? new()).Where(p => p is not null && p.ProviderId is "codex" or "deepseek" or "kimi" &&
+				_points.AddRange((items ?? new()).Where(p => p is not null && p.ProviderId is "codex" or "deepseek" or "kimi" or "gemini" &&
 					p.Unit is not null && p.ContinuityKey is { Length: > 0 } && p.At <= _clock()).Select(p => p!).OrderBy(p => p.At));
 				PruneHistory();
 			}
