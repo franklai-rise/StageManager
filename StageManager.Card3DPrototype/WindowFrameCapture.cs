@@ -43,12 +43,15 @@ internal sealed class WindowFrameCapture : IDisposable
 	private readonly ConcurrentDictionary<string, Bitmap> _icons = new(StringComparer.OrdinalIgnoreCase);
 	private bool _disposed;
 
-	public CapturedCardFrame Capture(IWindow window, int targetWidth, int targetHeight, string? countBadge = null) =>
-		Capture(CaptureWindow.FromWindow(window), targetWidth, targetHeight, countBadge);
+	public CapturedCardFrame Capture(IWindow window, int targetWidth, int targetHeight, string? countBadge = null,
+		PreviewFitMode fitMode = PreviewFitMode.Cover) =>
+		Capture(CaptureWindow.FromWindow(window), targetWidth, targetHeight, countBadge, fitMode);
 
-	internal CapturedCardFrame Capture(CaptureWindow window, int targetWidth, int targetHeight, string? countBadge = null)
+	internal CapturedCardFrame Capture(CaptureWindow window, int targetWidth, int targetHeight, string? countBadge = null,
+		PreviewFitMode fitMode = PreviewFitMode.Cover)
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
+		CaptureWorkerProtocol.ValidateFitMode(fitMode);
 		targetWidth = Math.Clamp(targetWidth, 32, 1024);
 		targetHeight = Math.Clamp(targetHeight, 24, 1024);
 		// Minimized windows are rendered as lightweight placeholders. Calling PrintWindow on
@@ -62,15 +65,14 @@ internal sealed class WindowFrameCapture : IDisposable
 		graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
 		graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
-		var radius = Math.Max(8, (int)Math.Round(targetHeight * 0.10));
-		using var clipPath = CreateRoundedRectangle(new Rectangle(1, 1, targetWidth - 2, targetHeight - 2), radius);
+		using var clipPath = CreateCaptureClipPath(targetWidth, targetHeight);
 		graphics.SetClip(clipPath);
 
 		var target = new Rectangle(1, 1, targetWidth - 2, targetHeight - 2);
 		// A normal-process caller is ALWAYS placeholder-only. Only the early worker
 		// entry point can enable native capture; even legacy call sites are safe.
 		var captured = CaptureWorkerEntryPoint.IsWorkerProcess && !window.IsMinimized &&
-			TryDrawWindow(window, graphics, target);
+			TryDrawWindow(window, graphics, target, fitMode);
 		var placeholder = !captured;
 		if (placeholder)
 		{
@@ -157,7 +159,7 @@ internal sealed class WindowFrameCapture : IDisposable
 		_icons.Clear();
 	}
 
-	private static bool TryDrawWindow(CaptureWindow window, Graphics destination, Rectangle target)
+	private static bool TryDrawWindow(CaptureWindow window, Graphics destination, Rectangle target, PreviewFitMode fitMode)
 	{
 		var handle = window.Handle;
 		if (!CaptureWorkerEntryPoint.IsWorkerProcess || !NativeMethods.IsWindow(handle) ||
@@ -234,8 +236,7 @@ internal sealed class WindowFrameCapture : IDisposable
 			// copied the full window into a large byte[] and then into a second Bitmap,
 			// putting multi-megabyte arrays on the LOH after every refresh.
 			using var source = new Bitmap(width, height, width * 4, PixelFormat.Format32bppArgb, bits);
-			var crop = AspectFillCrop(source.Size, target.Size);
-			destination.DrawImage(source, target, crop.X, crop.Y, crop.Width, crop.Height, GraphicsUnit.Pixel);
+			DrawPreview(destination, source, target, fitMode);
 			return true;
 		}
 		finally
@@ -371,7 +372,41 @@ internal sealed class WindowFrameCapture : IDisposable
 		catch { return null; }
 	}
 
-	private static Rectangle AspectFillCrop(Size source, Size target)
+	internal static void DrawPreview(Graphics destination, Bitmap source, Rectangle target, PreviewFitMode fitMode)
+	{
+		CaptureWorkerProtocol.ValidateFitMode(fitMode);
+		if (fitMode == PreviewFitMode.Contain)
+		{
+			// The rounded placeholder/Cover clip must not cut off source corners.
+			// Replace it only for a successful live Contain draw, then restore it.
+			var state = destination.Save();
+			try
+			{
+				destination.SetClip(target, CombineMode.Replace);
+				using var background = new SolidBrush(Color.LightGray);
+				destination.FillRectangle(background, target);
+				var fitted = AspectFitBounds(source.Size, target);
+				destination.DrawImage(source, fitted, new RectangleF(0, 0, source.Width, source.Height), GraphicsUnit.Pixel);
+			}
+			finally { destination.Restore(state); }
+			return;
+		}
+		var crop = AspectFillCrop(source.Size, target.Size);
+		destination.DrawImage(source, target, crop.X, crop.Y, crop.Width, crop.Height, GraphicsUnit.Pixel);
+	}
+
+	internal static RectangleF AspectFitBounds(Size source, Rectangle target)
+	{
+		if (source.Width <= 0 || source.Height <= 0 || target.Width <= 0 || target.Height <= 0)
+			throw new ArgumentOutOfRangeException(nameof(source), "Preview dimensions must be positive.");
+		var scale = Math.Min(target.Width / (double)source.Width, target.Height / (double)source.Height);
+		var width = (float)(source.Width * scale);
+		var height = (float)(source.Height * scale);
+		return new RectangleF(target.Left + (target.Width - width) / 2f,
+			target.Top + (target.Height - height) / 2f, width, height);
+	}
+
+	internal static Rectangle AspectFillCrop(Size source, Size target)
 	{
 		var sourceAspect = source.Width / (double)source.Height;
 		var targetAspect = target.Width / (double)target.Height;
@@ -384,6 +419,10 @@ internal sealed class WindowFrameCapture : IDisposable
 		var height = Math.Max(1, (int)Math.Round(source.Width / targetAspect));
 		return new Rectangle(0, (source.Height - height) / 2, source.Width, height);
 	}
+
+	internal static GraphicsPath CreateCaptureClipPath(int width, int height) =>
+		CreateRoundedRectangle(new Rectangle(1, 1, width - 2, height - 2),
+			Math.Max(8, (int)Math.Round(height * 0.10)));
 
 	private static GraphicsPath CreateRoundedRectangle(Rectangle bounds, int radius)
 	{

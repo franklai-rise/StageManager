@@ -10,6 +10,36 @@ internal static class Program
 	{
 		try
 		{
+			if (args.Contains("--antigravity"))
+			{
+				var result = AntigravityUsageClient.ReadAsync(default).GetAwaiter().GetResult();
+				Console.WriteLine($"Antigravity: {result.Status}");
+				foreach (var window in result.Windows ?? Array.Empty<AiQuotaWindow>())
+					Console.WriteLine($"{window.Label}: {window.RemainingPercent:0.##}% remaining, reset {window.ResetsAt?.ToLocalTime():yyyy-MM-dd HH:mm}");
+				using var icons = new AiProviderIcons();
+				using var bitmap = new Bitmap(300, 360);
+				using var graphics = Graphics.FromImage(bitmap);
+				graphics.Clear(Color.FromArgb(22, 27, 36));
+				AiUsagePresentation.PaintCard(graphics, bitmap.Size, 2, new[] { AiUsageRegressionTests.CodexFixture(), AiUsageService.Empty("deepseek", "Waiting for API key"), AiUsageService.Empty("gemini", "Gemini browser connection required"), AiUsageService.Empty("kimi", "Waiting for API key"), result }, UiLanguage.SimplifiedChinese, icons);
+				bitmap.Save(Path.Combine(AppContext.BaseDirectory, "antigravity-grid.png"));
+				Application.SetHighDpiMode(HighDpiMode.PerMonitorV2); Application.EnableVisualStyles();
+				using var previewService = new AiUsageService(dataDirectory: Path.Combine(AppContext.BaseDirectory, "visual-fixtures"));
+				foreach (var scale in new[] { 1f, 1.25f, 1.5f, 2f })
+				{
+					using var panel = new AiUsageDetailsForm(previewService, UiLanguage.SimplifiedChinese, preview: true) { FormBorderStyle = FormBorderStyle.None };
+					panel.SetSnapshots(new[] { AiUsageRegressionTests.CodexFixture(), AiUsageService.Empty("deepseek", "Waiting for API key"), AiUsageService.Empty("gemini", "Gemini browser connection required"), AiUsageService.Empty("kimi", "Waiting for API key"), result });
+					panel.SelectProvider("antigravity"); panel.FitToWorkingArea(new Rectangle(0, 0, 2400, 2400), scale);
+					panel.Show(); Application.DoEvents();
+					var rows = panel.Controls.OfType<AiUsageRows>().Single();
+					if (rows.VerticalScroll.Visible) throw new Exception($"Antigravity rows require scrolling at {scale} DPI.");
+					using var rendered = new Bitmap(panel.Width, panel.Height);
+					panel.DrawToBitmap(rendered, new Rectangle(Point.Empty, rendered.Size));
+					rendered.Save(Path.Combine(AppContext.BaseDirectory, $"antigravity-details-{scale * 100:0}.png"));
+					Console.WriteLine($"Details {scale * 100:0}%: all quota rows visible without scrolling.");
+					panel.Close();
+				}
+				return result.Status == "Connected" ? 0 : 1;
+			}
 			if (args.Contains("--check-update"))
 			{
 				using var service = new StageManager.Card3DPrototype.Updates.ReleaseUpdateService();

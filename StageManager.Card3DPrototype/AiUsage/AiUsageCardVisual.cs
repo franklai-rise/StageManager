@@ -22,6 +22,7 @@ internal sealed class AiUsageCardVisual : IDisposable
 	private bool _hovered, _disposed;
 	private bool _enabled = true;
 	private float _dpi = 1;
+	private float _minimumHeight;
 	private UiLanguage _language;
 
 	public AiUsageCardVisual(Compositor compositor, D3DCompositionDevice graphics)
@@ -40,16 +41,21 @@ internal sealed class AiUsageCardVisual : IDisposable
 	public ContainerVisual Root { get; }
 	public Vector2 Size { get; private set; }
 	public Vector2 Pivot { get; private set; }
-	public float Angle => -7.5f;
+	public float Angle { get; private set; } = -7.5f;
+	public float NaturalHeight => AiUsagePresentation.Height(_snapshots);
+	public float ContentTop => Math.Max(0, (Size.Y - NaturalHeight * _dpi) / 2f);
+	public float ContentHeight => NaturalHeight * _dpi;
 	public void SetLanguage(UiLanguage language)
 	{
 		if (_language == language) return;
 		_language = language; _paintKey = ""; Redraw();
 	}
-	public void SetLayout(float dpiScale, float cardWidth)
+	public void SetLayout(float dpiScale, float cardWidth, float cardHeight = 0)
 	{
+		Angle = cardHeight > 0 ? -4f : -7.5f;
 		var dpi = Math.Max(.75f, dpiScale);
-		var size = new Vector2(Math.Max(64 * dpi, cardWidth), AiUsagePresentation.CardHeight * dpi);
+		_minimumHeight = cardHeight;
+		var size = new Vector2(Math.Max(64 * dpi, cardWidth), Math.Max(cardHeight, NaturalHeight * dpi));
 		var changed = Size != size || _dpi != dpi;
 		_dpi = dpi; Size = size; Root.Size = size;
 		Root.CenterPoint = new Vector3(size.X * .88f, size.Y / 2, 0);
@@ -61,7 +67,7 @@ internal sealed class AiUsageCardVisual : IDisposable
 	}
 	public void SetSnapshots(IReadOnlyList<AiUsageSnapshot> snapshots)
 	{
-		_snapshots = snapshots.ToArray(); Redraw();
+		_snapshots = snapshots.ToArray(); SetLayout(_dpi, Size.X, _minimumHeight);
 	}
 	public void SetEnabled(bool enabled)
 	{
@@ -80,7 +86,7 @@ internal sealed class AiUsageCardVisual : IDisposable
 	private void Redraw()
 	{
 		if (_disposed || !_enabled) return;
-		var key = _language + "|" + string.Join("|", _snapshots.Select(s => $"{s.ProviderId}:{AiUsagePresentation.Compact(s, _language)}:{s.Status}"));
+		var key = _language + "|" + string.Join("|", _snapshots.Select(s => $"{s.ProviderId}:{AiUsagePresentation.Compact(s, _language)}:{s.Status}:" + string.Join(",", s.Windows?.Select(w => $"{w.LimitId}:{w.RemainingPercent}") ?? Array.Empty<string>())));
 		if (_surface is not null && key == _paintKey) return;
 		var width = Math.Max(1, (int)Math.Ceiling(Size.X));
 		var height = Math.Max(1, (int)Math.Ceiling(Size.Y));
@@ -95,7 +101,8 @@ internal sealed class AiUsageCardVisual : IDisposable
 		using (var g = Graphics.FromImage(bitmap))
 		{
 			g.Clear(Color.Transparent);
-			AiUsagePresentation.PaintCard(g, bitmap.Size, _dpi, _snapshots, _language, _icons);
+			g.TranslateTransform(0, ContentTop);
+			AiUsagePresentation.PaintCard(g, new Size(width, (int)Math.Ceiling(ContentHeight)), _dpi, _snapshots, _language, _icons);
 		}
 		var data = bitmap.LockBits(new Rectangle(Point.Empty, bitmap.Size), ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb);
 		try

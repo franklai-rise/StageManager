@@ -139,12 +139,13 @@ internal sealed class SidebarQuickLaunchVisual : IDisposable
 	public ContainerVisual Root { get; }
 	public Vector2 Size { get; private set; }
 	public Vector2 Pivot { get; private set; }
-	public float Angle => -7.5f;
+	public float Angle { get; private set; } = -7.5f;
 
-	public void SetLayout(float dpiScale, float cardWidth)
+	public void SetLayout(float dpiScale, float cardWidth, float cardHeight = 0)
 	{
+		Angle = cardHeight > 0 ? -4f : -7.5f;
 		var scale = Math.Max(0.75f, dpiScale);
-		var nextSize = new Vector2(Math.Max(64f * scale, cardWidth), 36f * scale);
+		var nextSize = new Vector2(Math.Max(64f * scale, cardWidth), Math.Max(cardHeight, 36f * scale));
 		var surfaceChanged = (int)Math.Ceiling(Size.X) != (int)Math.Ceiling(nextSize.X) ||
 			(int)Math.Ceiling(Size.Y) != (int)Math.Ceiling(nextSize.Y);
 		Size = nextSize;
@@ -183,7 +184,7 @@ internal sealed class SidebarQuickLaunchVisual : IDisposable
 	private void ApplyState()
 	{
 		_backgroundBrush.Color = Windows.UI.Color.FromArgb((byte)(_pressed ? 205 : _hovered ? 165 : 112), 22, 27, 36);
-		Root.Scale = new Vector3(_pressed ? 0.96f : _hovered ? 1.025f : 1f);
+		Root.Scale = Angle == -4f ? Vector3.One : new Vector3(_pressed ? 0.96f : _hovered ? 1.025f : 1f);
 	}
 
 	private void RecreateSurface()

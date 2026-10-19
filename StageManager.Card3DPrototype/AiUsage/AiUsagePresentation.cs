@@ -9,14 +9,17 @@ namespace StageManager.Card3DPrototype.AiUsage;
 internal static class AiUsagePresentation
 {
 	public const float CardHeight = 120;
-	internal static readonly string[] ProviderOrder = { "codex", "deepseek", "gemini", "kimi" };
-	internal static RectangleF CellBounds(int index, Size size) =>
-		new(index % 2 * size.Width / 2f, index / 2 * size.Height / 2f, size.Width / 2f, size.Height / 2f);
+	internal static readonly string[] ProviderOrder = { "codex", "deepseek", "gemini", "kimi", "antigravity" };
+	internal static bool HasAntigravity(IReadOnlyList<AiUsageSnapshot> items) => items.Any(s => s.ProviderId == "antigravity");
+	internal static float Height(IReadOnlyList<AiUsageSnapshot> items) => HasAntigravity(items) ? 180 : CardHeight;
+	internal static RectangleF CellBounds(int index, Size size, bool antigravity = false) =>
+		new(index % 2 * size.Width / 2f, index / 2 * size.Height / (antigravity ? 3f : 2f), size.Width / 2f, size.Height / (antigravity ? 3f : 2f));
 	public static Color Accent(string id) => id switch
 	{
 		"codex" => Color.FromArgb(127, 223, 189),
 		"deepseek" => Color.FromArgb(143, 172, 255),
 		"gemini" => Color.FromArgb(154, 186, 255),
+		"antigravity" => Color.FromArgb(177, 198, 255),
 		_ => Color.FromArgb(189, 173, 255)
 	};
 
@@ -47,6 +50,8 @@ internal static class AiUsagePresentation
 		var text = item.Status switch
 		{
 			"Connected" => ("Up to date", "已更新"),
+			"Antigravity not running" => ("Open Antigravity and sign in", "请打开 Antigravity 并登录"),
+			"Antigravity unavailable" => ("Antigravity quota is temporarily unavailable", "暂时无法读取 Antigravity 额度"),
 			"Gemini browser connection required" => ("Browser connection pending · Google AI Pro, not API credits", "待连接浏览器订阅额度 · 非 API 余额"),
 			"Gemini browser unavailable" => ("Browser quota query failed; refresh in the extension", "浏览器额度查询失败，请在扩展中刷新"),
 			"Gemini browser stale" => ("Old data · open your browser and refresh the extension", "数据已过期 · 请打开浏览器并刷新扩展"),
@@ -77,10 +82,10 @@ internal static class AiUsagePresentation
 			return;
 		}
 		var column = size.Width / 2f;
-		for (var i = 0; i < ProviderOrder.Length; i++)
+		for (var i = 0; i < 4; i++)
 		{
 			var item = items.FirstOrDefault(s => s.ProviderId == ProviderOrder[i]) ?? AiUsageService.Empty(ProviderOrder[i], "Disabled");
-			var cell = CellBounds(i, size);
+			var cell = CellBounds(i, size, HasAntigravity(items));
 			var state = g.Save();
 			g.TranslateTransform(0, cell.Top);
 			var left = cell.Left;
@@ -101,6 +106,24 @@ internal static class AiUsagePresentation
 				using (var warning = new SolidBrush(Color.FromArgb(244, 190, 91)))
 					g.FillEllipse(warning, center + 10 * dpi, 6 * dpi, 3 * dpi, 3 * dpi);
 			g.Restore(state);
+		}
+		if (items.FirstOrDefault(s => s.ProviderId == "antigravity") is { } ag)
+		{
+			var top = size.Height * 2 / 3f;
+			using var divider = new Pen(Color.FromArgb(32, 255, 255, 255), dpi);
+			g.DrawLine(divider, 9 * dpi, top, size.Width - 9 * dpi, top);
+			var iconLeft = column / 2 - 9 * dpi;
+			icons.Draw(g, "antigravity", new RectangleF(iconLeft, top + 2 * dpi, 18 * dpi, 18 * dpi));
+			var titleLeft = iconLeft + 22 * dpi;
+			DrawText(g, "Antigravity", new RectangleF(titleLeft, top + 3 * dpi, size.Width - titleLeft - 5 * dpi, 14 * dpi), 10 * dpi, Color.FromArgb(201, 215, 241), true);
+			for (var i = 0; i < 2; i++)
+			{
+				var prefix = i == 0 ? "gemini-" : "3p-";
+				var values = ag.Windows?.Where(w => w.LimitId.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
+				var value = values is { Length: > 0 } ? $"{values.Min(w => w.RemainingPercent):0}%" : "—";
+				DrawText(g, value, new RectangleF(i * column + 3 * dpi, top + 20 * dpi, column - 6 * dpi, 19 * dpi), 13 * dpi, Color.FromArgb(243, 248, 255), true);
+				DrawText(g, i == 0 ? "Gemini" : "Claude/GPT", new RectangleF(i * column + 2 * dpi, top + 42 * dpi, column - 4 * dpi, 13 * dpi), 8.5f * dpi, Accent("antigravity"));
+			}
 		}
 	}
 
@@ -138,7 +161,7 @@ internal sealed class AiProviderIcons : IDisposable
 	private readonly Dictionary<string, Bitmap> _images = new();
 	public AiProviderIcons()
 	{
-		foreach (var id in new[] { "codex", "deepseek", "kimi" })
+		foreach (var id in new[] { "codex", "deepseek", "kimi", "antigravity" })
 		{
 			using var stream = typeof(AiProviderIcons).Assembly.GetManifestResourceStream($"StageManager.Card3DPrototype.AiUsage.Assets.{id}.png");
 			if (stream is null) continue;

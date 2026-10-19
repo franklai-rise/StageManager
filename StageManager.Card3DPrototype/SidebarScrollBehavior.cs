@@ -111,4 +111,29 @@ internal sealed class SidebarScrollMotion
 		_velocity = 0;
 		_idleSeconds = 1;
 	}
+
+	// Continuous edge-scroll input uses actual content bounds, not the legacy
+	// wheel range (which may include extra travel). Keep that wheel range intact.
+	// Returns the applied distance; zero at a bound lets the caller stop ticking.
+	public float MoveBounded(float delta, SidebarScrollRange explicitRange)
+	{
+		if (!float.IsFinite(delta))
+			throw new ArgumentOutOfRangeException(nameof(delta));
+		if (!float.IsFinite(explicitRange.Minimum) || !float.IsFinite(explicitRange.Maximum) ||
+			explicitRange.Minimum > explicitRange.Maximum)
+			throw new ArgumentOutOfRangeException(nameof(explicitRange));
+		var previous = Position;
+		Position = (float)Math.Clamp((double)Position + delta, explicitRange.Minimum, explicitRange.Maximum);
+		FreezeAtCurrent();
+		return Position - previous;
+	}
+
+	// For ending continuous movement, not for wheel suppression: no snap to a
+	// stale spring target. A position outside the wheel range still returns normally.
+	public void FreezeAtCurrent()
+	{
+		Target = Position;
+		_velocity = 0;
+		_idleSeconds = 1;
+	}
 }

@@ -12,7 +12,7 @@ using Windows.UI.Composition;
 
 namespace StageManager.Card3DPrototype;
 
-internal sealed class CompositionStageRenderer : IDisposable
+internal sealed partial class CompositionStageRenderer : IDisposable
 {
 	private const float BaseCardWidth = 196f;
 	private const float BaseCardHeight = 122f;
@@ -29,7 +29,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private readonly SidebarScrollMotion _scrollMotion = new();
 	private readonly System.Windows.Forms.Timer _scrollTimer = new() { Interval = 16 };
 	private readonly System.Windows.Forms.Timer _layoutMotionTimer = new() { Interval = 160 };
-	private Vector2 _toolbarLayoutKey = new(-1, -1);
+	private Vector3 _toolbarLayoutKey = new(-1, -1, -1);
+	private Vector2 _windowLayoutSize;
 	private CaptureCompletion? _deferredCapture;
 	private CaptureCompletion? _pendingCapture;
 	private readonly List<(StageCardVisual Stage, float Top, float Height)> _stageScrollBounds = new();
@@ -171,17 +172,45 @@ internal sealed class CompositionStageRenderer : IDisposable
 	}
 	public long LayoutRevision { get; private set; }
 	public event EventHandler? ScrollPositionChanged;
-	public float ScrollTranslationY => -_scrollMotion.Position;
+	private SidebarEdge _dockEdge;
+	private bool Horizontal => SidebarDockLayout.IsHorizontal(_dockEdge);
+	private float AxisLength => Horizontal ? _viewportWidth : _viewportHeight;
+	private float AxisSize(Vector2 size) => Horizontal ? size.X : size.Y;
+	private Vector3 DockPosition(float along, Vector2 size) => SidebarDockLayout.Position(_dockEdge, along, size, new(_viewportWidth, _viewportHeight), (_dockEdge == SidebarEdge.Right ? 36f : 12f) * _dpiScale);
+	public float ScrollTranslationY => Horizontal ? 0 : -_scrollMotion.Position;
+	public float ScrollTranslationX => Horizontal ? -_scrollMotion.Position : 0;
+	public float SidebarThickness => Horizontal
+		? Math.Max(CardSize.Y, Math.Max(_aiUsageCardEnabled ? _aiUsageCard.Size.Y : 0, _notificationAreaCardEnabled ? _notificationAreaCard.Size.Y : 0)) + 48f * _dpiScale
+		: SidebarInteractionWidth;
+	public Rectangle InteractionBounds
+	{
+		get
+		{
+			var band = SidebarDockLayout.Band(new(0,0,(int)_viewportWidth,(int)_viewportHeight),_dockEdge,(int)Math.Ceiling(SidebarThickness));
+			return TopPanelBounds.IsEmpty ? band : Rectangle.Union(band,TopPanelBounds);
+		}
+	}
+	public void SetDockEdge(SidebarEdge edge)
+	{
+		if (_dockEdge == edge) return;
+		ClearHorizontalCards();
+		_dockEdge = edge;
+		_topVisibleGroups.Clear();
+		foreach (var stage in _stages.Values) foreach (var card in stage.Windows.Concat(stage.GroupCard is null ? Array.Empty<WindowCardVisual>() : new[] { stage.GroupCard })) card.ClearTopCaption();
+		_scrollTimer.Stop();
+		_scrollMotion.SetRange(new SidebarScrollRange(0, 0), _dpiScale);
+		_scrollMotion.SnapToTarget();
+		_cameraRoot.StopAnimation(nameof(Visual.Offset));
+		_cameraRoot.Offset = _sidebarVisible ? Vector3.Zero : HiddenOffset;
+		LayoutStages(false);
+	}
 	public bool IsScrolling => _scrollTimer.Enabled;
 	public float SidebarInteractionWidth => CardSize.X + 48f * _dpiScale;
 	public TimeSpan SidebarAnimationDuration => TimeSpan.FromMilliseconds(220);
 
 	public bool CanScrollAt(Point clientPoint)
 	{
-		if (!_sidebarVisible || clientPoint.X < 0 || clientPoint.Y < 0 ||
-			clientPoint.X > SidebarInteractionWidth || clientPoint.Y > _viewportHeight)
-			return false;
-		return true;
+		return _sidebarVisible && InteractionBounds.Contains(clientPoint);
 	}
 
 	public void ReleasePointerPress()
@@ -283,8 +312,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	public IReadOnlyList<PointF[]> GetInteractivePolygons(bool fixedLayer)
 	{
+		if (fixedLayer && !TopPanelBounds.IsEmpty)
+			return TopPanelPolygons();
 		var polygons = _hitTargets
-			.Where(_ => !fixedLayer)
+			.Where(target => !fixedLayer && !target.IsTopPanel)
 			.Select(target =>
 			{
 				if (target.Projection?.IsMoving != true)
@@ -355,6 +386,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		var next = definitions.Where(app => app.Enabled).ToArray();
 		if (_quickLaunchButtons.Select(button => button.Definition).SequenceEqual(next)) return false;
+		DetachHorizontalChildren();
+		ClearTopDecorations();
 		foreach (var button in _quickLaunchButtons)
 		{
 			_mainCamera.Children.Remove(button.Root);
@@ -364,7 +397,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		foreach (var definition in next)
 		{
 			var button = new SidebarQuickLaunchVisual(_compositor, _graphics, definition);
-			button.SetLayout(_dpiScale, CardSize.X);
+			button.SetLayout(_dpiScale, CardSize.X, UniformTopHeight);
 			_quickLaunchButtons.Add(button);
 			_mainCamera.Children.InsertAtTop(button.Root);
 		}
@@ -382,8 +415,16 @@ internal sealed class CompositionStageRenderer : IDisposable
 		return true;
 	}
 
-	public void SetAiUsageSnapshots(IReadOnlyList<AiUsageSnapshot> snapshots) => _aiUsageCard.SetSnapshots(snapshots);
-	public void SetAiUsageLanguage(UiLanguage language) => _aiUsageCard.SetLanguage(language);
+	public void SetAiUsageSnapshots(IReadOnlyList<AiUsageSnapshot> snapshots)
+	{
+		var before = _aiUsageCard.Size;
+		var beforeNatural = _aiUsageCard.NaturalHeight;
+		_aiUsageCard.SetSnapshots(snapshots);
+		if (before != _aiUsageCard.Size || beforeNatural != _aiUsageCard.NaturalHeight) LayoutStages(true);
+	}
+	public float AiContentTopFraction => _aiUsageCard.ContentTop / Math.Max(1, _aiUsageCard.Size.Y);
+	public float AiContentHeightFraction => _aiUsageCard.ContentHeight / Math.Max(1, _aiUsageCard.Size.Y);
+	public void SetAiUsageLanguage(UiLanguage language) { _aiUsageCard.SetLanguage(language); if (_topLanguage != language) { _topLanguage = language; LayoutStages(false); } }
 	public bool ConsumeAiUsageClickRequest() { var requested = _aiUsageClicked; _aiUsageClicked = false; return requested; }
 
 	public bool SetCollapseButtonEnabled(bool enabled)
@@ -417,7 +458,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (_sidebarPinned == pinned)
 			return;
 		_sidebarPinned = pinned;
-		_sidebarPinButton.SetLayout(_dpiScale, -7.5f, pinned);
+		_sidebarPinButton.SetLayout(_dpiScale, Horizontal ? -4f : -7.5f, pinned, UniformTopHeight > 0 ? CardSize.X : 0, UniformTopHeight);
 	}
 
 	public bool SetNotificationAreaCardEnabled(bool enabled)
@@ -522,11 +563,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	public void SetSidebarVisible(bool visible, bool animate)
 	{
-		if (_sidebarVisible == visible && (!visible || Math.Abs(_cameraRoot.Offset.X) < 0.1f))
+		if (_sidebarVisible == visible && (!visible || _cameraRoot.Offset.Length() < 0.1f))
 			return;
 		var previous = _cameraRoot.Offset;
-		var target = new Vector3(visible ? 0 : HiddenOffsetX, 0, 0);
+		var target = visible ? Vector3.Zero : HiddenOffset;
 		_sidebarVisible = visible;
+		_fixedCamera.IsVisible = visible && _dockEdge == SidebarEdge.Top;
 		if (!visible)
 			FinishScroll();
 		_expandAllButton.SetPressed(false);
@@ -567,16 +609,18 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_preferenceScale = normalized;
 		RebuildStageVisuals();
 		if (!_sidebarVisible)
-			_cameraRoot.Offset = new Vector3(HiddenOffsetX, 0, 0);
+			_cameraRoot.Offset = HiddenOffset;
 	}
 
 	private void RebuildStageVisuals()
 	{
+		ClearHorizontalCards();
 		_feedbackCard = null;
 		_hitTargets.Clear();
 		foreach (var stage in _stages.Values)
 		{
 			_mainCamera.Children.Remove(stage.Root);
+			stage.DetachTopPanel();
 			stage.Dispose();
 		}
 		_stages.Clear();
@@ -614,7 +658,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 			RebuildStageVisuals();
 		LayoutStages(false);
 		if (!_sidebarVisible)
-			_cameraRoot.Offset = new Vector3(HiddenOffsetX, 0, 0);
+			_cameraRoot.Offset = HiddenOffset;
 	}
 
 	public void Synchronize(IReadOnlyList<PrototypeStageSnapshot> snapshots)
@@ -622,6 +666,11 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (_disposed)
 			return;
 		var layoutChanged = !HasSameLayout(_snapshots, snapshots);
+		if (layoutChanged)
+		{
+			SetTopHoveredCard(null);
+			DetachHorizontalChildren();
+		}
 		_snapshots = snapshots;
 		var liveKeys = snapshots.Select(stage => stage.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
 		foreach (var stale in _stages.Keys.Where(key => !liveKeys.Contains(key)).ToArray())
@@ -643,10 +692,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 				_mainCamera.Children.InsertAtTop(stage.Root);
 			}
 			stage.Synchronize(snapshot);
-			stage.SynchronizeGroupCard(snapshot.Windows.Count > 1 ? snapshot.Windows[0] : null);
+			stage.SynchronizeGroupCard(snapshot.Windows.Count > 1 || (_dockEdge == SidebarEdge.Top && IsStagePinned(snapshot.Key)) ? snapshot.Windows.FirstOrDefault() : null);
 		}
 
-		if (_pinnedStageKeys.RemoveWhere(key => !liveKeys.Contains(key) || !_stages.TryGetValue(key, out var group) || group.Windows.Count <= 1) > 0)
+		if (_pinnedStageKeys.RemoveWhere(key => !liveKeys.Contains(key) || !_stages.TryGetValue(key, out var group) || group.Windows.Count < (_dockEdge == SidebarEdge.Top ? 1 : 2)) > 0)
 			layoutChanged = true;
 		foreach (var key in _stagePages.Keys.Where(key => !liveKeys.Contains(key)).ToArray()) _stagePages.Remove(key);
 		if (_expandedStageKey is not null && !liveKeys.Contains(_expandedStageKey))
@@ -697,9 +746,11 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	public CardHitTarget? HitTest(Point clientPoint)
 	{
-		var point = new Vector2(clientPoint.X, clientPoint.Y - ScrollTranslationY);
 		foreach (var target in _hitTargets)
 		{
+			if (target.IsTopPanel && !TopPanelBounds.Contains(clientPoint)) continue;
+			var translation = TargetTranslation(target);
+			var point = new Vector2(clientPoint.X - translation.X, clientPoint.Y - translation.Y);
 			if (target.Projection?.IsInteractive == false)
 				continue;
 			var polygon = target.Projection?.IsMoving == true ? target.Projection.CurrentPolygon() : target.Polygon;
@@ -726,9 +777,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 		SetNotificationAreaControlHovered(hit);
 		SetPinButtonHovered(hit.IsPinButton, hit.StageKey);
 		SetNotificationAreaHovered(hit);
+		if (Horizontal) { SetTopHoveredCard(hit); return; }
 		if (hit.IsAiUsageCard || hit.IsSidebarCollapseButton || hit.IsSidebarPinButton || hit.IsDesktopButton || hit.IsDesktopIconsButton || hit.IsExpandAllButton || hit.IsNotificationAreaCard || hit.QuickLaunchApp is not null)
 			return;
-		if (!_expandAllStages && _expandedStageKey is not null &&
+		if (_dockEdge != SidebarEdge.Top && !_expandAllStages && _expandedStageKey is not null &&
 			!_expandedPinned &&
 			!string.Equals(_expandedStageKey, hit.StageKey, StringComparison.OrdinalIgnoreCase))
 		{
@@ -773,6 +825,17 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	public void PollPointer(Point clientPoint)
 	{
+		if (Horizontal)
+		{
+			if (HitTest(clientPoint) is not null) UpdatePointer(clientPoint);
+			else
+			{
+				SetTopHoveredCard(null); SetExplorerButtonHovered(false); SetQuickLaunchHovered(null);
+				_aiUsageCard.SetHovered(false); SetExpandAllButtonHovered(false); SetCollapseButtonHovered(false);
+				SetSidebarPinButtonHovered(false); SetDesktopButtonHovered(false); SetDesktopIconsButtonHovered(false); SetPinButtonHovered(false);
+			}
+			return;
+		}
 		var hit = HitTest(clientPoint);
 		if (hit is not null)
 		{
@@ -788,7 +851,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 			SetNotificationAreaControlHovered(hit);
 			SetPinButtonHovered(hit.IsPinButton, hit.StageKey);
 			SetNotificationAreaHovered(hit);
-			if (!hit.IsSidebarPinButton && !_expandAllStages && _expandedStageKey is not null &&
+			if (_dockEdge != SidebarEdge.Top && !hit.IsSidebarPinButton && !_expandAllStages && _expandedStageKey is not null &&
 				!_expandedPinned &&
 				!string.Equals(_expandedStageKey, hit.StageKey, StringComparison.OrdinalIgnoreCase))
 			{
@@ -834,7 +897,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	public bool CanExpandOnHover(CardHitTarget target)
 	{
-		if (_disposed ||
+		if (Horizontal || _disposed ||
 			IsStageExpanded(target.StageKey) ||
 			target.IsAiUsageCard ||
 			target.IsExpandAllButton ||
@@ -956,6 +1019,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		}
 		if (!_stages.TryGetValue(hit.StageKey, out var stage))
 			return null;
+		if (Horizontal) return hit.Window;
 		if (hit.IsPinButton)
 		{
 			if (_pinButtonEnabled && IsStageExpanded(hit.StageKey))
@@ -968,6 +1032,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 					_expandedByHover = true;
 					_lastPointerInsideUtc = DateTime.UtcNow;
 				}
+				else _topPinOrder[hit.StageKey] = ++_topPinSequence;
 				LayoutStages(true);
 			}
 			return null;
@@ -999,6 +1064,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	private void ExpandStage(string stageKey, bool expandedByHover)
 	{
+		_topLastInside = DateTime.UtcNow;
 		SetPinButtonHovered(false);
 		_stagePages[stageKey] = 0;
 		_expandedStageKey = stageKey;
@@ -1010,12 +1076,21 @@ internal sealed class CompositionStageRenderer : IDisposable
 		LayoutStages(true);
 	}
 
-	public void Scroll(int wheelDelta)
+	public void Scroll(int wheelDelta, Point? pointer = null)
 	{
 		if (_disposed || !_sidebarVisible || wheelDelta == 0)
 			return;
+		_horizontalEdgeScroll.SuppressForWheel();
+		if (pointer is { } location && TopPanelBounds.Contains(location))
+		{
+			_topPanelScroll = Math.Clamp(_topPanelScroll - wheelDelta / 120f * (CardSize.Y + Gap) * .5f, 0, _topPanelScrollMax);
+			ApplyTopPanelScroll();
+			LayoutRevision++;
+			ScrollPositionChanged?.Invoke(this, EventArgs.Empty);
+			return;
+		}
 		var animated = _animationsEnabled && NativeMethods.ClientAreaAnimationsEnabled;
-		_scrollMotion.AddWheel(wheelDelta, (CardSize.Y + Gap) * 0.5f, animated);
+		_scrollMotion.AddWheel(wheelDelta, (AxisSize(CardSize) + Gap) * 0.5f, animated);
 		if (!animated)
 		{
 			ApplyScrollTranslation();
@@ -1032,16 +1107,23 @@ internal sealed class CompositionStageRenderer : IDisposable
 	private void AdvanceScroll()
 	{
 		var now = Stopwatch.GetTimestamp();
-		_scrollMotion.Advance(Stopwatch.GetElapsedTime(_lastScrollTick, now).TotalSeconds);
+		var seconds = Math.Min(.05, Stopwatch.GetElapsedTime(_lastScrollTick, now).TotalSeconds);
+		if (_horizontalEdgeScroll.Velocity != 0)
+		{
+			if (_owner.IsHandleCreated) UpdateEdgeScroll(_owner.PointToClient(Cursor.Position), _edgeScrollBlocked || Control.MouseButtons != MouseButtons.None);
+			if (_scrollMotion.MoveBounded(_horizontalEdgeScroll.Velocity * (float)seconds, _horizontalRange) == 0) _horizontalEdgeScroll.Stop();
+		}
+		else _scrollMotion.Advance(seconds);
 		_lastScrollTick = now;
 		ApplyScrollTranslation();
 		ScrollPositionChanged?.Invoke(this, EventArgs.Empty);
-		if (!_scrollMotion.IsMoving)
+		if (!_scrollMotion.IsMoving && _horizontalEdgeScroll.Velocity == 0)
 			_scrollTimer.Stop();
 	}
 
 	public void FinishScroll()
 	{
+		_horizontalEdgeScroll.Stop();
 		_scrollTimer.Stop();
 		_scrollMotion.SnapToTarget();
 		ApplyScrollTranslation();
@@ -1049,12 +1131,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 	private void ApplyScrollTranslation()
 	{
-		_mainCamera.Offset = new Vector3(0, ScrollTranslationY, 0);
+		_mainCamera.Offset = new Vector3(ScrollTranslationX, ScrollTranslationY, 0);
 		foreach (var (stage, top, height) in _stageScrollBounds)
 		{
-			var movingTop = stage.Motion.Current.Offset.Y;
-			stage.Root.IsVisible = Math.Max(top, movingTop) + height + ScrollTranslationY >= -80f * _dpiScale &&
-				Math.Min(top, movingTop) + ScrollTranslationY <= _viewportHeight + 80f * _dpiScale;
+			var movingTop = Horizontal ? stage.Motion.Current.Offset.X : stage.Motion.Current.Offset.Y;
+			stage.Root.IsVisible = Math.Max(top, movingTop) + height - _scrollMotion.Position >= -80f * _dpiScale &&
+				Math.Min(top, movingTop) - _scrollMotion.Position <= AxisLength + 80f * _dpiScale;
 		}
 	}
 
@@ -1094,6 +1176,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		if (_disposed)
 			return;
+		ClearHorizontalCards();
 		_disposed = true;
 		_captureWorker.Dispose();
 		lock (_captureGate)
@@ -1103,6 +1186,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		}
 		_scrollTimer.Stop();
 		_scrollTimer.Dispose();
+		ClearTopDecorations();
 		_layoutMotionTimer.Stop();
 		_layoutMotionTimer.Dispose();
 		if (_deferredCapture is { } deferred) deferred.Frame?.Dispose();
@@ -1139,13 +1223,23 @@ internal sealed class CompositionStageRenderer : IDisposable
 		_graphics.Dispose();
 	}
 
-	private Vector2 CardSize => new(BaseCardWidth * _preferenceScale * _dpiScale, BaseCardHeight * _preferenceScale * _dpiScale);
-	private float Gap => 14f * _dpiScale;
-	private float HiddenOffsetX => -(CardSize.X + 48f * _dpiScale);
+	private Vector2 NativeCardSize => new(BaseCardWidth * _preferenceScale * _dpiScale, BaseCardHeight * _preferenceScale * _dpiScale);
+	private float UniformTopHeight => Horizontal
+		? Math.Max(Math.Max(180f * _dpiScale, NativeCardSize.Y), Math.Max(_aiUsageCardEnabled ? _aiUsageCard.NaturalHeight * _dpiScale : 0,
+			_notificationAreaCardEnabled ? Math.Max(96f * _dpiScale, NativeCardSize.X) : 0)) : 0;
+	private Vector2 CardSize => new(NativeCardSize.X, Math.Max(NativeCardSize.Y, UniformTopHeight));
+	private float Gap => (Horizontal ? 26f : 14f) * _dpiScale;
+	private Vector3 HiddenOffset => _dockEdge switch
+	{
+		SidebarEdge.Right => new(SidebarThickness, 0, 0),
+		SidebarEdge.Top => new(0, -SidebarThickness, 0),
+		SidebarEdge.Bottom => new(0, SidebarThickness, 0),
+		_ => new(-SidebarThickness, 0, 0)
+	};
 	// The old 2x backing textures consumed four times the pixel memory needed by
 	// the on-screen cards. 1.25x remains crisp after the perspective transform.
 	private int CardPixelWidth => Math.Max(128, (int)Math.Ceiling(CardSize.X * 1.25f));
-	private int CardPixelHeight => Math.Max(80, (int)Math.Ceiling(CardSize.Y * 1.25f));
+	private int CardPixelHeight => Math.Max(80, (int)Math.Ceiling(NativeCardSize.Y * 1.25f));
 
 	private static float NormalizeCardScale(double cardScale) => (float)Math.Clamp(cardScale, 0.55, 1.25);
 
@@ -1153,42 +1247,53 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		if (_disposed || _viewportHeight <= 0)
 			return;
+		if (_dockEdge != SidebarEdge.Top) ClearTopDecorations();
+		if (_windowLayoutSize != CardSize)
+		{
+			_windowLayoutSize = CardSize;
+			if (_stages.Count > 0) { RebuildStageVisuals(); return; }
+		}
+		if (Horizontal) { LayoutHorizontalCards(); return; }
 		animate &= _animationsEnabled && NativeMethods.ClientAreaAnimationsEnabled;
 		_hitTargets.Clear();
+		foreach (var stage in _stages.Values) stage.DetachTopPanel();
+		TopPanelBounds = Rectangle.Empty;
+		_fixedCamera.IsVisible = _sidebarVisible && _dockEdge == SidebarEdge.Top;
 		_passivePolygons.Clear();
 		_stageScrollBounds.Clear();
-		var toolbarKey = new Vector2(_dpiScale, CardSize.X);
+		var toolbarKey = new Vector3(_dpiScale, CardSize.X, UniformTopHeight);
 		if (_toolbarLayoutKey != toolbarKey)
 		{
 			_toolbarLayoutKey = toolbarKey;
-			_expandAllButton.SetLayout(_dpiScale, CardSize.X);
-			_explorerButton.SetLayout(_dpiScale, CardSize.X);
-			foreach (var button in _quickLaunchButtons) button.SetLayout(_dpiScale, CardSize.X);
-			_collapseButton.SetLayout(_dpiScale, CardSize.X);
-			_sidebarPinButton.SetLayout(_dpiScale, -7.5f, _sidebarPinned);
-			_desktopButton.SetLayout(_dpiScale, CardSize.X);
-			_desktopIconsButton.SetLayout(_dpiScale, CardSize.X);
-			_aiUsageCard.SetLayout(_dpiScale, CardSize.X);
-			_notificationAreaCard.SetLayout(_dpiScale, CardSize.X);
+			_expandAllButton.SetLayout(_dpiScale, CardSize.X, UniformTopHeight);
+			_explorerButton.SetLayout(_dpiScale, CardSize.X, UniformTopHeight);
+			foreach (var button in _quickLaunchButtons) button.SetLayout(_dpiScale, CardSize.X, UniformTopHeight);
+			_collapseButton.SetLayout(_dpiScale, CardSize.X, UniformTopHeight);
+			_sidebarPinButton.SetLayout(_dpiScale, _dockEdge == SidebarEdge.Top ? -4f : -7.5f, _sidebarPinned, UniformTopHeight > 0 ? CardSize.X : 0, UniformTopHeight);
+			_desktopButton.SetLayout(_dpiScale, CardSize.X, UniformTopHeight);
+			_desktopIconsButton.SetLayout(_dpiScale, CardSize.X, UniformTopHeight);
+			_aiUsageCard.SetLayout(_dpiScale, CardSize.X, UniformTopHeight);
+			_notificationAreaCard.SetLayout(_dpiScale, CardSize.X, UniformTopHeight);
 		}
-		var headerCardGap = 12f * _dpiScale;
-		var headerHeight = _expandAllButton.Size.Y + headerCardGap +
-			(_explorerButtonEnabled ? _explorerButton.Size.Y + headerCardGap : 0f) +
-			_quickLaunchButtons.Sum(button => button.Size.Y + headerCardGap);
-		headerHeight += _aiUsageCardEnabled ? _aiUsageCard.Size.Y + headerCardGap : 0f;
-		var trailingGap = 12f * _dpiScale;
+		_collapseButton.SetDirection(_dockEdge);
+		var headerCardGap = _dockEdge == SidebarEdge.Top ? Gap : 12f * _dpiScale;
+		var headerHeight = AxisSize(_expandAllButton.Size) + headerCardGap +
+			(_explorerButtonEnabled ? AxisSize(_explorerButton.Size) + headerCardGap : 0f) +
+			_quickLaunchButtons.Sum(button => AxisSize(button.Size) + headerCardGap);
+		headerHeight += _aiUsageCardEnabled ? AxisSize(_aiUsageCard.Size) + headerCardGap : 0f;
+		var trailingGap = headerCardGap;
 		var trailingHeight =
-			(_notificationAreaCardEnabled ? trailingGap + _notificationAreaCard.Size.Y : 0f) +
-			(_desktopButtonEnabled ? trailingGap + _desktopButton.Size.Y : 0f) +
-			(_desktopIconsButtonEnabled ? trailingGap + _desktopIconsButton.Size.Y : 0f) +
-			(_sidebarPinButtonEnabled ? trailingGap + _sidebarPinButton.Size.Y : 0f) +
-			(_collapseButtonEnabled ? trailingGap + _collapseButton.Size.Y : 0f);
-		var cardViewportHeight = _viewportHeight;
+			(_notificationAreaCardEnabled ? trailingGap + AxisSize(_notificationAreaCard.Size) : 0f) +
+			(_desktopButtonEnabled ? trailingGap + AxisSize(_desktopButton.Size) : 0f) +
+			(_desktopIconsButtonEnabled ? trailingGap + AxisSize(_desktopIconsButton.Size) : 0f) +
+			(_sidebarPinButtonEnabled ? trailingGap + AxisSize(_sidebarPinButton.Size) : 0f) +
+			(_collapseButtonEnabled ? trailingGap + AxisSize(_collapseButton.Size) : 0f);
+		var cardViewportHeight = AxisLength;
 		var cardSize = CardSize;
-		var stride = cardSize.Y + Gap;
+		var stride = AxisSize(cardSize) + Gap;
 		var cardsHeight = Math.Max(0, _snapshots.Count * stride - Gap);
 		var baseTotalHeight = headerHeight + cardsHeight;
-		var expandedExtraHeight = _stages.Values.Where(stage => stage.Windows.Count > 1 && IsStageExpanded(stage.Key))
+		var expandedExtraHeight = _dockEdge == SidebarEdge.Top ? 0 : _stages.Values.Where(stage => stage.Windows.Count > 1 && IsStageExpanded(stage.Key))
 			.Sum(stage => GetExpandedExtraHeight(stage, _expandAllStages));
 		var columnLayout = SidebarExpansionLayout.Calculate(baseTotalHeight + trailingHeight,
 			expandedExtraHeight, cardViewportHeight, _dpiScale, _sidebarVerticalOffset * _dpiScale);
@@ -1198,11 +1303,11 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var currentY = startY;
 		var lowestVisibleCardBottom = float.NaN;
 		lowestVisibleCardBottom = LayoutExpandAllButton(currentY);
-		currentY += _expandAllButton.Size.Y + headerCardGap;
+		currentY += AxisSize(_expandAllButton.Size) + headerCardGap;
 		if (_explorerButtonEnabled)
 		{
 			lowestVisibleCardBottom = LayoutExplorerButton(currentY);
-			currentY += _explorerButton.Size.Y + headerCardGap;
+			currentY += AxisSize(_explorerButton.Size) + headerCardGap;
 		}
 		else
 		{
@@ -1211,12 +1316,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 		foreach (var button in _quickLaunchButtons)
 		{
 			lowestVisibleCardBottom = LayoutQuickLaunchButton(button, currentY);
-			currentY += button.Size.Y + headerCardGap;
+			currentY += AxisSize(button.Size) + headerCardGap;
 		}
 		if (_aiUsageCardEnabled)
 		{
 			lowestVisibleCardBottom = LayoutAiUsageCard(currentY);
-			currentY += _aiUsageCard.Size.Y + headerCardGap;
+			currentY += AxisSize(_aiUsageCard.Size) + headerCardGap;
 		}
 		else _aiUsageCard.SetVisible(false);
 
@@ -1225,15 +1330,17 @@ internal sealed class CompositionStageRenderer : IDisposable
 			var snapshot = _snapshots[stageIndex];
 			if (!_stages.TryGetValue(snapshot.Key, out var stage))
 				continue;
-			var isExpanded = stage.Windows.Count > 1 && IsStageExpanded(snapshot.Key);
+			var isExpanded = _dockEdge != SidebarEdge.Top && stage.Windows.Count > 1 && IsStageExpanded(snapshot.Key);
 			var stageExpandedExtraHeight = isExpanded ? GetExpandedExtraHeight(stage, _expandAllStages) : 0f;
 			const float stageScale = 1f;
-			var stageOffset = new Vector3(12 * _dpiScale, currentY, 0);
+			var stageOffset = DockPosition(currentY, cardSize);
 			stage.Motion.Set(stageOffset, Vector3.One, 0, animate);
-			var stageVisualHeight = cardSize.Y + stageExpandedExtraHeight;
-			_stageScrollBounds.Add((stage, stageOffset.Y, stageVisualHeight * stageScale));
+			var stageVisualHeight = AxisSize(cardSize) + stageExpandedExtraHeight;
+			_stageScrollBounds.Add((stage, currentY, stageVisualHeight * stageScale));
 
-			if (isExpanded)
+			if (_dockEdge == SidebarEdge.Top)
+				LayoutTopPrimary(stage, stageOffset, cameraCenter, stageIndex);
+			else if (isExpanded)
 				LayoutExpandedStage(stage, stageOffset, stageScale, cameraCenter, animate, _expandAllStages);
 			else
 				LayoutCollapsedStage(stage, stageOffset, stageScale, cameraCenter, animate, stageIndex);
@@ -1245,28 +1352,28 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (_notificationAreaCardEnabled)
 		{
 			LayoutNotificationAreaCard(currentY);
-			currentY += _notificationAreaCard.Size.Y + trailingGap;
+			currentY += AxisSize(_notificationAreaCard.Size) + trailingGap;
 		}
 		else
 			_notificationAreaCard.SetVisible(false);
 		if (_desktopButtonEnabled)
 		{
 			LayoutDesktopButton(currentY);
-			currentY += _desktopButton.Size.Y + trailingGap;
+			currentY += AxisSize(_desktopButton.Size) + trailingGap;
 		}
 		else
 			_desktopButton.SetVisible(false);
 		if (_desktopIconsButtonEnabled)
 		{
 			LayoutDesktopIconsButton(currentY);
-			currentY += _desktopIconsButton.Size.Y + trailingGap;
+			currentY += AxisSize(_desktopIconsButton.Size) + trailingGap;
 		}
 		else
 			_desktopIconsButton.SetVisible(false);
 		if (_sidebarPinButtonEnabled)
 		{
 			LayoutSidebarPinButton(currentY);
-			currentY += _sidebarPinButton.Size.Y + trailingGap;
+			currentY += AxisSize(_sidebarPinButton.Size) + trailingGap;
 		}
 		else
 			_sidebarPinButton.SetVisible(false);
@@ -1274,6 +1381,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 			LayoutCollapseButton(currentY);
 		else
 			_collapseButton.SetVisible(false);
+		if (_dockEdge == SidebarEdge.Top) { LayoutTopPanel(animate, cameraCenter); LayoutTopDecorations(); }
 		ApplyScrollTranslation();
 		_hitTargets.Sort((left, right) => right.ZOrder.CompareTo(left.ZOrder));
 		TrimWarmPreviews();
@@ -1333,8 +1441,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		_mainCamera.Children.Remove(_expandAllButton.Root);
 		_mainCamera.Children.InsertAtTop(_expandAllButton.Root);
-		var x = 12f * _dpiScale;
-		_expandAllButton.SetOffset(new Vector3(x, y, 0));
+		var position = DockPosition(y, _expandAllButton.Size);
+		var x = position.X;
+		y = position.Y;
+		_expandAllButton.SetOffset(position);
 		_expandAllButton.SetVisible(true);
 		var polygon = Card3DGeometry.ProjectCard(
 			new Vector3(x, y, 0),
@@ -1365,8 +1475,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 
 		_mainCamera.Children.Remove(_explorerButton.Root);
 		_mainCamera.Children.InsertAtTop(_explorerButton.Root);
-		var x = 12f * _dpiScale;
-		_explorerButton.SetOffset(new Vector3(x, y, 0));
+		var position = DockPosition(y, _explorerButton.Size);
+		var x = position.X;
+		y = position.Y;
+		_explorerButton.SetOffset(position);
 		_explorerButton.SetVisible(true);
 		var polygon = Card3DGeometry.ProjectCard(
 			new Vector3(x, y, 0),
@@ -1391,8 +1503,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		_mainCamera.Children.Remove(button.Root);
 		_mainCamera.Children.InsertAtTop(button.Root);
-		var x = 12f * _dpiScale;
-		button.SetOffset(new Vector3(x, y, 0));
+		var position = DockPosition(y, button.Size);
+		var x = position.X;
+		y = position.Y;
+		button.SetOffset(position);
 		button.SetVisible(true);
 		var polygon = Card3DGeometry.ProjectCard(
 			new Vector3(x, y, 0),
@@ -1417,8 +1531,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		_mainCamera.Children.Remove(_aiUsageCard.Root);
 		_mainCamera.Children.InsertAtTop(_aiUsageCard.Root);
-		var x = 12f * _dpiScale;
-		_aiUsageCard.SetOffset(new Vector3(x, y, 0));
+		var position = DockPosition(y, _aiUsageCard.Size);
+		var x = position.X;
+		y = position.Y;
+		_aiUsageCard.SetOffset(position);
 		_aiUsageCard.SetVisible(true);
 		var polygon = Card3DGeometry.ProjectCard(new Vector3(x, y, 0), 1f, Vector3.Zero, Vector3.One,
 			_aiUsageCard.Angle, _aiUsageCard.Size, _aiUsageCard.Pivot,
@@ -1431,8 +1547,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		_mainCamera.Children.Remove(_notificationAreaCard.Root);
 		_mainCamera.Children.InsertAtTop(_notificationAreaCard.Root);
-		var x = 12f * _dpiScale;
-		_notificationAreaCard.SetOffset(new Vector3(x, y, 0));
+		var position = DockPosition(y, _notificationAreaCard.Size);
+		var x = position.X;
+		y = position.Y;
+		_notificationAreaCard.SetOffset(position);
 		_notificationAreaCard.SetVisible(true);
 		var cameraCenter = new Vector2(_viewportWidth / 2f, _viewportHeight / 2f);
 		var polygon = Card3DGeometry.ProjectCard(
@@ -1477,8 +1595,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		_mainCamera.Children.Remove(_desktopButton.Root);
 		_mainCamera.Children.InsertAtTop(_desktopButton.Root);
-		var x = 12f * _dpiScale;
-		_desktopButton.SetOffset(new Vector3(x, y, 0));
+		var position = DockPosition(y, _desktopButton.Size);
+		var x = position.X;
+		y = position.Y;
+		_desktopButton.SetOffset(position);
 		_desktopButton.SetVisible(true);
 		var polygon = Card3DGeometry.ProjectCard(
 			new Vector3(x, y, 0), 1f, Vector3.Zero, Vector3.One,
@@ -1494,8 +1614,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		_mainCamera.Children.Remove(_desktopIconsButton.Root);
 		_mainCamera.Children.InsertAtTop(_desktopIconsButton.Root);
-		var x = 12f * _dpiScale;
-		_desktopIconsButton.SetOffset(new Vector3(x, y, 0));
+		var position = DockPosition(y, _desktopIconsButton.Size);
+		var x = position.X;
+		y = position.Y;
+		_desktopIconsButton.SetOffset(position);
 		_desktopIconsButton.SetVisible(true);
 		var polygon = Card3DGeometry.ProjectCard(
 			new Vector3(x, y, 0), 1f, Vector3.Zero, Vector3.One,
@@ -1516,8 +1638,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 		}
 		_mainCamera.Children.Remove(_collapseButton.Root);
 		_mainCamera.Children.InsertAtTop(_collapseButton.Root);
-		var x = 12f * _dpiScale;
-		_collapseButton.SetOffset(new Vector3(x, y, 0));
+		var position = DockPosition(y, _collapseButton.Size);
+		var x = position.X;
+		y = position.Y;
+		_collapseButton.SetOffset(position);
 		_collapseButton.SetVisible(true);
 		var polygon = Card3DGeometry.ProjectCard(
 			new Vector3(x, y, 0),
@@ -1541,8 +1665,10 @@ internal sealed class CompositionStageRenderer : IDisposable
 	{
 		_mainCamera.Children.Remove(_sidebarPinButton.Root);
 		_mainCamera.Children.InsertAtTop(_sidebarPinButton.Root);
-		var x = 12f * _dpiScale;
-		_sidebarPinButton.SetOffset(new Vector3(x, y, 0));
+		var position = DockPosition(y, _sidebarPinButton.Size);
+		var x = position.X;
+		y = position.Y;
+		_sidebarPinButton.SetOffset(position);
 		_sidebarPinButton.SetVisible(true);
 		var polygon = Card3DGeometry.ProjectCard(
 			new Vector3(x, y, 0), 1f, Vector3.Zero, Vector3.One,
@@ -1646,7 +1772,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		if (visibleCount <= 1)
 			return 0;
 		var cardSize = CardSize;
-		var stride = Card3DGeometry.CalculateExpandedListStride(cardSize.Y, _dpiScale);
+		var stride = _dockEdge == SidebarEdge.Top ? cardSize.X + Gap : Card3DGeometry.CalculateExpandedListStride(AxisSize(cardSize), _dpiScale);
 		var paginationHeight = !expandAll && stage.Windows.Count > PageSize - 1
 			? Math.Max(32f, cardSize.Y * 0.46f) + 12f * _dpiScale
 			: 0;
@@ -1755,11 +1881,11 @@ internal sealed class CompositionStageRenderer : IDisposable
 			return;
 		stage.GroupCard.SetVisible(true);
 
-		var stride = Card3DGeometry.CalculateExpandedListStride(cardSize.Y, _dpiScale);
+		var stride = _dockEdge == SidebarEdge.Top ? cardSize.X + Gap : Card3DGeometry.CalculateExpandedListStride(AxisSize(cardSize), _dpiScale);
 		var childIndent = 18f * _dpiScale;
 		var hoveredChildIndex = Array.FindIndex(page, card => card.Window.Handle == _hoveredWindowHandle);
 		var hoveredIndex = hoveredChildIndex < 0 ? -1 : hoveredChildIndex + 1;
-		stage.SetExpandedConnectorLayout(page.Length + 1, cardSize.Y, stride, childIndent, _dpiScale);
+		stage.ExpandedConnector.SetLayout(page.Length + 1, AxisSize(cardSize), stride, childIndent, _dpiScale, Horizontal, cardSize.Y);
 		// The connector is visible geometry, but deliberately not a click target.
 		// Without its own region the native window clips it between child cards.
 		_passivePolygons.Add(Card3DGeometry.ProjectCard(
@@ -1842,6 +1968,8 @@ internal sealed class CompositionStageRenderer : IDisposable
 				_dpiScale,
 				stride,
 				childIndent);
+			if (Horizontal)
+				transform = transform with { Offset = new Vector3(transform.Offset.Y, 0, transform.Offset.Z) };
 			var delay = cascade ? TimeSpan.FromMilliseconds(index * 45) : TimeSpan.Zero;
 			var duration = cascade ? TimeSpan.FromMilliseconds(300) : CardVisualMotion.Duration;
 			var reveal = cascade
@@ -1870,9 +1998,9 @@ internal sealed class CompositionStageRenderer : IDisposable
 		stage.SetPaginationVisible(!expandAll && pageCount > 1);
 		if (!expandAll && pageCount > 1)
 		{
-			var buttonsY = cardSize.Y + page.Length * stride + 7 * _dpiScale;
-			AddPaginationButton(stage, stage.PreviousButton, stageOffset, stageScale, cameraCenter, new Vector3(12 * _dpiScale, buttonsY, 80 * _dpiScale), -1);
-			AddPaginationButton(stage, stage.NextButton, stageOffset, stageScale, cameraCenter, new Vector3(46 * _dpiScale, buttonsY, 80 * _dpiScale), 1);
+			var buttonsY = AxisSize(cardSize) + page.Length * stride + 7 * _dpiScale;
+			AddPaginationButton(stage, stage.PreviousButton, stageOffset, stageScale, cameraCenter, Horizontal ? new Vector3(buttonsY, 0, 80 * _dpiScale) : new Vector3(12 * _dpiScale, buttonsY, 80 * _dpiScale), -1);
+			AddPaginationButton(stage, stage.NextButton, stageOffset, stageScale, cameraCenter, Horizontal ? new Vector3(buttonsY, 42 * _dpiScale, 80 * _dpiScale) : new Vector3(46 * _dpiScale, buttonsY, 80 * _dpiScale), 1);
 		}
 	}
 
@@ -1931,7 +2059,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 		WindowCardVisual? due = null;
 		foreach (var stage in _stages.Values)
 		{
-			if (!stage.Root.IsVisible) continue;
+			if (!stage.Root.IsVisible && !(_dockEdge == SidebarEdge.Top && _topVisibleGroups.Contains(stage.Key))) continue;
 			foreach (var card in stage.Windows)
 				ConsiderCapture(card, nowUtc, ref due);
 			if (stage.GroupCard is { } group) ConsiderCapture(group, nowUtc, ref due);
@@ -1966,11 +2094,12 @@ internal sealed class CompositionStageRenderer : IDisposable
 		var revision = card.MarkCaptureStarted();
 		var isGroup = card.IsApplicationGroupCard;
 		var hadSurface = card.HasSurface;
+		var fitMode = card.FitMode;
 		_ = Task.Run(async () =>
 		{
 			try
 			{
-				return await _captureWorker.CaptureAsync(snapshot, width, height, isGroup, badge).ConfigureAwait(false);
+				return await _captureWorker.CaptureAsync(snapshot, width, height, isGroup, badge, fitMode: fitMode).ConfigureAwait(false);
 			}
 			catch (Exception exception) when (!_disposed)
 			{
@@ -1978,7 +2107,7 @@ internal sealed class CompositionStageRenderer : IDisposable
 				if (hadSurface) throw;
 				// This instance is placeholder-only. It never runs PrintWindow or Shell icon extraction.
 				return isGroup ? _capture.CaptureApplicationCard(snapshot, width, height) :
-					_capture.Capture(snapshot, width, height, badge);
+					_capture.Capture(snapshot, width, height, badge, fitMode);
 			}
 		}).ContinueWith(task =>
 		{
@@ -2084,7 +2213,8 @@ internal sealed record CardHitTarget(
 	bool IsDesktopIconsButton = false,
 	CardHitProjection? Projection = null,
 	bool IsSidebarPinButton = false,
-	bool IsAiUsageCard = false);
+	bool IsAiUsageCard = false,
+	bool IsTopPanel = false);
 
 internal sealed class StageCardVisual : IDisposable
 {
@@ -2127,9 +2257,36 @@ internal sealed class StageCardVisual : IDisposable
 	public PageButtonVisual NextButton { get; }
 	public PinButtonVisual PinButton { get; }
 	public ExpandedConnectorVisual ExpandedConnector { get; }
+	public ContainerVisual? TopPanelRoot { get; private set; }
+	public CardVisualMotion? TopPanelMotion { get; private set; }
+	public TopPanelLabel? TopLabel { get; private set; }
+	private ContainerVisual? _topParent;
+	public void AttachTopPanel(ContainerVisual parent)
+	{
+		TopPanelRoot ??= _compositor.CreateContainerVisual();
+		TopPanelMotion ??= new CardVisualMotion(_compositor, TopPanelRoot);
+		TopLabel ??= new TopPanelLabel(_compositor, _graphics);
+		if (_topParent is null) { parent.Children.InsertAtTop(TopPanelRoot); _topParent = parent; }
+		foreach (var card in Windows) { Root.Children.Remove(card.Root); TopPanelRoot.Children.InsertAtTop(card.Root); }
+		TopLabel.Root.Parent?.Children.Remove(TopLabel.Root);
+		TopPanelRoot.Children.InsertAtTop(TopLabel.Root);
+		PinButton.Root.Parent?.Children.Remove(PinButton.Root);
+		TopPanelRoot.Children.InsertAtTop(PinButton.Root);
+		_arrangedVisuals = Array.Empty<Visual>();
+	}
+	public void DetachTopPanel()
+	{
+		if (_topParent is null || TopPanelRoot is null) return;
+		foreach (var card in Windows) { TopPanelRoot.Children.Remove(card.Root); Root.Children.InsertAtTop(card.Root); }
+		PinButton.Root.Parent?.Children.Remove(PinButton.Root);
+		GroupCard?.Root.Children.InsertAtTop(PinButton.Root);
+		_topParent.Children.Remove(TopPanelRoot); _topParent = null;
+		_arrangedVisuals = Array.Empty<Visual>();
+	}
 
 	public void Synchronize(PrototypeStageSnapshot snapshot)
 	{
+		if (!Windows.Select(c => c.Window.Handle).SequenceEqual(snapshot.Windows.Select(w => w.Handle))) DetachTopPanel();
 		var handles = snapshot.Windows.Select(window => window.Handle).ToHashSet();
 		for (var index = Windows.Count - 1; index >= 0; index--)
 		{
@@ -2270,6 +2427,9 @@ internal sealed class StageCardVisual : IDisposable
 
 	public void Dispose()
 	{
+		DetachTopPanel();
+		TopLabel?.Dispose();
+		TopPanelRoot?.Dispose();
 		foreach (var window in Windows)
 			window.Dispose();
 		Windows.Clear();
@@ -2311,7 +2471,7 @@ internal sealed class ExpandedConnectorVisual : IDisposable
 
 	public ContainerVisual Root { get; }
 
-	public void SetLayout(int visibleCount, float cardHeight, float stride, float childIndent, float dpiScale)
+	public void SetLayout(int visibleCount, float cardHeight, float stride, float childIndent, float dpiScale, bool horizontal = false, float crossSize = 0)
 	{
 		var childCount = Math.Max(0, visibleCount - 1);
 		Root.IsVisible = childCount > 0;
@@ -2335,6 +2495,18 @@ internal sealed class ExpandedConnectorVisual : IDisposable
 			var childCenterY = (index + 1) * stride + cardHeight * 0.5f;
 			branch.Offset = new Vector3(lineX, childCenterY - thickness * 0.5f, 0);
 			branch.Size = new Vector2(Math.Max(thickness, childIndent - lineX + 3f * safeScale), thickness);
+		}
+		if (horizontal)
+		{
+			var lineY = crossSize + 4f * safeScale;
+			_verticalLine.Offset = new Vector3(cardHeight / 2f, lineY, 0);
+			_verticalLine.Size = new Vector2(childCount * stride, thickness);
+			Root.Size = new Vector2(lastCenterY + thickness, lineY + thickness);
+			for (var index = 0; index < _branches.Count; index++)
+			{
+				_branches[index].Offset = new Vector3((index + 1) * stride + cardHeight / 2f, crossSize, 0);
+				_branches[index].Size = new Vector2(thickness, 4f * safeScale);
+			}
 		}
 	}
 
@@ -2523,6 +2695,16 @@ internal sealed class PinButtonVisual : IDisposable
 	}
 
 	public void SetOffset(Vector3 offset) => Root.Offset = offset;
+
+	public void SetHeaderVisible(bool visible)
+	{
+		_visible = visible;
+		Root.StopAnimation(nameof(Visual.Opacity));
+		Root.Opacity = visible ? 1 : 0;
+		Root.IsVisible = visible;
+		_edLabel.StopAnimation(nameof(Visual.Opacity));
+		_edLabel.Opacity = _pinned ? 1 : 0;
+	}
 
 	public void SetVisible(bool visible)
 	{
@@ -2736,12 +2918,13 @@ internal sealed class SidebarExpandAllButtonVisual : IDisposable
 	public ContainerVisual Root { get; }
 	public Vector2 Size { get; private set; }
 	public Vector2 Pivot { get; private set; }
-	public float Angle => -7.5f;
+	public float Angle { get; private set; } = -7.5f;
 
-	public void SetLayout(float dpiScale, float cardWidth)
+	public void SetLayout(float dpiScale, float cardWidth, float cardHeight = 0)
 	{
+		Angle = cardHeight > 0 ? -4f : -7.5f;
 		var scale = Math.Max(0.75f, dpiScale);
-		Size = new Vector2(Math.Max(64f * scale, cardWidth), 36f * scale);
+		Size = new Vector2(Math.Max(64f * scale, cardWidth), Math.Max(cardHeight, 36f * scale));
 		Root.Size = Size;
 		Root.CenterPoint = new Vector3(Size.X * 0.88f, Size.Y / 2f, 0);
 		Root.RotationAxis = Vector3.UnitY;
@@ -2759,9 +2942,9 @@ internal sealed class SidebarExpandAllButtonVisual : IDisposable
 			_cards[index].Size = new Vector2(width - index * 4f * scale, height);
 			_cards[index].Offset = new Vector3(x + index * 2f * scale, firstY + index * (height + 4f * scale), 0);
 		}
-		_fixLabel.Offset = new Vector3(13f * scale, 12f * scale, 0);
+		_fixLabel.Offset = new Vector3(13f * scale, (Size.Y - 12f * scale) / 2f, 0);
 		_fixLabel.Scale = new Vector3(scale, scale, 1f);
-		_edLabel.Offset = new Vector3(Size.X - 31f * scale, 12f * scale, 0);
+		_edLabel.Offset = new Vector3(Size.X - 31f * scale, (Size.Y - 12f * scale) / 2f, 0);
 		_edLabel.Scale = new Vector3(scale, scale, 1f);
 		ApplyState();
 	}
@@ -2793,7 +2976,7 @@ internal sealed class SidebarExpandAllButtonVisual : IDisposable
 		if (!_active)
 			_edLabel.Opacity = 0f;
 		var visualScale = _pressed ? 0.95f : _hovered ? 1.025f : 1f;
-		Root.Scale = new Vector3(visualScale, visualScale, 1f);
+		Root.Scale = Angle == -4f ? Vector3.One : new Vector3(visualScale, visualScale, 1f);
 	}
 
 	public void Dispose()
@@ -2916,12 +3099,13 @@ internal sealed class SidebarExplorerButtonVisual : IDisposable
 	public ContainerVisual Root { get; }
 	public Vector2 Size { get; private set; }
 	public Vector2 Pivot { get; private set; }
-	public float Angle => -7.5f;
+	public float Angle { get; private set; } = -7.5f;
 
-	public void SetLayout(float dpiScale, float cardWidth)
+	public void SetLayout(float dpiScale, float cardWidth, float cardHeight = 0)
 	{
+		Angle = cardHeight > 0 ? -4f : -7.5f;
 		var scale = Math.Max(0.75f, dpiScale);
-		Size = new Vector2(Math.Max(64f * scale, cardWidth), 36f * scale);
+		Size = new Vector2(Math.Max(64f * scale, cardWidth), Math.Max(cardHeight, 36f * scale));
 		Root.Size = Size;
 		Root.CenterPoint = new Vector3(Size.X * 0.88f, Size.Y / 2f, 0);
 		Root.RotationAxis = Vector3.UnitY;
@@ -2990,7 +3174,7 @@ internal sealed class SidebarExplorerButtonVisual : IDisposable
 		_backgroundBrush.Color = Windows.UI.Color.FromArgb((byte)backgroundAlpha, 22, 27, 36);
 		_folderBrush.Color = Windows.UI.Color.FromArgb((byte)folderAlpha, 242, 185, 67);
 		var visualScale = _pressed ? 0.95f : _hovered ? 1.025f : 1f;
-		Root.Scale = new Vector3(visualScale, visualScale, 1f);
+		Root.Scale = Angle == -4f ? Vector3.One : new Vector3(visualScale, visualScale, 1f);
 	}
 }
 
@@ -3065,14 +3249,15 @@ internal sealed class SidebarTopPinButtonVisual : IDisposable
 	public ContainerVisual Root { get; }
 	public Vector2 Size { get; private set; }
 	public Vector2 Pivot { get; private set; }
-	public float Angle => -7.5f;
+	public float Angle { get; private set; } = -7.5f;
 
-	public void SetLayout(float dpiScale, float angle, bool pinned)
+	public void SetLayout(float dpiScale, float angle, bool pinned, float cardWidth = 0, float cardHeight = 0)
 	{
+		Angle = cardHeight > 0 ? -4f : -7.5f;
 		var scale = Math.Max(0.75f, dpiScale);
-		Size = new Vector2(104f * scale, 34f * scale);
+		Size = new Vector2(Math.Max(cardWidth, 104f * scale), Math.Max(cardHeight, 34f * scale));
 		Root.Size = Size;
-		Root.CenterPoint = new Vector3(Size.X / 2f, Size.Y / 2f, 0);
+		Root.CenterPoint = new Vector3(Size.X * (cardHeight > 0 ? .88f : .5f), Size.Y / 2f, 0);
 		Root.RotationAxis = Vector3.UnitY;
 		Root.RotationAngleInDegrees = angle;
 		Pivot = new Vector2(Root.CenterPoint.X, Root.CenterPoint.Y);
@@ -3081,7 +3266,7 @@ internal sealed class SidebarTopPinButtonVisual : IDisposable
 		_backgroundGeometry.CornerRadius = new Vector2(12f * scale);
 		_glyph.Size = new Vector2(24f * scale, 29f * scale);
 		_glyph.CenterPoint = new Vector3(12f * scale, 14.5f * scale, 0);
-		_glyph.Offset = new Vector3(Size.X / 2f - 12f * scale, 2f * scale, 0);
+		_glyph.Offset = new Vector3(Size.X / 2f - 12f * scale, (Size.Y - 29f * scale) / 2f, 0);
 		_head.Size = new Vector2(10f * scale);
 		_head.Offset = new Vector3(7f * scale, 1f * scale, 0);
 		_headGeometry.Center = new Vector2(5f * scale);
@@ -3095,7 +3280,7 @@ internal sealed class SidebarTopPinButtonVisual : IDisposable
 		_point.CenterPoint = new Vector3(2.5f * scale, 2.5f * scale, 0);
 		_point.RotationAngleInDegrees = 45f;
 		_statusDot.Size = new Vector2(7f * scale);
-		_statusDot.Offset = new Vector3(Size.X - 15f * scale, 13.5f * scale, 0);
+		_statusDot.Offset = new Vector3(Size.X - 15f * scale, (Size.Y - 7f * scale) / 2f, 0);
 		_statusGeometry.Center = new Vector2(3.5f * scale);
 		_statusGeometry.Radius = new Vector2(3.5f * scale);
 		_pinned = pinned;
@@ -3158,7 +3343,7 @@ internal sealed class SidebarTopPinButtonVisual : IDisposable
 		_glyph.RotationAngleInDegrees = _pinned ? 0f : -24f;
 		_statusDot.IsVisible = _pinned;
 		var feedbackScale = _pressed ? 0.93f : _hovered ? 1.04f : 1f;
-		Root.Scale = new Vector3(feedbackScale);
+		Root.Scale = Angle == -4f ? Vector3.One : new Vector3(feedbackScale);
 	}
 
 	public void Dispose()
@@ -3188,6 +3373,7 @@ internal sealed class SidebarTopPinButtonVisual : IDisposable
 
 internal sealed class SidebarCollapseButtonVisual : IDisposable
 {
+	private SidebarEdge _direction = SidebarEdge.Left;
 	private readonly SpriteVisual _background;
 	private readonly CompositionColorBrush _backgroundBrush;
 	private readonly CompositionRoundedRectangleGeometry _geometry;
@@ -3222,12 +3408,13 @@ internal sealed class SidebarCollapseButtonVisual : IDisposable
 	public ContainerVisual Root { get; }
 	public Vector2 Size { get; private set; }
 	public Vector2 Pivot { get; private set; }
-	public float Angle => -7.5f;
+	public float Angle { get; private set; } = -7.5f;
 
-	public void SetLayout(float dpiScale, float cardWidth)
+	public void SetLayout(float dpiScale, float cardWidth, float cardHeight = 0)
 	{
+		Angle = cardHeight > 0 ? -4f : -7.5f;
 		var scale = Math.Max(0.75f, dpiScale);
-		Size = new Vector2(Math.Max(64f * scale, cardWidth), 30f * scale);
+		Size = new Vector2(Math.Max(64f * scale, cardWidth), Math.Max(cardHeight, 30f * scale));
 		Root.Size = Size;
 		Root.CenterPoint = new Vector3(Size.X * 0.88f, Size.Y / 2f, 0);
 		Root.RotationAxis = Vector3.UnitY;
@@ -3240,10 +3427,29 @@ internal sealed class SidebarCollapseButtonVisual : IDisposable
 		_lowerStroke.Size = _upperStroke.Size;
 		_upperStroke.CenterPoint = new Vector3(_upperStroke.Size.X / 2f, _upperStroke.Size.Y / 2f, 0);
 		_lowerStroke.CenterPoint = _upperStroke.CenterPoint;
-		var centerX = Size.X / 2f + 2f * scale;
-		_upperStroke.Offset = new Vector3(centerX, Size.Y / 2f - 7f * scale, 0);
-		_lowerStroke.Offset = new Vector3(centerX, Size.Y / 2f, 0);
+		// A grouped tool row changes size after direction was selected. Reapply both
+		// stroke offsets and rotations together instead of resetting to vertical offsets.
+		SetDirection(_direction);
 		ApplyState();
+	}
+
+	public void SetDirection(SidebarEdge edge)
+	{
+		_direction = edge;
+		var degrees = edge switch { SidebarEdge.Top => 90f, SidebarEdge.Right => 180f, SidebarEdge.Bottom => -90f, _ => 0f };
+		var radians = degrees * MathF.PI / 180;
+		var scale = _upperStroke.Size.Y / 10f;
+		var center = new Vector2(Size.X / 2f, Size.Y / 2f);
+		foreach (var (stroke, local, angle) in new[]
+		{
+			(_upperStroke, new Vector2(0, -3.5f) * scale, 45f),
+			(_lowerStroke, new Vector2(0, 3.5f) * scale, -45f)
+		})
+		{
+			var rotated = new Vector2(local.X * MathF.Cos(radians) - local.Y * MathF.Sin(radians), local.X * MathF.Sin(radians) + local.Y * MathF.Cos(radians));
+			stroke.Offset = new Vector3(center + rotated - stroke.Size / 2f, 0);
+			stroke.RotationAngleInDegrees = angle + degrees;
+		}
 	}
 
 	public void SetOffset(Vector3 offset) => Root.Offset = offset;
@@ -3290,7 +3496,7 @@ internal sealed class SidebarCollapseButtonVisual : IDisposable
 		_backgroundBrush.Color = Windows.UI.Color.FromArgb((byte)backgroundAlpha, 246, 248, 252);
 		_strokeBrush.Color = Windows.UI.Color.FromArgb((byte)strokeAlpha, 0, 0, 0);
 		var visualScale = _pressed ? 0.93f : _hovered ? 1.04f : 1f;
-		Root.Scale = new Vector3(visualScale, visualScale, 1f);
+		Root.Scale = Angle == -4f ? Vector3.One : new Vector3(visualScale, visualScale, 1f);
 	}
 
 	private static SpriteVisual CreateStroke(Compositor compositor, float angle)
@@ -3392,12 +3598,92 @@ internal sealed class SidebarHintVisual : IDisposable
 
 internal sealed class WindowCardVisual : IDisposable
 {
+	private bool _horizontalRow;
+	private SpriteVisual? _rowHover;
+	private CompositionColorBrush? _rowHoverBrush;
+	internal PreviewFitMode FitMode => _horizontalRow ? PreviewFitMode.Contain : PreviewFitMode.Cover;
+	internal void ConfigureHorizontalRow(Vector2 size, float dpi)
+	{
+		var captionHeight = 14 * dpi;
+		var pixelsWide = Math.Clamp((int)Math.Ceiling(size.X * 1.25f), 32, 1024);
+		var pixelsHigh = Math.Clamp((int)Math.Ceiling((size.Y - captionHeight) * 1.25f), 24, 1024);
+		if (!_horizontalRow || Root.Size != size || SurfaceWidth != pixelsWide || SurfaceHeight != pixelsHigh)
+		{
+			ReleaseSurface(); InvalidateCapture();
+			SurfaceWidth = pixelsWide; SurfaceHeight = pixelsHigh;
+			Root.Size = size; Root.CenterPoint = Vector3.Zero;
+			_clipGeometry.Size = size; _clipGeometry.CornerRadius = Vector2.Zero;
+			_frameBackground.Size = size; _frameBackground.IsVisible = true;
+			_content.Size = new(size.X, Math.Max(1, size.Y - captionHeight));
+			_content.Shadow = null;
+			_focusIndicator.Offset = new(size.X - 7 * dpi, 2 * dpi, 1);
+			_focusIndicator.Size = new(4 * dpi);
+			if (_feedbackVisual is not null) { _feedbackVisual.Size = size; _feedbackGeometry!.Size = size - new Vector2(2); }
+			_horizontalRow = true;
+		}
+		// Top and bottom share dimensions: edge changes must still restore caption separation.
+		_content.Size = new(size.X, Math.Max(1, size.Y - captionHeight));
+		_content.Shadow = null; _frameBackground.IsVisible = true;
+		_clipGeometry.CornerRadius = Vector2.Zero;
+		if (_surfaceBrush is not null) _surfaceBrush.Stretch = CompositionStretch.Uniform;
+		_topCaption ??= new TopPanelLabel(_compositor, _graphics);
+		if (_topCaption.Root.Parent != Root) Root.Children.InsertAtTop(_topCaption.Root);
+		_topCaption.Set(Window.Title, new(size.X, captionHeight), dpi, true, lightSurface: true);
+		_topCaption.Root.Offset = new(0, size.Y - captionHeight, 0);
+		if (_rowHover is null)
+		{
+			_rowHoverBrush = _compositor.CreateColorBrush(Windows.UI.Color.FromArgb(0, 255, 255, 255));
+			_rowHover = _compositor.CreateSpriteVisual(); _rowHover.Brush = _rowHoverBrush; Root.Children.InsertAtTop(_rowHover);
+		}
+		_rowHover.Size = size;
+	}
+	private TopPanelLabel? _topCaption;
+	private ContainerVisual? _topCaptionContainer;
+	private TopCardChrome? _topChrome;
+	public void SetTopHovered(bool hovered)
+	{
+		if (_disposed) return;
+		_topChrome?.SetHovered(hovered);
+		if (_rowHoverBrush is not null) _rowHoverBrush.Color = Windows.UI.Color.FromArgb((byte)(hovered ? 32 : 0), 255, 255, 255);
+	}
+	public void SetTopCaption(string text, float dpi)
+	{
+		_topChrome ??= new TopCardChrome(_compositor,Root); _topChrome.Layout(dpi);
+		if (_topCaption is null)
+		{
+			_topCaption = new TopPanelLabel(_compositor,_graphics);
+			_topCaptionContainer = _compositor.CreateContainerVisual();
+			_topCaptionContainer.Size = Root.Size; _topCaptionContainer.Clip = _clip;
+			_topCaptionContainer.Children.InsertAtTop(_topCaption.Root); Root.Children.InsertAtTop(_topCaptionContainer);
+		}
+		var height = Math.Min(Root.Size.Y * .3f, 32*dpi);
+		_topCaption.Set(text,new Vector2(Root.Size.X,height),dpi,true,true);
+		_topCaption.Root.Offset = new Vector3(0,Root.Size.Y-height,1);
+		_topCaption.Root.IsVisible = true;
+		_content.Size = new Vector2(Root.Size.X, Root.Size.Y-height);
+		_clipGeometry.CornerRadius = new Vector2(8*dpi);
+		_frameBackground.IsVisible = true;
+		_shadow.BlurRadius = 12*dpi; _shadow.Opacity = .25f; _shadow.Offset = new Vector3(0,3*dpi,0);
+		if (_surfaceBrush is not null) _surfaceBrush.Stretch = CompositionStretch.Uniform;
+	}
+	public void ClearTopCaption()
+	{
+		_topChrome?.Dispose(); _topChrome = null;
+		if (_topCaption is not null) { _topCaption.Root.Parent?.Children.Remove(_topCaption.Root); if (_topCaptionContainer is not null) Root.Children.Remove(_topCaptionContainer); _topCaption.Dispose(); _topCaptionContainer?.Dispose(); _topCaptionContainer = null; _topCaption = null; }
+		_content.Size = Root.Size;
+		_clipGeometry.CornerRadius = new Vector2(Math.Max(9,Root.Size.Y*.105f));
+		_frameBackground.IsVisible = _centerPreview;
+		_shadow.BlurRadius = Math.Max(16,Root.Size.Y*.30f); _shadow.Opacity=.48f; _shadow.Offset=new Vector3(0,Math.Max(5,Root.Size.Y*.08f),0);
+		if (_surfaceBrush is not null) _surfaceBrush.Stretch = _centerPreview ? CompositionStretch.Uniform : CompositionStretch.Fill;
+	}
 	private readonly Compositor _compositor;
 	private readonly D3DCompositionDevice _graphics;
 	private CardSwapChain? _surface;
 	private CompositionSurfaceBrush? _surfaceBrush;
 	private readonly CompositionColorBrush _placeholderBrush;
 	private readonly SpriteVisual _content;
+	private readonly SpriteVisual _frameBackground;
+	private readonly bool _centerPreview;
 	private readonly CompositionRoundedRectangleGeometry _clipGeometry;
 	private readonly CompositionGeometricClip _clip;
 	private readonly DropShadow _shadow;
@@ -3436,6 +3722,12 @@ internal sealed class WindowCardVisual : IDisposable
 		_clipGeometry.CornerRadius = new Vector2(Math.Max(9, cardSize.Y * 0.105f));
 		_clip = compositor.CreateGeometricClip(_clipGeometry);
 		_content.Clip = _clip;
+		_centerPreview = cardSize.Y > cardSize.X * surfaceHeight / Math.Max(1f, surfaceWidth) * 1.1f;
+		_frameBackground = compositor.CreateSpriteVisual();
+		_frameBackground.Size = cardSize;
+		_frameBackground.Brush = _placeholderBrush;
+		_frameBackground.Clip = _clip;
+		_frameBackground.IsVisible = _centerPreview;
 		_shadow = compositor.CreateDropShadow();
 		_shadow.BlurRadius = Math.Max(16, cardSize.Y * 0.30f);
 		_shadow.Opacity = 0.48f;
@@ -3460,6 +3752,7 @@ internal sealed class WindowCardVisual : IDisposable
 		Root.Size = cardSize;
 		Root.CenterPoint = new Vector3(cardSize.X * 0.88f, cardSize.Y * 0.5f, 0);
 		Root.RotationAxis = Vector3.UnitY;
+		Root.Children.InsertAtBottom(_frameBackground);
 		Root.Children.InsertAtTop(_content);
 		Root.Children.InsertAtTop(_focusIndicator);
 		Root.IsVisible = false;
@@ -3515,8 +3808,8 @@ internal sealed class WindowCardVisual : IDisposable
 	}
 	public IWindow Window { get; private set; }
 	public Vector2 Pivot { get; }
-	public int SurfaceWidth { get; }
-	public int SurfaceHeight { get; }
+	public int SurfaceWidth { get; private set; }
+	public int SurfaceHeight { get; private set; }
 	public bool IsVisible { get; private set; }
 	public bool IsApplicationGroupCard { get; }
 	public string? DesiredBadge { get; set; }
@@ -3559,6 +3852,8 @@ internal sealed class WindowCardVisual : IDisposable
 			InvalidateCapture();
 		_lastKnownMinimized = minimized;
 		UpdateFocusIndicator();
+		if (_horizontalRow && _topCaption is not null)
+			_topCaption.Set(Window.Title, _topCaption.Root.Size, _topCaption.Root.Size.Y / 14f, true, lightSurface: true);
 	}
 
 	private void UpdateFocusIndicator()
@@ -3618,7 +3913,9 @@ internal sealed class WindowCardVisual : IDisposable
 			return;
 		_surface = _graphics.CreateSurface(_compositor, SurfaceWidth, SurfaceHeight);
 		_surfaceBrush = _compositor.CreateSurfaceBrush(_surface.CompositionSurface);
-		_surfaceBrush.Stretch = CompositionStretch.Fill;
+		_surfaceBrush.Stretch = _centerPreview || _topCaption is not null ? CompositionStretch.Uniform : CompositionStretch.Fill;
+		_surfaceBrush.HorizontalAlignmentRatio = .5f;
+		_surfaceBrush.VerticalAlignmentRatio = .5f;
 		_content.Brush = _surfaceBrush;
 		_shadow.Mask = _surfaceBrush;
 	}
@@ -3648,6 +3945,11 @@ internal sealed class WindowCardVisual : IDisposable
 			return;
 		_disposed = true;
 		ReleaseSurface();
+		_topCaption?.Dispose();
+		_rowHover?.Dispose(); _rowHoverBrush?.Dispose();
+		_topCaptionContainer?.Dispose();
+		_topChrome?.Dispose();
+		_topChrome = null;
 		_feedbackVisual?.Dispose();
 		_feedbackShape?.Dispose();
 		_feedbackGeometry?.Dispose();
@@ -3662,6 +3964,7 @@ internal sealed class WindowCardVisual : IDisposable
 		_clip.Dispose();
 		_clipGeometry.Dispose();
 		_content.Dispose();
+		_frameBackground.Dispose();
 		_placeholderBrush.Dispose();
 	}
 }

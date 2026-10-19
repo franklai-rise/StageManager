@@ -12,6 +12,7 @@ internal sealed class SettingsForm : Form
 	private readonly TrackBar _cardSizeSlider;
 	private readonly Label _cardSizeValue;
 	private readonly NumericUpDown _sidebarVerticalOffset;
+	private readonly ComboBox _sidebarEdge;
 	private readonly CheckBox _showExplorerButton;
 	private readonly Button _quickLaunchButton;
 	private readonly Label _quickLaunchSummary;
@@ -43,6 +44,7 @@ internal sealed class SettingsForm : Form
 	private readonly TextBox _deepSeekKey;
 	private readonly CheckBox _kimiEnabled;
 	private readonly CheckBox _geminiEnabled;
+	private readonly CheckBox _antigravityEnabled;
 	private readonly TextBox _kimiKey;
 	private readonly ComboBox _kimiRegion;
 	private readonly AiUsageService? _aiUsageService;
@@ -123,7 +125,7 @@ internal sealed class SettingsForm : Form
 		_interfaceLanguage.SelectedIndexChanged += (_, _) => SetLanguageFromSelection();
 		_animationsEnabled = CreateCheckBox("Use animations", draft.AnimationsEnabled, 18, 119, 220);
 		_lowMemoryRendering = CreateCheckBox("Low-memory renderer (restart required)", draft.LowMemoryRendering, 250, 119, 310);
-		appearanceGroup.Controls.Add(CreateLabel("Vertical position", 18, 160, 125));
+		appearanceGroup.Controls.Add(CreateLabel("Position offset", 18, 160, 125));
 		_sidebarVerticalOffset = new NumericUpDown
 		{
 			Minimum = -400,
@@ -134,7 +136,13 @@ internal sealed class SettingsForm : Form
 			Size = new Size(75, 30)
 		};
 		appearanceGroup.Controls.Add(_sidebarVerticalOffset);
-		appearanceGroup.Controls.Add(CreateLabel("px (negative = up)", 235, 160, 270));
+		appearanceGroup.Controls.Add(CreateLabel("Dock edge", 240, 160, 90));
+		_sidebarEdge = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(335, 157), Size = new Size(210, 30) };
+		_sidebarEdge.Items.AddRange(draft.UiLanguage == UiLanguage.SimplifiedChinese
+			? new object[] { "左侧", "顶部", "右侧", "底部" }
+			: new object[] { "Left", "Top", "Right", "Bottom" });
+		_sidebarEdge.SelectedIndex = Math.Clamp((int)draft.SidebarEdge, 0, 3);
+		appearanceGroup.Controls.Add(_sidebarEdge);
 		_showExplorerButton = CreateCheckBox(
 			"Show File Explorer button above cards",
 			draft.ShowExplorerButton,
@@ -185,6 +193,8 @@ internal sealed class SettingsForm : Form
 		var aiGroup = CreateGroup("AI usage", new Rectangle(20, 489, 580, 252));
 		aiGroup.Name = "AiUsage";
 		_aiUsageEnabled = CreateCheckBox("Show AI usage card", draft.ShowAiUsageCard && draft.AiUsageEnabled, 18, 22, 280);
+		_antigravityEnabled = CreateCheckBox("Antigravity", draft.AiUsageAntigravityEnabled, 320, 22, 230);
+		aiGroup.Controls.Add(_antigravityEnabled);
 		_codexEnabled = CreateCheckBox("Codex", draft.AiUsageCodexEnabled, 18, 55, 104);
 		_codexPath = CreateTextBox(draft.CodexCliPath, 124, 55, 282);
 		_codexPath.PlaceholderText = UiText.Get(draft.UiLanguage, "Auto-detect local Codex login", "自动检测本机 Codex，复用已有登录");
@@ -401,6 +411,7 @@ internal sealed class SettingsForm : Form
 
 		Draft.CardScale = _cardSizeSlider.Value / 100d;
 		Draft.SidebarVerticalOffset = (int)_sidebarVerticalOffset.Value;
+		Draft.SidebarEdge = (SidebarEdge)_sidebarEdge.SelectedIndex;
 		Draft.ShowExplorerButton = _showExplorerButton.Checked;
 		Draft.QuickLaunchApps = _quickLaunchApps.Select(app => app with { }).ToList();
 		Draft.SchemaVersion = Math.Max(Draft.SchemaVersion, 18);
@@ -416,6 +427,7 @@ internal sealed class SettingsForm : Form
 		Draft.AiUsageDeepSeekEnabled = _deepSeekEnabled.Checked;
 		Draft.AiUsageKimiEnabled = _kimiEnabled.Checked;
 		Draft.AiUsageGeminiEnabled = _geminiEnabled.Checked;
+		Draft.AiUsageAntigravityEnabled = _antigravityEnabled.Checked;
 		Draft.AiUsageKimiInternational = _kimiRegion.SelectedIndex == 1;
 		Draft.CodexCliPath = _codexPath.Text.Trim();
 		if (_aiUsageService is not null)
@@ -539,6 +551,12 @@ internal sealed class SettingsForm : Form
 			? "Simplified Chinese"
 			: "English";
 		UiText.Apply(this, Draft.UiLanguage);
+		var edgeIndex = _sidebarEdge.SelectedIndex;
+		_sidebarEdge.Items.Clear();
+		_sidebarEdge.Items.AddRange(Draft.UiLanguage == UiLanguage.SimplifiedChinese
+			? new object[] { "左侧", "顶部", "右侧", "底部" }
+			: new object[] { "Left", "Top", "Right", "Bottom" });
+		_sidebarEdge.SelectedIndex = Math.Clamp(edgeIndex, 0, 3);
 		_deepSeekKey.PlaceholderText = UiText.Get(Draft.UiLanguage, "API key (encrypted on this PC)", "API Key（在本机加密保存）");
 		_kimiKey.PlaceholderText = UiText.Get(Draft.UiLanguage, "API key", "API Key");
 		_languageButton.Text = UiText.Get(Draft.UiLanguage, "简体中文", "English");
@@ -560,6 +578,7 @@ internal sealed class SettingsForm : Form
 	{
 		_cardSizeSlider.Value = 60;
 		_sidebarVerticalOffset.Value = -80;
+		_sidebarEdge.SelectedIndex = 0;
 		_showExplorerButton.Checked = true;
 		_quickLaunchApps = QuickLaunchDefinition.LegacyDefaults();
 		UpdateQuickLaunchSummary();

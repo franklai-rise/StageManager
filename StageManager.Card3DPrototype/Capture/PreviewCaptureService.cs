@@ -10,26 +10,27 @@ internal sealed class PreviewCaptureService : IDisposable
 
     public async Task<CapturedCardFrame> CaptureAsync(IWindow window, int width, int height,
         string? countBadge = null, bool applicationCard = false, CancellationToken cancellationToken = default,
-        bool allowPlaceholderOnFailure = true)
+        bool allowPlaceholderOnFailure = true, PreviewFitMode fitMode = PreviewFitMode.Cover)
     {
         // Async method semantics also turn snapshot/property failures into a
         // faulted task, so renderer completion always clears its in-flight slot.
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         cancellationToken.ThrowIfCancellationRequested();
         return await CaptureAsync(CaptureWindow.FromWindow(window), width, height, countBadge, applicationCard,
-            cancellationToken, allowPlaceholderOnFailure).ConfigureAwait(false);
+            cancellationToken, allowPlaceholderOnFailure, fitMode).ConfigureAwait(false);
     }
 
     public async Task<CapturedCardFrame> CaptureAsync(CaptureWindow window, int width, int height,
         string? countBadge = null, bool applicationCard = false, CancellationToken cancellationToken = default,
-        bool allowPlaceholderOnFailure = true)
+        bool allowPlaceholderOnFailure = true, PreviewFitMode fitMode = PreviewFitMode.Cover)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        CaptureWorkerProtocol.ValidateFitMode(fitMode);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token);
         linked.Token.ThrowIfCancellationRequested();
         try
         {
-            var frame = await _worker.CaptureAsync(window, width, height, applicationCard, countBadge, linked.Token)
+            var frame = await _worker.CaptureAsync(window, width, height, applicationCard, countBadge, linked.Token, fitMode)
                 .ConfigureAwait(false);
             if (!allowPlaceholderOnFailure && frame.IsPlaceholder && !window.IsMinimized)
             {
@@ -48,7 +49,7 @@ internal sealed class PreviewCaptureService : IDisposable
                 using var fallback = new WindowFrameCapture();
                 return Task.FromResult(applicationCard
                     ? fallback.CaptureApplicationCard(window, width, height)
-                    : fallback.Capture(window, width, height, countBadge));
+                    : fallback.Capture(window, width, height, countBadge, fitMode));
             }, CaptureWorkerClient.CaptureTimeout, linked.Token, late => late.Dispose()).ConfigureAwait(false);
         }
     }

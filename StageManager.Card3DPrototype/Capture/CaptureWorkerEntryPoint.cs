@@ -81,7 +81,7 @@ internal static class CaptureWorkerEntryPoint
             previousRequest = request.RequestId;
             using var frame = request.ApplicationCard
                 ? capture.CaptureApplicationCard(request.Window, request.Width, request.Height)
-                : capture.Capture(request.Window, request.Width, request.Height, request.CountBadge);
+                : capture.Capture(request.Window, request.Width, request.Height, request.CountBadge, request.FitMode);
             process.Refresh();
             var recycle = ++count >= MaximumCaptures || process.PrivateMemorySize64 >= MaximumPrivateBytes;
             await CaptureWorkerProtocol.WriteFrameAsync(pipe, request, frame, recycle, deadline.Token).ConfigureAwait(false);

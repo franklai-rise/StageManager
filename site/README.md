@@ -18,7 +18,13 @@ GitHub's latest stable Release API. The builder verifies the EXE filename,
 source URL, size and SHA-256 digest before assembling a deploy directory. If
 these checks fail, deployment stops and the existing website remains online.
 
-The demo offers three one-click scenarios (groups, Focus, and full screen),
+The demo starts with the v4.6.6 top dock and offers four docking directions.
+Top/bottom cards hold up to three directly clickable window rows, with an adjacent
+continuation card for the four-window browser fixture. Shortcuts and desktop
+controls are grouped too. Wheel and edge scrolling share the horizontal strip;
+horizontal cards never hover-expand. Focus and edge reveal follow the chosen edge.
+
+The demo offers three one-click scenarios (top dock, classic groups, and full screen),
 independently pinned groups, keyboard navigation, and a reversible minimize-all
 action. Chinese and English use the same demo state. Cards are mounted once and
 updated in place so selecting a window does not restart expansion animations.

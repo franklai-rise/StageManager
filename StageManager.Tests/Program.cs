@@ -52,6 +52,9 @@ if (args is ["--desktop-toggle-probe", var probeMode])
 	return 0;
 }
 
+if (args is ["--top-panel-preview"]) { TopPanelRegressionTests.Preview(); return 0; }
+if (args is ["--card-polish-preview"]) { TopPanelRegressionTests.Preview(polish:true); return 0; }
+if (args is ["--top-panel-tests"]) { SidebarDockTests.RunAll(); Console.WriteLine("PASS top-panel tests"); return 0; }
 return TestRunner.Run();
 
 internal static class TestRunner
@@ -60,6 +63,9 @@ internal static class TestRunner
 
 	public static int Run()
 	{
+		RunTest("Horizontal edge scrolling and wheel priority", HorizontalEdgeScrollTests.RunAll);
+		RunTest("Aspect-fit preview geometry and worker protocol", PreviewFitModeRegressionTests.Run);
+		RunTest("Four-edge layout, hit testing, scrolling and Focus geometry", SidebarDockTests.RunAll);
 		RunTest("AI usage parsers, popup, lifetime and encrypted storage", AiUsageRegressionTests.RunAll);
 		RunTest("Manual updates, trusted releases and opt-in migration", UpdateRegressionTests.RunAll);
 		RunTest("Wheel snapshots expire and preserve outside/mixed-DPI input", Stability450Tests.WheelHitTestingIsIndependentAndExpires);
@@ -290,7 +296,7 @@ internal static class TestRunner
 				}
 				""");
 			var service = new SettingsService(path);
-			Assert(service.Current.SchemaVersion == 19, "Settings schema was not upgraded for optional AI usage.");
+			Assert(service.Current.SchemaVersion == 20, "Settings schema was not upgraded for dock position.");
 			Assert(service.Current.LowMemoryRendering, "Low-memory rendering should be enabled by default.");
 			Assert(!service.Current.IgnoredProcesses.Contains("explorer", StringComparer.OrdinalIgnoreCase),
 				"The legacy default Explorer ignore entry was not migrated.");
@@ -299,7 +305,7 @@ internal static class TestRunner
 			Assert(service.Current.IgnoredProcesses.Contains("custom-app", StringComparer.OrdinalIgnoreCase),
 				"A user-selected ignored process was lost during migration.");
 			var migratedJson = File.ReadAllText(path);
-			Assert(migratedJson.Contains("\"SchemaVersion\": 19", StringComparison.Ordinal),
+			Assert(migratedJson.Contains("\"SchemaVersion\": 20", StringComparison.Ordinal),
 				"The migrated schema was not written back to disk.");
 			Assert(!migratedJson.Contains("\"explorer\"", StringComparison.OrdinalIgnoreCase),
 				"The legacy Explorer ignore entry remained in the persisted settings.");

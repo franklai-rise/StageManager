@@ -10,7 +10,7 @@ namespace StageManager.Settings;
 
 public sealed class SettingsService
 {
-	private const int CurrentSchemaVersion = 19;
+	private const int CurrentSchemaVersion = 20;
 	private readonly JsonSerializerOptions _jsonOptions = new()
 	{
 		WriteIndented = true,
@@ -72,7 +72,7 @@ public sealed class SettingsService
 					var loadedSchemaVersion = loaded.SchemaVersion;
 					if (loadedSchemaVersion < CurrentSchemaVersion)
 					{
-						var backupPath = _settingsPath + ".pre-schema19.bak";
+						var backupPath = _settingsPath + $".pre-schema{CurrentSchemaVersion}.bak";
 						try { if (!File.Exists(backupPath)) File.Copy(_settingsPath, backupPath, overwrite: false); }
 						catch (IOException) { }
 						catch (UnauthorizedAccessException) { }
@@ -149,6 +149,7 @@ public sealed class SettingsService
 			settings.UiLanguage = UiLanguage.English;
 		settings.CardScale = Math.Clamp(settings.CardScale, 0.55, 1.25);
 		settings.SidebarVerticalOffset = Math.Clamp(settings.SidebarVerticalOffset, -400, 400);
+		if (!Enum.IsDefined(settings.SidebarEdge)) settings.SidebarEdge = SidebarEdge.Left;
 		// Schema 15 integrates the hidden-icons card into the scrolling card list.
 		// Its former independent vertical position is intentionally discarded.
 		settings.NotificationAreaVerticalOffset = 0;

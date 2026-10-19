@@ -20,6 +20,13 @@ internal static class AiUsageRegressionTests
 	{
 		var gemini = AiUsageService.Empty("gemini", "Gemini browser connection required");
 		var stamp = DateTimeOffset.UtcNow;
+		using var agFixture = JsonDocument.Parse("""{"response":{"groups":[{"buckets":[{"bucketId":"gemini-5h","remainingFraction":0,"resetTime":"2026-10-17T05:00:38Z"},{"bucketId":"gemini-weekly","remainingFraction":1},{"bucketId":"3p-5h","remaining":{"remainingFraction":0.5}},{"bucketId":"3p-weekly"},{"bucketId":"unknown","remainingFraction":1}]}]}}""");
+		var ag = AntigravityUsageClient.Parse(agFixture.RootElement, stamp, "test");
+		Check(ag.HasData && ag.Windows?.Count == 3 && ag.TrendValue == 0, "Antigravity quota parsing failed or fabricated missing quota.");
+		Check(ag.Windows!.Single(w => w.LimitId == "3p-5h").RemainingPercent == 50, "Nested Antigravity fraction failed.");
+		using var agEmpty = JsonDocument.Parse("""{"response":{"groups":[{"buckets":[{"bucketId":"gemini-5h"},{"bucketId":"3p-5h","remainingFraction":1.1}]}]}}""");
+		Check(!AntigravityUsageClient.Parse(agEmpty.RootElement, stamp, "test").HasData, "Unavailable Antigravity quotas look full.");
+		Check(AiUsagePresentation.Height(new[] { ag }) == 180 && AiUsagePresentation.Height(Array.Empty<AiUsageSnapshot>()) == 120, "Antigravity row toggle failed.");
 		var record = new GeminiQuotaRecord("Connected", stamp, new string('a', 32), new[] { new GeminiQuotaMeter(1, 0, stamp.AddHours(1)), new GeminiQuotaMeter(2, 100, stamp.AddDays(1)) });
 		Check(GeminiQuotaRecord.IsValid(record, stamp), "Valid Gemini quota rejected.");
 		Check(!GeminiQuotaRecord.IsValid(record with { Meters = new[] { new GeminiQuotaMeter(1, -1, null) } }, stamp), "Negative Gemini usage accepted.");

@@ -1,14 +1,15 @@
 using StageManager.Native.Window;
+using StageManager.Settings;
 
 namespace StageManager.Card3DPrototype;
 
 internal static class FocusWindowPlacement
 {
-	public static bool TryKeepOutOfReservedColumn(IWindow window, Screen sidebarDisplay, int reservedRight)
+	public static bool TryKeepOutOfReservedColumn(IWindow window, Screen sidebarDisplay, Rectangle reserved, SidebarEdge edge)
 	{
 		ArgumentNullException.ThrowIfNull(window);
 		ArgumentNullException.ThrowIfNull(sidebarDisplay);
-		if (reservedRight <= sidebarDisplay.Bounds.Left ||
+		if (reserved.IsEmpty ||
 			!NativeMethods.IsWindow(window.Handle) ||
 			!NativeMethods.IsWindowVisible(window.Handle) ||
 			NativeMethods.IsIconic(window.Handle) ||
@@ -27,12 +28,8 @@ internal static class FocusWindowPlacement
 			nativeBounds.Top,
 			nativeBounds.Right,
 			nativeBounds.Bottom);
-		var availableWorkArea = FocusEnhancedBehavior.CalculateAvailableWorkArea(
-			sidebarDisplay.WorkingArea,
-			reservedRight);
-		var adjustedBounds = FocusEnhancedBehavior.KeepWindowOutOfReservedColumn(
-			currentBounds,
-			availableWorkArea);
+		var availableWorkArea = SidebarDockLayout.AvailableArea(sidebarDisplay.WorkingArea, reserved, edge);
+		var adjustedBounds = SidebarDockLayout.KeepOutside(currentBounds, availableWorkArea, edge);
 		if (adjustedBounds == currentBounds)
 			return false;
 

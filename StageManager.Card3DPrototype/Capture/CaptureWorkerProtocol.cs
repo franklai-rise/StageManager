@@ -4,12 +4,18 @@ using System.Text;
 
 namespace StageManager.Card3DPrototype;
 
+internal enum PreviewFitMode
+{
+    Cover = 0,
+    Contain = 1
+}
+
 internal sealed record CaptureRequest(long Generation, long RequestId, CaptureWindow Window,
-    int Width, int Height, bool ApplicationCard, string CountBadge);
+    int Width, int Height, bool ApplicationCard, string CountBadge, PreviewFitMode FitMode = PreviewFitMode.Cover);
 
 internal static class CaptureWorkerProtocol
 {
-    internal const byte Version = 1;
+    internal const byte Version = 2;
     internal const int MaximumFrameBytes = 4 * 1024 * 1024;
     internal const int MaximumMessageBytes = 32768;
 
@@ -58,6 +64,7 @@ internal static class CaptureWorkerProtocol
 
     internal static byte[] EncodeRequest(CaptureRequest request) => Encode(writer =>
     {
+        ValidateFitMode(request.FitMode);
         writer.Write(Version);
         writer.Write(request.Generation);
         writer.Write(request.RequestId);
@@ -73,6 +80,7 @@ internal static class CaptureWorkerProtocol
         writer.Write(CaptureWindow.Limit(request.Window.ProcessName, 512));
         writer.Write(CaptureWindow.Limit(request.Window.ProcessExecutable, 4096));
         writer.Write(CaptureWindow.Limit(request.CountBadge, 128));
+        writer.Write((byte)request.FitMode);
     });
 
     internal static CaptureRequest DecodeRequest(byte[] bytes) => Decode(bytes, reader =>
@@ -92,11 +100,19 @@ internal static class CaptureWorkerProtocol
         var processName = reader.ReadString();
         var executable = reader.ReadString();
         var badge = reader.ReadString();
+        var fitMode = (PreviewFitMode)reader.ReadByte();
+        ValidateFitMode(fitMode);
         if (title.Length > 4096 || processName.Length > 512 || executable.Length > 4096 || badge.Length > 128)
             throw new InvalidDataException("Capture string too long.");
         return new CaptureRequest(generation, requestId,
-            new CaptureWindow(handle, title, processName, executable, minimized, owner, created), width, height, applicationCard, badge);
+            new CaptureWindow(handle, title, processName, executable, minimized, owner, created), width, height, applicationCard, badge, fitMode);
     });
+
+    internal static void ValidateFitMode(PreviewFitMode fitMode)
+    {
+        if (fitMode is not PreviewFitMode.Cover and not PreviewFitMode.Contain)
+            throw new InvalidDataException("Invalid preview fit mode.");
+    }
 
     internal static void ValidateDimensions(int width, int height)
     {

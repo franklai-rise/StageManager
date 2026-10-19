@@ -15,6 +15,8 @@ internal static class UiText
 			["Simplified Chinese"] = "简体中文",
 			["Card size"] = "卡片大小",
 			["Vertical position"] = "垂直位置",
+			["Position offset"] = "排列偏移",
+			["Dock edge"] = "停靠位置",
 			["px (negative = up)"] = "像素（负数=向上）",
 			["Show File Explorer button above cards"] = "在卡片上方显示文件资源管理器按钮",
 			["Show Google Chrome quick-launch card"] = "显示 Google Chrome 快捷启动卡片",

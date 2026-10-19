@@ -300,6 +300,7 @@ internal sealed class PrototypeForm : Form
 	protected override void OnMouseDown(MouseEventArgs e)
 	{
 		base.OnMouseDown(e);
+		_renderer?.StopEdgeScroll();
 		HideHoverHint();
 		_lastSidebarInteractionUtc = DateTime.UtcNow;
 		if (e.Button == MouseButtons.Right)
@@ -462,7 +463,7 @@ internal sealed class PrototypeForm : Form
 		CancelPendingSingleCardClick();
 		HideHoverHint();
 		_lastSidebarInteractionUtc = DateTime.UtcNow;
-		_renderer.Scroll(e.Delta);
+		_renderer.Scroll(e.Delta, e.Location);
 	}
 
 	private void ProcessPendingMouseWheel()
@@ -472,7 +473,7 @@ internal sealed class PrototypeForm : Form
 		CancelPendingSingleCardClick();
 		HideHoverHint();
 		_lastSidebarInteractionUtc = DateTime.UtcNow;
-		_renderer.Scroll(delta);
+		_renderer.Scroll(delta, PointToClient(Cursor.Position));
 	}
 
 	protected override void WndProc(ref Message message)
@@ -647,6 +648,8 @@ internal sealed class PrototypeForm : Form
 		var aiConfigurationChanged = _aiUsageService.Configure(settings);
 		_renderer.SetAnimationsEnabled(settings.AnimationsEnabled);
 		_renderer.SetCardScale(settings.CardScale);
+		_renderer.SetDockEdge(settings.SidebarEdge);
+		UpdateSidebarDisplay(force: true);
 		var layoutRegionChanged = _renderer.SetSidebarVerticalOffset(settings.SidebarVerticalOffset);
 		if (_renderer.SetExplorerButtonEnabled(settings.ShowExplorerButton))
 			layoutRegionChanged = true;
@@ -797,6 +800,8 @@ internal sealed class PrototypeForm : Form
 				if (_closing) return;
 				_renderer?.SetAiUsageSnapshots(_aiUsageService.Current);
 				_aiUsageDetails?.SetSnapshots(_aiUsageService.Current);
+				UpdateWindowRegion(_sidebarVisible);
+				UpdateFocusReservation();
 			});
 		}
 		catch (InvalidOperationException) when (_closing) { }
@@ -853,7 +858,7 @@ internal sealed class PrototypeForm : Form
 			? RectangleF.FromLTRB(target.Polygon.Min(point => point.X), target.Polygon.Min(point => point.Y),
 				target.Polygon.Max(point => point.X), target.Polygon.Max(point => point.Y))
 			: new RectangleF(12, ClientSize.Height / 2f, 196, 46);
-		if (target?.IsAiUsageCard == true) cardBounds.Offset(0, _renderer.ScrollTranslationY);
+		if (target?.IsAiUsageCard == true) cardBounds.Offset(_renderer.ScrollTranslationX, _renderer.ScrollTranslationY);
 		var topLeft = PointToScreen(Point.Round(new PointF(cardBounds.Left, cardBounds.Top)));
 		var bottomRight = PointToScreen(Point.Round(new PointF(cardBounds.Right, cardBounds.Bottom)));
 		var cardScreenBounds = Rectangle.FromLTRB(topLeft.X, topLeft.Y, bottomRight.X, bottomRight.Y);
@@ -865,6 +870,12 @@ internal sealed class PrototypeForm : Form
 		var maxY = Math.Max(workingArea.Top, workingArea.Bottom - panel.Height);
 		var maxX = Math.Max(workingArea.Left, workingArea.Right - panel.Width);
 		var y = Math.Clamp(cardScreenBounds.Top - 8, workingArea.Top, maxY);
+		if (SidebarDockLayout.IsHorizontal(DockEdge))
+		{
+			x = cardScreenBounds.Left;
+			y = DockEdge == SidebarEdge.Top ? cardScreenBounds.Bottom + 10 : cardScreenBounds.Top - panel.Height - 10;
+			y = Math.Clamp(y, workingArea.Top, maxY);
+		}
 		panel.Location = new Point(Math.Clamp(x, workingArea.Left, maxX), y);
 		panel.Show(this);
 		panel.BringToFront();
@@ -875,12 +886,17 @@ internal sealed class PrototypeForm : Form
 	{
 		var providers = _aiUsageService.Current;
 		if (providers.Count == 0 || target?.IsAiUsageCard != true || target.Polygon.Count == 0) return null;
-		var left = target.Polygon.Min(p => p.X); var right = target.Polygon.Max(p => p.X);
+		var left = target.Polygon.Min(p => p.X) + (_renderer?.ScrollTranslationX ?? 0); var right = target.Polygon.Max(p => p.X) + (_renderer?.ScrollTranslationX ?? 0);
 		var pointer = PointToClient(Cursor.Position);
 		var top = target.Polygon.Min(p => p.Y) + (_renderer?.ScrollTranslationY ?? 0);
 		var bottom = target.Polygon.Max(p => p.Y) + (_renderer?.ScrollTranslationY ?? 0);
+		var frameHeight = bottom - top;
+		top += frameHeight * (_renderer?.AiContentTopFraction ?? 0);
+		bottom = top + frameHeight * (_renderer?.AiContentHeightFraction ?? 1);
 		var column = Math.Clamp((int)((pointer.X - left) / Math.Max(1, right - left) * 2), 0, 1);
-		var row = Math.Clamp((int)((pointer.Y - top) / Math.Max(1, bottom - top) * 2), 0, 1);
+		var rowCount = AiUsagePresentation.HasAntigravity(providers) ? 3 : 2;
+		var row = Math.Clamp((int)((pointer.Y - top) / Math.Max(1, bottom - top) * rowCount), 0, rowCount - 1);
+		if (row == 2) return "antigravity";
 		return AiUsagePresentation.ProviderOrder[row * 2 + column];
 	}
 
@@ -981,8 +997,7 @@ internal sealed class PrototypeForm : Form
 	{
 		if (_renderer is null || !IsHandleCreated)
 			return;
-		var width = Math.Min(ClientSize.Width, (int)Math.Ceiling(_renderer.SidebarInteractionWidth + 16f * DeviceDpi / 96f));
-		var replacement = new Region(new Rectangle(0, 0, Math.Max(1, width), Math.Max(1, ClientSize.Height)));
+		var replacement = new Region(_renderer.InteractionBounds);
 		var previous = Region;
 		Region = replacement;
 		previous?.Dispose();
@@ -1448,8 +1463,9 @@ internal sealed class PrototypeForm : Form
 		var size = TextRenderer.MeasureText(text, SystemFonts.MessageBoxFont);
 		var padding = (int)Math.Ceiling(16f * DeviceDpi / 96f);
 		var workArea = Screen.FromPoint(Cursor.Position).WorkingArea;
-		var cardRight = current!.Polygon.Max(point => point.X);
-		var cardTop = current.Polygon.Min(point => point.Y) + _renderer!.ScrollTranslationY;
+		var translation = _renderer!.TargetTranslation(current!);
+		var cardRight = current!.Polygon.Max(point => point.X) + translation.X;
+		var cardTop = current.Polygon.Min(point => point.Y) + translation.Y;
 		var anchor = PointToScreen(new Point((int)Math.Ceiling(cardRight) + padding, (int)cardTop));
 		anchor.X = Math.Clamp(anchor.X, workArea.Left + padding, Math.Max(workArea.Left + padding, workArea.Right - size.Width - padding * 2));
 		anchor.Y = Math.Clamp(anchor.Y, workArea.Top + padding, Math.Max(workArea.Top + padding, workArea.Bottom - size.Height - padding * 2));
@@ -1828,7 +1844,7 @@ internal sealed class PrototypeForm : Form
 				FocusWindowPlacement.TryKeepOutOfReservedColumn(
 					window,
 					_sidebarDisplay,
-					_focusAppBarReservation.ReservedBounds.Right);
+					_focusAppBarReservation.ReservedBounds, DockEdge);
 			}));
 		}
 		catch (InvalidOperationException)
@@ -1864,11 +1880,12 @@ internal sealed class PrototypeForm : Form
 		FocusWindowPlacement.TryKeepOutOfReservedColumn(
 			window,
 			_sidebarDisplay,
-			_focusAppBarReservation.ReservedBounds.Right);
+			_focusAppBarReservation.ReservedBounds, DockEdge);
 	}
 
 	private void PollPointer()
 	{
+		if (_closing || _settingsOpen) _renderer?.StopEdgeScroll();
 		if (_closing || _settingsOpen)
 			return;
 		PublishWheelRegion();
@@ -1876,6 +1893,9 @@ internal sealed class PrototypeForm : Form
 		DismissContextMenusOnOutsideClick(screenPoint);
 		if (_renderer is null || _catalog is null)
 			return;
+		_renderer.UpdateEdgeScroll(PointToClient(screenPoint), !_sidebarVisible || _notificationAreaDragActive ||
+			Control.MouseButtons != MouseButtons.None || _cardClick.Pending is not null ||
+			_contextMenu.Visible || _cardContextMenu.Visible || _aiUsageDetails is { IsDisposed: false });
 		var nowUtc = DateTime.UtcNow;
 		if (_aiUsageDetails is { IsDisposed: false } activePanel && activePanel.IsPointerInside(screenPoint))
 		{
@@ -1919,10 +1939,7 @@ internal sealed class PrototypeForm : Form
 		if (!_renderer.IsScrolling && !_notificationAreaDragActive && _cardClick.Pending is null)
 			UpdateHoverExpandCandidate(hit, client);
 		UpdateHoverHint(hit);
-			var pointerNearSidebar = client.X >= 0 &&
-			client.X <= _renderer.SidebarInteractionWidth &&
-			client.Y >= 0 &&
-			client.Y < ClientSize.Height;
+		var pointerNearSidebar = _renderer.InteractionBounds.Contains(client);
 		var pointerInsideAiPanel = _aiUsageDetails is { IsDisposed: false } aiPanel && aiPanel.IsPointerInside(screenPoint);
 		pointerNearSidebar |= pointerInsideAiPanel;
 		var pointerWithinTransientSidebar = hit is not null || pointerNearSidebar || pointerAtLeftEdge;
@@ -1989,11 +2006,7 @@ internal sealed class PrototypeForm : Form
 		if (_closing || _sidebarVisible || !NativeMethods.GetCursorPos(out var nativePoint))
 			return;
 		var screenPoint = new Point(nativePoint.X, nativePoint.Y);
-		var pointerAtLeftEdge = SidebarIdleBehavior.ShouldRequestHiddenEdgePoll(
-			_sidebarVisible,
-			screenPoint,
-			_sidebarScreenBounds,
-			EdgeActivationWidth);
+		var pointerAtLeftEdge = IsNearLeftEdge(screenPoint);
 		var mode = _catalog?.Settings.Current.StageMode ?? StageMode.Coexist;
 		if (!FocusEnhancedBehavior.ShouldPollHiddenSidebar(mode, pointerAtLeftEdge) ||
 			Interlocked.Exchange(ref _hiddenEdgeUiRequestPending, 1) != 0)
@@ -2049,6 +2062,16 @@ internal sealed class PrototypeForm : Form
 		UpdateFocusReservation();
 	}
 
+	private bool _topPanelOverlayRaised;
+	private void UpdateTopPanelOverlay(bool includeCards)
+	{
+		var raised = includeCards && DockEdge == SidebarEdge.Top && _renderer is not null && !_renderer.TopPanelBounds.IsEmpty;
+		if (_topPanelOverlayRaised == raised || !IsHandleCreated) return;
+		_topPanelOverlayRaised = raised;
+		NativeMethods.SetWindowPos(Handle, raised || _transientOverlayRaised ? NativeMethods.HwndTopmost : NativeMethods.HwndNotTopmost,
+			0,0,0,0,NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
+	}
+
 	private void SetTransientOverlayRaised(bool raised)
 	{
 		if (_transientOverlayRaised == raised || !IsHandleCreated)
@@ -2056,7 +2079,7 @@ internal sealed class PrototypeForm : Form
 		_transientOverlayRaised = raised;
 		NativeMethods.SetWindowPos(
 			Handle,
-			raised ? NativeMethods.HwndTopmost : NativeMethods.HwndNotTopmost,
+			raised || _topPanelOverlayRaised ? NativeMethods.HwndTopmost : NativeMethods.HwndNotTopmost,
 			0,
 			0,
 			0,
@@ -2064,9 +2087,11 @@ internal sealed class PrototypeForm : Form
 			NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
 	}
 
+	private SidebarEdge DockEdge => _catalog?.Settings.Current.SidebarEdge ?? SidebarEdge.Left;
 	private bool IsNearLeftEdge(Point screenPoint)
 	{
-		return SidebarIdleBehavior.IsNearLeftEdge(screenPoint, _sidebarScreenBounds, EdgeActivationWidth);
+		return SidebarDockLayout.IsNearEdge(screenPoint, _sidebarScreenBounds, DockEdge, EdgeActivationWidth) ||
+			SidebarDockLayout.IsNearEdge(screenPoint, _sidebarDisplay.Bounds, DockEdge, EdgeActivationWidth);
 	}
 
 	private void SystemEvents_DisplaySettingsChanged(object? sender, EventArgs e)
@@ -2108,10 +2133,10 @@ internal sealed class PrototypeForm : Form
 		}
 
 		var reservedWidth = FocusEnhancedBehavior.CalculateReservedWidth(
-			_renderer.SidebarInteractionWidth,
+			_renderer.SidebarThickness,
 			DeviceDpi / 96f,
-			_sidebarDisplay.Bounds.Width);
-		if (!_focusAppBarReservation.SetReservation(Handle, _sidebarDisplay, reservedWidth, force))
+			SidebarDockLayout.IsHorizontal(DockEdge) ? _sidebarDisplay.Bounds.Height : _sidebarDisplay.Bounds.Width);
+		if (!_focusAppBarReservation.SetReservation(Handle, _sidebarDisplay, reservedWidth, force, DockEdge))
 			return;
 
 		if (!wasRegistered || previousBounds != _focusAppBarReservation.ReservedBounds)
@@ -2147,7 +2172,11 @@ internal sealed class PrototypeForm : Form
 	private Rectangle GetSidebarArea(Screen display)
 	{
 		var mode = _catalog?.Settings.Current.StageMode ?? StageMode.Coexist;
-		return FocusEnhancedBehavior.GetSidebarHostArea(mode, display.Bounds, display.WorkingArea);
+		// Restore only our own reservation to the host area; keep the Windows taskbar clear.
+		if (mode == StageMode.Focus && _focusAppBarReservation.IsRegistered &&
+			string.Equals(display.DeviceName, _focusAppBarReservation.DisplayDeviceName, StringComparison.OrdinalIgnoreCase))
+			return Rectangle.Intersect(display.Bounds, Rectangle.Union(display.WorkingArea, _focusAppBarReservation.ReservedBounds));
+		return display.WorkingArea;
 	}
 
 	private void EnsureFocusSidebarAnchored(bool largeWindowActive, DateTime nowUtc)
@@ -2155,8 +2184,8 @@ internal sealed class PrototypeForm : Form
 		if (!IsFocusEnhanced || largeWindowActive || nowUtc < _nextFocusAnchorCheckUtc)
 			return;
 		_nextFocusAnchorCheckUtc = nowUtc.AddSeconds(1);
-		var physicalBounds = _sidebarDisplay.Bounds;
-		if (Left != physicalBounds.Left || Top != physicalBounds.Top || Height != physicalBounds.Height)
+		var expectedBounds = GetDockHostBounds(GetSidebarArea(_sidebarDisplay));
+		if (Bounds != expectedBounds)
 			UpdateSidebarDisplay(force: true);
 		if (!_sidebarVisible && (!_focusManuallyCollapsed || _renderer?.IsSidebarPinned == true))
 			SetSidebarVisible(true);
@@ -2175,22 +2204,28 @@ internal sealed class PrototypeForm : Form
 
 		_sidebarDisplay = selected;
 		_sidebarScreenBounds = sidebarArea;
-		var targetBounds = new Rectangle(
-			sidebarArea.Left,
-			sidebarArea.Top,
-			Math.Min(900, sidebarArea.Width),
-			sidebarArea.Height);
+		var targetBounds = GetDockHostBounds(sidebarArea);
 		if (Bounds != targetBounds)
 			Bounds = targetBounds;
 		UpdateWindowRegion(_sidebarVisible);
+	}
+
+	private Rectangle GetDockHostBounds(Rectangle area)
+	{
+		var width = Math.Min(900, area.Width);
+		return DockEdge switch
+		{
+			SidebarEdge.Left => new(area.Left, area.Top, width, area.Height),
+			SidebarEdge.Right => new(area.Right - width, area.Top, width, area.Height),
+			_ => area
+		};
 	}
 
 	private void PublishWheelRegion()
 	{
 		var pointerInPopup = _aiUsageDetails is { IsDisposed: false } panel && panel.IsPointerInside(Cursor.Position);
 		var bounds = !_settingsOpen && !pointerInPopup && _sidebarVisible && !_notificationAreaDragActive && _renderer is not null && IsHandleCreated
-			? Rectangle.Intersect(_sidebarScreenBounds, new Rectangle(PointToScreen(Point.Empty),
-				new Size((int)Math.Ceiling(_renderer.SidebarInteractionWidth), ClientSize.Height)))
+			? Rectangle.Intersect(_sidebarScreenBounds, RectangleToScreen(_renderer.InteractionBounds))
 			: Rectangle.Empty;
 		_mouseWheelHook?.PublishRegion(IsHandleCreated ? Handle : IntPtr.Zero, bounds);
 	}
@@ -2210,7 +2245,8 @@ internal sealed class PrototypeForm : Form
 			if (_regionLayoutRevision != _renderer.LayoutRevision || _mainCardRegion is null || _fixedCardRegion is null)
 			{
 				var mainRegion = BuildCardRegion(_renderer.GetInteractivePolygons(fixedLayer: false));
-				var fixedRegion = BuildCardRegion(_renderer.GetInteractivePolygons(fixedLayer: true));
+				var fixedRegion = BuildCardRegion(_renderer.GetInteractivePolygons(fixedLayer: true), pad: _renderer.TopPanelBounds.IsEmpty);
+				if (!_renderer.TopPanelBounds.IsEmpty) fixedRegion.Intersect(_renderer.TopPanelBounds);
 				_mainCardRegion?.Dispose();
 				_fixedCardRegion?.Dispose();
 				_mainCardRegion = mainRegion;
@@ -2218,7 +2254,7 @@ internal sealed class PrototypeForm : Form
 				_regionLayoutRevision = _renderer.LayoutRevision;
 			}
 			using var movingRegion = _mainCardRegion.Clone();
-			movingRegion.Translate(0f, _renderer.ScrollTranslationY);
+			movingRegion.Translate(_renderer.ScrollTranslationX, _renderer.ScrollTranslationY);
 			combined.Union(movingRegion);
 			combined.Union(_fixedCardRegion);
 		}
@@ -2227,9 +2263,10 @@ internal sealed class PrototypeForm : Form
 		var previous = Region;
 		Region = replacement;
 		previous?.Dispose();
+		UpdateTopPanelOverlay(includeCards);
 	}
 
-	private Region BuildCardRegion(IReadOnlyList<PointF[]> polygons)
+	private Region BuildCardRegion(IReadOnlyList<PointF[]> polygons, bool pad = true)
 	{
 		var result = new Region();
 		result.MakeEmpty();
@@ -2242,8 +2279,7 @@ internal sealed class PrototypeForm : Form
 			using var path = new GraphicsPath();
 			path.AddPolygon(polygon);
 			result.Union(path);
-			path.Widen(marginPen);
-			result.Union(path);
+			if (pad) { path.Widen(marginPen); result.Union(path); }
 		}
 		return result;
 	}

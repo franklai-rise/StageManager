@@ -22,8 +22,10 @@ internal sealed class CaptureWorkerClient : IDisposable
     }
 
     public async Task<CapturedCardFrame> CaptureAsync(CaptureWindow window, int width, int height,
-        bool applicationCard, string? countBadge, CancellationToken cancellationToken = default)
+        bool applicationCard, string? countBadge, CancellationToken cancellationToken = default,
+        PreviewFitMode fitMode = PreviewFitMode.Cover)
     {
+        CaptureWorkerProtocol.ValidateFitMode(fitMode);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token);
         await _gate.WaitAsync(linked.Token).ConfigureAwait(false);
         Session? session = null;
@@ -59,7 +61,7 @@ internal sealed class CaptureWorkerClient : IDisposable
             var active = session;
             var request = new CaptureRequest(active.Generation, Interlocked.Increment(ref _requestId),
                 window, Math.Clamp(width, 32, 1024), Math.Clamp(height, 24, 1024), applicationCard,
-                CaptureWindow.Limit(countBadge, 128));
+                CaptureWindow.Limit(countBadge, 128), fitMode);
             var reply = await CaptureDeadline.RunAsync(async token =>
             {
                 await CaptureWorkerProtocol.WriteMessageAsync(active.Pipe,

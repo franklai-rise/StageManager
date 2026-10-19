@@ -62,6 +62,7 @@ public sealed class AppSettings
 	public bool LowMemoryRendering { get; set; } = true;
 	public double CardScale { get; set; } = 0.60;
 	public int SidebarVerticalOffset { get; set; } = -80;
+	public SidebarEdge SidebarEdge { get; set; } = SidebarEdge.Left;
 	public bool ShowExplorerButton { get; set; } = true;
 	public bool ShowChromeQuickLaunch { get; set; } = true;
 	public bool ShowEdgeQuickLaunch { get; set; } = true;
@@ -72,6 +73,7 @@ public sealed class AppSettings
 	public bool AiUsageCodexEnabled { get; set; } = true;
 	public bool AiUsageDeepSeekEnabled { get; set; } = true;
 	public bool AiUsageGeminiEnabled { get; set; } = true;
+	public bool AiUsageAntigravityEnabled { get; set; } = true;
 	public bool AiUsageKimiEnabled { get; set; }
 	public bool AiUsageKimiInternational { get; set; }
 	public string CodexCliPath { get; set; } = "";

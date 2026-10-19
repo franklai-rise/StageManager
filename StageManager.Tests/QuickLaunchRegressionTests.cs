@@ -34,7 +34,7 @@ internal static class QuickLaunchRegressionTests
 			File.WriteAllText(path, JsonSerializer.Serialize(original));
 			var service = new SettingsService(path);
 			var apps = service.Current.QuickLaunchApps!;
-			Check(service.Current.SchemaVersion == 19, "Schema was not migrated to 19.");
+			Check(service.Current.SchemaVersion == 20, "Schema was not migrated to 20.");
 			Check(apps.Count == 2 && apps[0].Id == "browser:chrome" && apps[1].Id == "browser:edge", "Legacy order changed.");
 			Check(apps[0].Enabled == chrome && apps[1].Enabled == edge, "Legacy flags changed.");
 			var before = JsonSerializer.SerializeToNode(original)!.AsObject();
@@ -42,7 +42,7 @@ internal static class QuickLaunchRegressionTests
 			foreach (var key in new[] { "SchemaVersion", "QuickLaunchApps" }) { before.Remove(key); after.Remove(key); }
 			Check(JsonNode.DeepEquals(before, after), "Migration modified unrelated settings.");
 			var reloaded = new SettingsService(path);
-			Check(reloaded.Current.SchemaVersion == 19 && reloaded.Current.QuickLaunchApps!.SequenceEqual(apps), "Migration was not persisted.");
+			Check(reloaded.Current.SchemaVersion == 20 && reloaded.Current.QuickLaunchApps!.SequenceEqual(apps), "Migration was not persisted.");
 		});
 	}
 

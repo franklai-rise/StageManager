@@ -1,10 +1,21 @@
-# Stage_Manager_Lai v4.5.0
+# Stage_Manager_Lai v4.6.6
 
 **Production source:** main. **Website:** https://franklai.com/StageManager/
 **Feedback:** [GitHub Issues](https://github.com/franklai-rise/StageManager/issues).
 
-v4.5.0 isolates mouse input and window capture, adds permission diagnostics and
-configurable application launcher cards. Existing v4.4.16 interactions are retained.
+v4.6.6 introduces four-edge docking and a new top/bottom layout: up to three
+window rows per card, stable continuation cards, grouped shortcuts and desktop
+controls, full-aspect portrait previews and edge scrolling. Side docks retain
+their existing expansion and independent FIX controls. Focus reserves workspace
+along the selected edge. Optional AI usage remains off by default and now also
+includes local Antigravity integration.
+
+Download the self-contained Windows x64 EXE from [Releases](https://github.com/franklai-rise/StageManager/releases/latest).
+See [v4.6.6 release notes](docs/releases/v4.6.6.md) for installation, validation
+scope and known limitations. The website includes a four-edge interactive demo.
+
+The production app isolates mouse input and window capture, includes permission
+diagnostics and supports configurable application launcher cards.
 See [release policy](docs/RELEASE-POLICY.md) for the sole production project,
 CI provenance verification, draft validation and the experimental App/Core sources.
 

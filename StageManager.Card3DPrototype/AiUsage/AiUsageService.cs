@@ -36,6 +36,7 @@ internal sealed class AiUsageService : IDisposable
 			new Provider("codex", s => s.AiUsageCodexEnabled, (s, token) => CodexUsageClient.ReadAsync(s.CodexCliPath, token)),
 			new Provider("deepseek", s => s.AiUsageDeepSeekEnabled, (_, token) => ReadBalanceAsync("deepseek", _credentials.Get("deepseek"), false, token)),
 			new Provider("gemini", s => s.AiUsageGeminiEnabled, (_, _) => Task.FromResult(GeminiBrowserUsage.Read(directory))),
+			new Provider("antigravity", s => s.AiUsageAntigravityEnabled, (_, token) => AntigravityUsageClient.ReadAsync(token)),
 			new Provider("kimi", s => s.AiUsageKimiEnabled, (s, token) => ReadBalanceAsync("kimi", _credentials.Get("kimi"), s.AiUsageKimiInternational, token))
 		};
 		_providerGates = _providers.ToDictionary(p => p.ProviderId, _ => new SemaphoreSlim(1, 1));
@@ -48,7 +49,7 @@ internal sealed class AiUsageService : IDisposable
 		lock (_gate)
 		{
 			if (_disposed) return false;
-			var key = $"{settings.ShowAiUsageCard}:{settings.AiUsageEnabled}:{settings.AiUsageCodexEnabled}:{settings.AiUsageDeepSeekEnabled}:{settings.AiUsageGeminiEnabled}:{settings.AiUsageKimiEnabled}:{settings.AiUsageKimiInternational}:{settings.CodexCliPath}";
+			var key = $"{settings.ShowAiUsageCard}:{settings.AiUsageEnabled}:{settings.AiUsageCodexEnabled}:{settings.AiUsageDeepSeekEnabled}:{settings.AiUsageGeminiEnabled}:{settings.AiUsageAntigravityEnabled}:{settings.AiUsageKimiEnabled}:{settings.AiUsageKimiInternational}:{settings.CodexCliPath}";
 			if (key == _configuration) return false;
 			_configuration = key; _generation++;
 			_session.Cancel(); _session.Dispose(); _session = new CancellationTokenSource();
@@ -58,6 +59,7 @@ internal sealed class AiUsageService : IDisposable
 				ShowAiUsageCard = settings.ShowAiUsageCard, AiUsageEnabled = settings.AiUsageEnabled,
 				AiUsageCodexEnabled = settings.AiUsageCodexEnabled, AiUsageDeepSeekEnabled = settings.AiUsageDeepSeekEnabled,
 				AiUsageGeminiEnabled = settings.AiUsageGeminiEnabled,
+				AiUsageAntigravityEnabled = settings.AiUsageAntigravityEnabled,
 				AiUsageKimiEnabled = settings.AiUsageKimiEnabled, AiUsageKimiInternational = settings.AiUsageKimiInternational,
 				CodexCliPath = settings.CodexCliPath
 			};
@@ -123,7 +125,9 @@ internal sealed class AiUsageService : IDisposable
 				var index = Array.FindIndex(items, i => i.ProviderId == provider.ProviderId);
 				if (index < 0) return;
 				items[index] = snapshot; Volatile.Write(ref _current, items);
-				if (snapshot.Status == "Connected" && snapshot.TrendValue.HasValue)
+				// Local Antigravity summaries do not carry verified account identity.
+				// Do not join samples across potential in-app account switches.
+				if (snapshot.ProviderId != "antigravity" && snapshot.Status == "Connected" && snapshot.TrendValue.HasValue)
 					lock (_historyGate) AppendPoint(snapshot);
 				if (Updated is { } updated)
 					foreach (EventHandler subscriber in updated.GetInvocationList())
@@ -204,7 +208,7 @@ internal sealed class AiUsageService : IDisposable
 			AiUsageParsers.Kimi(json.RootElement, international, scope, DateTimeOffset.UtcNow);
 	}
 	internal static AiUsageSnapshot Empty(string id, string status) =>
-		new(id, id == "codex" ? "Codex" : id == "deepseek" ? "DeepSeek" : id == "gemini" ? "Gemini" : "Kimi", id, "—", status, null, Array.Empty<AiUsageDetail>(), null, "", "");
+		new(id, id == "antigravity" ? "Antigravity" : id == "codex" ? "Codex" : id == "deepseek" ? "DeepSeek" : id == "gemini" ? "Gemini" : "Kimi", id, "—", status, null, Array.Empty<AiUsageDetail>(), null, "", "");
 
 	private void AppendPoint(AiUsageSnapshot snapshot)
 	{

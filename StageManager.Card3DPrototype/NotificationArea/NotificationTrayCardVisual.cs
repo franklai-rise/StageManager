@@ -73,17 +73,18 @@ internal sealed class NotificationTrayCardVisual : IDisposable
 	public ContainerVisual Root { get; }
 	public Vector2 Size { get; private set; }
 	public Vector2 Pivot { get; private set; }
-	public float Angle => -7.5f;
+	public float Angle { get; private set; } = -7.5f;
 	public IReadOnlyList<NotificationTrayIconSlot> Slots => _slots;
 	public Rectangle DragHandleBounds => _controls.DragHandleBounds;
 	public Rectangle RefreshButtonBounds => _controls.RefreshButtonBounds;
 	public float ExternalControlsHeight => 0;
 
-	public void SetLayout(float dpiScale, float cardWidth)
+	public void SetLayout(float dpiScale, float cardWidth, float cardHeight = 0)
 	{
+		Angle = cardHeight > 0 ? -4f : -7.5f;
 		var scale = Math.Max(0.75f, dpiScale);
 		var side = Math.Max(96f * scale, cardWidth);
-		var nextSize = new Vector2(side, side);
+		var nextSize = new Vector2(side, Math.Max(side, cardHeight));
 		var surfaceChanged = (int)Math.Ceiling(Size.X) != (int)Math.Ceiling(nextSize.X) ||
 			(int)Math.Ceiling(Size.Y) != (int)Math.Ceiling(nextSize.Y);
 		Size = nextSize;

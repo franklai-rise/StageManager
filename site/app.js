@@ -1,7 +1,7 @@
 "use strict";
 
 const demoGroups = [
-  { id: "browser", icon: "◉", zh: "浏览器", en: "Browser", windows: ["browser-1", "browser-2", "browser-3"] },
+  { id: "browser", icon: "◉", zh: "浏览器", en: "Browser", windows: ["browser-1", "browser-2", "browser-3", "browser-4"] },
   { id: "documents", icon: "▤", zh: "文档", en: "Documents", windows: ["document-1", "document-2"] },
   { id: "files", icon: "▣", zh: "文件夹", en: "Folders", windows: ["files-1"] },
   { id: "notes", icon: "✦", zh: "笔记", en: "Notes", windows: ["notes-1"] }
@@ -10,6 +10,7 @@ const demoWindows = [
   { id: "browser-1", group: "browser", zh: "浏览器 · 设计参考", en: "Browser · Design references", x: "31%", focusX: "18px", y: "10%", minimized: false, kind: "browser" },
   { id: "browser-2", group: "browser", zh: "浏览器 · 搜索结果", en: "Browser · Search results", x: "35%", focusX: "30px", y: "14%", minimized: true, kind: "browser" },
   { id: "browser-3", group: "browser", zh: "浏览器 · 项目文档", en: "Browser · Project docs", x: "33%", focusX: "24px", y: "12%", minimized: true, kind: "browser" },
+  { id: "browser-4", group: "browser", zh: "浏览器 · 阅读清单", en: "Browser · Reading list", x: "34%", focusX: "28px", y: "13%", minimized: true, kind: "browser" },
   { id: "document-1", group: "documents", zh: "文档 · 工作计划", en: "Document · Work plan", x: "29%", focusX: "18px", y: "15%", minimized: true, kind: "document" },
   { id: "document-2", group: "documents", zh: "文档 · 会议记录", en: "Document · Meeting notes", x: "36%", focusX: "34px", y: "8%", minimized: true, kind: "document" },
   { id: "files-1", group: "files", zh: "文件夹 · 项目资料", en: "Folder · Project files", x: "34%", focusX: "23px", y: "12%", minimized: true, kind: "files" },
@@ -17,14 +18,23 @@ const demoWindows = [
 ];
 const messages = {
   zh: {
-    choose: "悬停或点击浏览器卡片，展开三个窗口。",
+    choose: "悬停或点击浏览器卡片，展开它的窗口。",
+    horizontal: "每张卡最多三行，更多窗口接在下一张；直接点击某一行即可切换。",
+    horizontalFocus: "Focus 沿所选顶部或底部留出空间，窗口在其余区域工作。",
+    horizontalHidden: "横栏已收起。靠近所选顶部或底部边缘即可唤出。",
+    horizontalFullscreen: "正在模拟全屏。靠近所选顶部或底部边缘，唤出卡片。",
+    rightFocus: "右侧留给卡片，左侧留给工作。Focus 保持卡片可见。",
+    rightHidden: "侧栏已收起。靠近右边缘即可唤出。",
+    rightFullscreen: "正在模拟全屏。靠近桌面右边缘，唤出卡片。",
+    shortcuts: "快捷方式", desktopTools: "桌面操作", desktop: "显示／恢复桌面", desktopIcons: "桌面图标", hide: "收起", pin: "固定横栏",
+    iconsShown: "示例桌面图标已显示。", iconsHidden: "示例桌面图标已隐藏。",
     expanded: "子卡片向下流出；点击 FIX，让这个分组保持展开。",
     pinnedGroup: "分组已固定。其他分组仍可展开；点击 FIXED 取消固定。",
     unpinnedGroup: "已取消固定；鼠标离开后，这个分组会收起。",
     focus: "左侧留给卡片，右侧留给工作。Focus 模式下侧栏保持显示。",
     coexist: "普通模式：自由摆放窗口，切换卡片不挪动其他窗口。",
     hidden: "侧栏已收起。移到左边缘，或点击边缘箭头唤出。",
-    revealed: "侧栏已唤出。点击底部图钉，让它保持显示。",
+    revealed: "卡片已唤出。选择窗口即可切换；手动收起后可用图钉保持显示。",
     pinnedSidebar: "侧栏已固定。再次点击图钉，恢复移开后收起。",
     unpinnedSidebar: "已取消固定；鼠标离开后，临时唤出的侧栏会收起。",
     fullscreen: "正在模拟全屏。试着靠近桌面的左边缘，唤出卡片。",
@@ -60,14 +70,23 @@ const messages = {
     sampleNote: "先把想法写下来。其余的，慢慢来。"
   },
   en: {
-    choose: "Hover or click the Browser card to unfold its three windows.",
+    choose: "Hover or click the Browser card to unfold its windows.",
+    horizontal: "Up to three rows per card. Extra windows continue in the next card; click a row to switch.",
+    horizontalFocus: "Focus reserves space along the chosen top or bottom edge. Work stays in the remaining area.",
+    horizontalHidden: "Dock hidden. Move to the chosen top or bottom edge to reveal it.",
+    horizontalFullscreen: "Full-screen simulation. Move to the chosen top or bottom edge to reveal your cards.",
+    rightFocus: "Cards on the right, work on the left. Focus keeps your cards visible.",
+    rightHidden: "Sidebar hidden. Move to the right edge to reveal it.",
+    rightFullscreen: "Full-screen simulation. Move to the desktop’s right edge to find your cards.",
+    shortcuts: "Shortcuts", desktopTools: "Desktop controls", desktop: "Show / restore desktop", desktopIcons: "Desktop icons", hide: "Hide", pin: "Pin dock",
+    iconsShown: "Sample desktop icons shown.", iconsHidden: "Sample desktop icons hidden.",
     expanded: "Windows flow downward. Click FIX to keep this group open.",
     pinnedGroup: "Group pinned. Other groups still expand; click FIXED to unpin.",
     unpinnedGroup: "Unpinned. This group will fold when the pointer leaves.",
     focus: "Cards on the left, work on the right. Focus keeps the sidebar in view.",
     coexist: "Coexist: arrange freely. Switching cards leaves other windows in place.",
     hidden: "Sidebar hidden. Move to the left edge, or click its handle to reveal it.",
-    revealed: "Sidebar revealed. Use the bottom pushpin to keep it visible.",
+    revealed: "Cards revealed. Choose a window to switch; after a manual hide, the pushpin can keep the dock visible.",
     pinnedSidebar: "Sidebar pinned. Click the pushpin again to release it.",
     unpinnedSidebar: "Unpinned. The temporarily revealed sidebar hides after you leave.",
     fullscreen: "Full-screen simulation. Move to the desktop’s left edge to find your cards.",
@@ -107,6 +126,7 @@ const $ = selector => document.querySelector(selector);
 const desktop = $("#demo-desktop");
 const sidebar = $("#demo-sidebar");
 const stageList = $("#stage-list");
+const horizontalCards = $("#horizontal-cards");
 const windowLayer = $("#demo-windows");
 let language = readLanguage();
 let state = initialState();
@@ -119,6 +139,7 @@ let keyboardNavigation = false;
 let hoveredGroup = null;
 let recentHover = { group: null, at: 0 };
 let releaseData = null;
+let edgeFrame = 0, edgeVelocity = 0, edgeTime = 0, wheelPriorityUntil = 0, pointerPressed = false;
 
 function readLanguage() {
   try { return localStorage.getItem("stage-lai-site-language") === "en" ? "en" : "zh"; }
@@ -126,7 +147,7 @@ function readLanguage() {
 }
 function initialState() {
   return {
-    mode: "coexist", size: 100, sidebarVisible: true, manualCollapse: false,
+    mode: "coexist", dock: "top", iconsVisible: true, size: 100, sidebarVisible: true, manualCollapse: false,
     sidebarPinned: false, fullscreen: false, visibleBeforeFullscreen: true,
     expandedGroup: null, pinnedGroups: new Set(), expandAll: false,
     activeWindow: "browser-1", z: 2, restoreAll: null, scenario: null,
@@ -143,10 +164,13 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 }
 function setMessage(key) {
-  if (lastMessage === key && $("#demo-help").textContent === tr(key)) return;
+  const effective = horizontalDock() ? ({ choose: "horizontal", focus: "horizontalFocus", hidden: "horizontalHidden", fullscreen: "horizontalFullscreen" }[key] ?? key) :
+    state.dock === "right" ? ({ focus: "rightFocus", hidden: "rightHidden", fullscreen: "rightFullscreen" }[key] ?? key) : key;
+  if (lastMessage === key && $("#demo-help").textContent === tr(effective)) return;
   lastMessage = key;
-  $("#demo-help").textContent = tr(key);
+  $("#demo-help").textContent = tr(effective);
 }
+function horizontalDock() { return state.dock === "top" || state.dock === "bottom"; }
 function isOpen(group) { return state.expandAll || state.expandedGroup === group.id || state.pinnedGroups.has(group.id); }
 
 function previewMarkup(item) {
@@ -168,6 +192,23 @@ function mountDemo() {
   }).join("");
   windowLayer.innerHTML = demoWindows.map(item => '<article class="sample-window ' + item.kind + '-window" data-window-id="' + item.id + '" style="left:' + item.x + ';--x-focus:' + item.focusX + ';top:' + item.y + '"><div class="sample-titlebar"><strong></strong><div class="sample-controls"><button type="button" data-minimize="' + item.id + '">−</button><button type="button" data-fullscreen-button="' + item.id + '">□</button></div></div><div class="sample-body"></div></article>').join("");
   $("#taskbar-apps").innerHTML = demoGroups.map(group => '<button type="button" data-taskbar="' + group.id + '"><span aria-hidden="true">' + group.icon + '</span></button>').join("");
+  mountHorizontalCards();
+}
+function mountHorizontalCards() {
+  const tools = [
+    { id: "files-1", icon: '<span class="folder-icon" aria-hidden="true"></span>', key: "files" },
+    { id: "browser-1", icon: '<span class="shortcut-orb" aria-hidden="true">◉</span>', key: "browser" },
+    { id: "document-1", icon: '<span class="shortcut-document" aria-hidden="true">▤</span>', key: "documents" }
+  ];
+  const shortcuts = '<section class="horizontal-card horizontal-tools"><header data-tool-heading="shortcuts"></header><div class="horizontal-rows">' + tools.map(tool => '<button type="button" class="horizontal-tool" data-shortcut="' + tool.id + '" data-tool-group="' + tool.key + '">' + tool.icon + '<span></span></button>').join("") + '</div></section>';
+  const applications = demoGroups.map(group => {
+    const pages = Math.ceil(group.windows.length / 3);
+    return Array.from({ length: pages }, (_, page) => '<section class="horizontal-card horizontal-app-card"><header><strong data-horizontal-group="' + group.id + '"></strong><span>' + (page + 1) + '/' + pages + '</span></header><div class="horizontal-rows">' + group.windows.slice(page * 3, page * 3 + 3).map(id => cardMarkup(id, false).replace('class="stage-card ', 'class="stage-card horizontal-row ')).join("") + '</div></section>').join("");
+  }).join("");
+  const actions = '<section class="horizontal-card horizontal-tools"><header data-tool-heading="desktopTools"></header><div class="horizontal-rows">' + [
+    ["minimize-all", "desktop"], ["desktop-icons", "desktopIcons"], ["collapse-sidebar", "hide"]
+  ].map(([action, key]) => '<button type="button" class="horizontal-tool" data-action="' + action + '" data-tool-label="' + key + '">' + (action === "desktop-icons" ? '<span class="desktop-icons-glyph" aria-hidden="true">▦</span>' : $('#' + action).querySelector("svg").outerHTML) + '<span></span></button>').join("") + '</div></section>';
+  horizontalCards.innerHTML = shortcuts + applications + actions + '<section class="horizontal-card horizontal-tools horizontal-pin-card" hidden><button type="button" class="horizontal-tool" data-action="sidebar-pin" data-tool-label="pin">' + $("#sidebar-pin svg").outerHTML + '<span></span></button></section>';
 }
 function windowBody(item) {
   const name = escapeHtml(label(item));
@@ -196,17 +237,23 @@ function translatePage() {
   setMessage(lastMessage);
 }
 function render() {
+  const horizontal = horizontalDock();
   desktop.dataset.mode = state.mode;
+  desktop.dataset.dock = state.dock;
+  desktop.dataset.iconsVisible = String(state.iconsVisible);
   desktop.dataset.fullscreen = String(state.fullscreen);
   desktop.classList.toggle("sidebar-hidden", !state.sidebarVisible);
   desktop.style.setProperty("--card-scale", String(state.size / 100));
   sidebar.inert = !state.sidebarVisible;
+  horizontalCards.inert = !horizontal || !state.sidebarVisible;
+  if (!horizontal || !state.sidebarVisible) stopEdgeScroll();
   $("#edge-reveal").disabled = state.sidebarVisible;
   $("#edge-reveal").tabIndex = state.sidebarVisible ? -1 : 0;
   $("#card-size").value = String(state.size);
   $("#size-value").value = state.size + "%";
   $("#desktop-mode").textContent = state.fullscreen ? "FULL SCREEN" : state.mode.toUpperCase();
-  document.querySelectorAll(".segmented button").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.mode === state.mode)));
+  document.querySelectorAll(".segmented button[data-mode]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.mode === state.mode)));
+  document.querySelectorAll("button[data-dock]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.dock === state.dock)));
   document.querySelectorAll("[data-scenario]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.scenario === state.scenario)));
   $("#expand-all").setAttribute("aria-pressed", String(state.expandAll));
   $("#expand-all").setAttribute("aria-label", tr(state.expandAll ? "allCollapseLabel" : "allExpandLabel"));
@@ -215,6 +262,23 @@ function render() {
   pin.disabled = (!state.manualCollapse && !state.sidebarPinned) || state.fullscreen;
   pin.setAttribute("aria-pressed", String(state.sidebarPinned));
   pin.setAttribute("aria-label", tr(state.sidebarPinned ? "unpinLabel" : "pinLabel"));
+  horizontalCards.querySelector(".horizontal-pin-card").hidden = pin.disabled;
+  for (const heading of horizontalCards.querySelectorAll("[data-tool-heading]")) heading.textContent = tr(heading.dataset.toolHeading);
+  for (const heading of horizontalCards.querySelectorAll("[data-horizontal-group]")) heading.textContent = label(demoGroups.find(group => group.id === heading.dataset.horizontalGroup));
+  for (const tool of horizontalCards.querySelectorAll("[data-tool-group]")) {
+    const group = demoGroups.find(group => group.id === tool.dataset.toolGroup);
+    tool.querySelector("span:last-child").textContent = label(group);
+    tool.setAttribute("aria-label", label(group));
+  }
+  for (const tool of horizontalCards.querySelectorAll("[data-tool-label]")) {
+    const action = tool.dataset.action;
+    const text = action === "minimize-all" ? tr(state.restoreAll ? "allRestoreLabel" : "desktop") : tr(tool.dataset.toolLabel);
+    tool.querySelector("span:last-child").textContent = text;
+    tool.setAttribute("aria-label", text);
+    if (action === "desktop-icons") tool.setAttribute("aria-pressed", String(state.iconsVisible));
+    else if (action === "sidebar-pin") tool.setAttribute("aria-pressed", String(state.sidebarPinned));
+    else if (action === "minimize-all") tool.setAttribute("aria-pressed", String(state.restoreAll !== null));
+  }
   $("#minimize-all").setAttribute("aria-pressed", String(state.restoreAll !== null));
   $("#minimize-all").setAttribute("aria-label", tr(state.restoreAll ? "allRestoreLabel" : "allMinimizeLabel"));
   $("#taskbar-status").textContent = tr("taskbar", { apps: demoGroups.length, windows: demoWindows.length });
@@ -244,15 +308,16 @@ function render() {
   for (const item of demoWindows) {
     const current = state.windows[item.id];
     const active = state.activeWindow === item.id && !current.minimized;
-    const card = stageList.querySelector('[data-window="' + item.id + '"]');
-    card.classList.toggle("active", active);
-    card.classList.toggle("minimized", current.minimized);
-    card.setAttribute("aria-label", label(item) + (current.minimized ? " · " + tr("minimize") : active ? " · " + tr("active") : ""));
-    card.setAttribute("aria-pressed", String(active));
-    card.querySelector(".card-title").textContent = label(item);
-    const badge = card.querySelector(".card-badge");
-    badge.hidden = !current.minimized;
-    badge.textContent = tr("minimize");
+    for (const card of sidebar.querySelectorAll('[data-window="' + item.id + '"]')) {
+      card.classList.toggle("active", active);
+      card.classList.toggle("minimized", current.minimized);
+      card.setAttribute("aria-label", label(item) + (current.minimized ? " · " + tr("minimize") : active ? " · " + tr("active") : ""));
+      card.setAttribute("aria-pressed", String(active));
+      card.querySelector(".card-title").textContent = label(item);
+      const badge = card.querySelector(".card-badge");
+      badge.hidden = !current.minimized;
+      badge.textContent = tr("minimize");
+    }
     const sample = windowLayer.querySelector('[data-window-id="' + item.id + '"]');
     sample.classList.toggle("is-minimized", current.minimized);
     sample.classList.toggle("is-active", active);
@@ -289,6 +354,7 @@ function activateWindow(id, toggle = true) {
   render();
 }
 function openGroup(id, fromHover = false) {
+  if (horizontalDock()) return;
   if (state.expandAll || state.pinnedGroups.has(id)) return;
   if (fromHover && state.expandedGroup === id) return;
   clearTimeout(collapseTimer); collapseTimer = 0;
@@ -298,6 +364,7 @@ function openGroup(id, fromHover = false) {
   render();
 }
 function scheduleCollapse() {
+  if (horizontalDock()) return;
   if (state.expandAll || !state.expandedGroup || state.pinnedGroups.has(state.expandedGroup)) return;
   if (collapseTimer && collapseGroup === state.expandedGroup) return;
   clearTimeout(collapseTimer);
@@ -342,6 +409,7 @@ function startFullscreen(id) {
   render();
 }
 function clearDemoTimers() {
+  stopEdgeScroll();
   clearSidebarTimer();
   clearTimeout(collapseTimer); collapseTimer = 0;
   hoveredGroup = null;
@@ -351,12 +419,15 @@ function resetDemo() {
   clearDemoTimers();
   state = initialState();
   stageList.scrollTop = 0;
+  horizontalCards.scrollLeft = 0;
   setMessage("reset");
   render();
 }
-document.addEventListener("pointerdown", () => { keyboardNavigation = false; }, { passive: true });
+document.addEventListener("pointerdown", () => { keyboardNavigation = false; pointerPressed = true; stopEdgeScroll(); }, { passive: true });
+document.addEventListener("pointerup", () => { pointerPressed = false; }, { passive: true });
+document.addEventListener("pointercancel", () => { pointerPressed = false; stopEdgeScroll(); }, { passive: true });
 document.addEventListener("keydown", event => {
-  if (["Tab", "ArrowUp", "ArrowDown", "Home", "End", "Enter", " "].includes(event.key)) keyboardNavigation = true;
+  if (["Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "Enter", " "].includes(event.key)) keyboardNavigation = true;
 });
 stageList.addEventListener("click", event => {
   const pin = event.target.closest("[data-pin]");
@@ -410,7 +481,9 @@ stageList.addEventListener("keydown", event => {
 });
 desktop.addEventListener("pointermove", event => {
   if (event.pointerType === "touch") return;
-  if (!state.sidebarVisible && event.clientX - desktop.getBoundingClientRect().left < 23) revealSidebar();
+  const bounds = desktop.getBoundingClientRect();
+  const distance = state.dock === "right" ? bounds.right - event.clientX : state.dock === "top" ? event.clientY - bounds.top - 34 : state.dock === "bottom" ? bounds.bottom - event.clientY - 43 : event.clientX - bounds.left;
+  if (!state.sidebarVisible && distance >= 0 && distance < 23) revealSidebar();
   const group = event.target.closest(".stage-group");
   if (group && group.dataset.group === state.expandedGroup) {
     clearTimeout(collapseTimer); collapseTimer = 0;
@@ -449,13 +522,22 @@ windowLayer.addEventListener("click", event => {
   const sample = event.target.closest("[data-window-id]");
   if (sample) activateWindow(sample.dataset.windowId, false);
 });
-document.querySelectorAll(".segmented button").forEach(button => button.addEventListener("click", () => {
+document.querySelectorAll(".segmented button[data-mode]").forEach(button => button.addEventListener("click", () => {
   clearSidebarTimer();
   state.mode = button.dataset.mode;
   state.sidebarPinned = false; state.manualCollapse = false;
   state.sidebarVisible = !state.fullscreen;
   state.scenario = null;
   setMessage(state.mode === "focus" ? "focus" : "coexist"); render();
+}));
+document.querySelectorAll("button[data-dock]").forEach(button => button.addEventListener("click", () => {
+  clearDemoTimers();
+  state.dock = button.dataset.dock;
+  state.scenario = null;
+  horizontalCards.scrollLeft = 0;
+  state.sidebarVisible = !state.fullscreen;
+  setMessage(state.mode === "focus" ? "focus" : "choose");
+  render();
 }));
 $("#card-size").addEventListener("input", event => { state.size = Number(event.target.value); render(); });
 $("#reset-demo").addEventListener("click", resetDemo);
@@ -499,7 +581,8 @@ $("#taskbar-apps").addEventListener("click", event => {
 document.querySelectorAll("[data-scenario]").forEach(button => button.addEventListener("click", () => {
   resetDemo();
   state.scenario = button.dataset.scenario;
-  if (state.scenario === "groups") { state.expandedGroup = "browser"; setMessage("expanded"); }
+  if (state.scenario === "top") { state.dock = "top"; state.mode = "focus"; setMessage("choose"); }
+  if (state.scenario === "groups") { state.dock = "left"; state.expandedGroup = "browser"; setMessage("expanded"); }
   if (state.scenario === "focus") {
     state.mode = "focus";
     state.windows["document-1"].minimized = false;
@@ -559,7 +642,63 @@ function updateClock() {
   if (document.hidden) return;
   $("#demo-clock").textContent = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" }).format(new Date());
 }
-document.addEventListener("visibilitychange", updateClock);
+function stopEdgeScroll() {
+  if (edgeFrame) cancelAnimationFrame(edgeFrame);
+  edgeFrame = 0; edgeVelocity = 0; edgeTime = 0;
+}
+function tickEdgeScroll(time) {
+  edgeFrame = 0;
+  if (!horizontalDock() || !state.sidebarVisible || pointerPressed || document.hidden || !edgeVelocity || time < wheelPriorityUntil) { stopEdgeScroll(); return; }
+  const elapsed = edgeTime ? Math.min(time - edgeTime, 50) / 1000 : 0;
+  edgeTime = time;
+  const before = horizontalCards.scrollLeft;
+  horizontalCards.scrollLeft += edgeVelocity * elapsed;
+  if (elapsed && Math.abs(horizontalCards.scrollLeft - before) < .05) { stopEdgeScroll(); return; }
+  edgeFrame = requestAnimationFrame(tickEdgeScroll);
+}
+horizontalCards.addEventListener("pointermove", event => {
+  if (!event.buttons) pointerPressed = false;
+  if (event.pointerType === "touch" || pointerPressed || !horizontalDock() || !state.sidebarVisible || performance.now() < wheelPriorityUntil || horizontalCards.scrollWidth <= horizontalCards.clientWidth + 1) { stopEdgeScroll(); return; }
+  const bounds = horizontalCards.getBoundingClientRect();
+  const left = event.clientX - bounds.left, right = bounds.right - event.clientX;
+  const distance = Math.min(left, right);
+  if (distance < 0 || distance >= 24) { stopEdgeScroll(); return; }
+  edgeVelocity = (left < right ? -1 : 1) * (100 + 380 * (1 - distance / 24));
+  if (!edgeFrame) { edgeTime = 0; edgeFrame = requestAnimationFrame(tickEdgeScroll); }
+});
+horizontalCards.addEventListener("pointerleave", stopEdgeScroll);
+horizontalCards.addEventListener("wheel", event => {
+  if (!horizontalDock() || !state.sidebarVisible || event.ctrlKey || horizontalCards.scrollWidth <= horizontalCards.clientWidth + 1) return;
+  const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+  if (!delta) return;
+  event.preventDefault(); stopEdgeScroll(); wheelPriorityUntil = performance.now() + 250;
+  horizontalCards.scrollLeft += delta * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? horizontalCards.clientWidth : 1);
+}, { passive: false });
+horizontalCards.addEventListener("click", event => {
+  stopEdgeScroll();
+  const card = event.target.closest("[data-window]");
+  if (card) { activateWindow(card.dataset.window); return; }
+  const shortcut = event.target.closest("[data-shortcut]");
+  if (shortcut) { activateWindow(shortcut.dataset.shortcut, false); return; }
+  const tool = event.target.closest("[data-action]");
+  if (!tool) return;
+  if (tool.dataset.action === "desktop-icons") {
+    state.iconsVisible = !state.iconsVisible;
+    setMessage(state.iconsVisible ? "iconsShown" : "iconsHidden"); render();
+  } else $('#' + tool.dataset.action).click();
+});
+horizontalCards.addEventListener("keydown", event => {
+  if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+  const buttons = [...horizontalCards.querySelectorAll("button")].filter(button => button.getClientRects().length);
+  if (!buttons.length) return;
+  event.preventDefault(); stopEdgeScroll();
+  const index = buttons.indexOf(document.activeElement);
+  const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (["ArrowRight", "ArrowDown"].includes(event.key) ? 1 : -1) + buttons.length) % buttons.length;
+  buttons[next].focus({ preventScroll: true });
+  buttons[next].scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+});
+document.addEventListener("visibilitychange", () => { updateClock(); if (document.hidden) stopEdgeScroll(); });
+window.addEventListener("blur", () => { pointerPressed = false; stopEdgeScroll(); });
 mountDemo();
 translatePage();
 updateClock();

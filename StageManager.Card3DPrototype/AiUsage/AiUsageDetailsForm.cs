@@ -42,7 +42,7 @@ internal sealed class AiUsageDetailsForm : Form
 
 		_tabs = AiUsagePresentation.ProviderOrder.Select(id =>
 		{
-			var button = MakeButton(id == "codex" ? "Codex" : id == "deepseek" ? "DeepSeek" : id == "gemini" ? "Gemini" : "Kimi");
+			var button = MakeButton(id == "antigravity" ? "Antigravity" : id == "codex" ? "Codex" : id == "deepseek" ? "DeepSeek" : id == "gemini" ? "Gemini" : "Kimi");
 			button.Tag = id;
 			button.Click += (_, _) => SelectProvider(id);
 			return button;
@@ -94,6 +94,7 @@ internal sealed class AiUsageDetailsForm : Form
 		ClientSize = new Size(Math.Min((int)(376 * s), area.Width), Math.Min((int)(550 * s), area.Height));
 	}
 	private float ScaleFactor => ClientSize.Width / 376f;
+	private float ExtraTabHeight => _tabs.Count(t => t.Visible) > 4 ? 38 : 0;
 	private void LayoutControls()
 	{
 		var s = ScaleFactor;
@@ -102,14 +103,15 @@ internal sealed class AiUsageDetailsForm : Form
 		Rectangle R(float x, float y, float w, float h) => Rectangle.Round(new RectangleF(x * s, y * s, w * s, h * s));
 		_close.Bounds = R(326, 14, 32, 32);
 		var active = _tabs.Where(t => t.Visible).ToArray();
-		var tabWidth = active.Length == 0 ? 108 : 340f / active.Length;
-		for (var i = 0; i < active.Length; i++) active[i].Bounds = R(18 + tabWidth * i, 57, tabWidth - 6, 34);
+		var tabWidth = active.Length == 0 ? 108 : 340f / Math.Min(4, active.Length);
+		for (var i = 0; i < active.Length; i++) active[i].Bounds = R(18 + tabWidth * (i % 4), 57 + (i / 4) * 38, i == 4 ? 150 : tabWidth - 6, 34);
 		var bottom = ClientSize.Height;
 		_refresh.Bounds = new Rectangle((int)(18 * s), bottom - (int)(46 * s), (int)(112 * s), (int)(30 * s));
 		_settings.Bounds = new Rectangle((int)(246 * s), bottom - (int)(46 * s), (int)(112 * s), (int)(30 * s));
 		_trend.Bounds = new Rectangle((int)(18 * s), bottom - (int)(184 * s), (int)(340 * s), (int)(122 * s));
-		_rows.Bounds = new Rectangle((int)(18 * s), (int)(200 * s), (int)(340 * s),
-			Math.Max((int)(48 * s), _trend.Top - (int)(212 * s)));
+		var rowsTop = (int)((200 + ExtraTabHeight) * s);
+		var rowsBottom = Selected?.ProviderId == "antigravity" ? bottom - (int)(58 * s) : _trend.Top - (int)(12 * s);
+		_rows.Bounds = new Rectangle((int)(18 * s), rowsTop, (int)(340 * s), Math.Max((int)(48 * s), rowsBottom - rowsTop));
 		_rows.ScaleFactor = s;
 		if (!_preview)
 		{
@@ -154,6 +156,8 @@ internal sealed class AiUsageDetailsForm : Form
 		_settings.Text = Selected?.NeedsConnection == true ? T("Connect", "连接设置") : T("Settings", "设置");
 		SetRefreshing(_refreshing);
 		_rows.SetSnapshot(Selected, _language);
+		// Antigravity has no account-scoped history; use that space for all quota groups.
+		_trend.Visible = Selected?.ProviderId != "antigravity";
 		_trend.SetHistory(_selectedProvider is { } id ? _service.GetHistory(id) : new(Array.Empty<AiUsagePoint>(), ""), _language,
 			AiUsagePresentation.Accent(_selectedProvider ?? ""));
 		LayoutControls(); Invalidate();
@@ -164,7 +168,7 @@ internal sealed class AiUsageDetailsForm : Form
 		var g = e.Graphics; var s = ScaleFactor;
 		g.SmoothingMode = SmoothingMode.AntiAlias;
 		g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-		RectangleF R(float x, float y, float w, float h) => new(x * s, y * s, w * s, h * s);
+		RectangleF R(float x, float y, float w, float h) => new(x * s, (y >= 98 ? y + ExtraTabHeight : y) * s, w * s, h * s);
 		using var border = new Pen(Color.FromArgb(45, 190, 200, 215), Math.Max(1, s));
 		using var outline = AiUsagePresentation.Rounded(new RectangleF(.5f, .5f, ClientSize.Width - 1, ClientSize.Height - 1), 16 * s);
 		g.DrawPath(border, outline);
@@ -252,6 +256,7 @@ internal sealed class AiUsageRows : ScrollableControl
 	private AiUsageSnapshot? _snapshot;
 	private UiLanguage _language;
 	private float _scale = 1;
+	private float WindowStride => _snapshot?.ProviderId == "antigravity" ? 60 : 66;
 	public float ScaleFactor { get => _scale; set { _scale = value; UpdateExtent(); } }
 	public AiUsageRows() { DoubleBuffered = true; AutoScroll = true; BackColor = Color.FromArgb(24, 27, 33); }
 	public void SetSnapshot(AiUsageSnapshot? snapshot, UiLanguage language)
@@ -263,7 +268,7 @@ internal sealed class AiUsageRows : ScrollableControl
 	private void UpdateExtent()
 	{
 		var count = _snapshot?.Windows?.Count ?? 0;
-		AutoScrollMinSize = new Size(0, (int)((count > 0 ? count * 66 : Math.Max(1, _snapshot?.Details.Count ?? 0) * 29 + 12) * _scale));
+		AutoScrollMinSize = new Size(0, (int)((count > 0 ? count * WindowStride : Math.Max(1, _snapshot?.Details.Count ?? 0) * 29 + 12) * _scale));
 		Invalidate();
 	}
 	protected override void OnPaint(PaintEventArgs e)
@@ -281,8 +286,10 @@ internal sealed class AiUsageRows : ScrollableControl
 		{
 			for (var i = 0; i < windows.Count; i++)
 			{
-				var w = windows[i]; var y = i * 66f;
-				Text($"{w.Label} · {AiUsagePresentation.Duration(w.DurationMinutes)}", 10, y + 3, inner - 65, 20, 12, ForeColor);
+				var w = windows[i]; var y = i * WindowStride;
+				var duration = AiUsagePresentation.Duration(w.DurationMinutes);
+				var label = w.Label.EndsWith(" · " + duration, StringComparison.Ordinal) ? w.Label : $"{w.Label} · {duration}";
+				Text(label, 10, y + 3, inner - 65, 20, 12, ForeColor);
 				Text($"{w.RemainingPercent:0}%", width / s - 60, y + 3, 50, 20, 12, AiUsagePresentation.Accent("codex"), true);
 				using var track = new SolidBrush(Color.FromArgb(54, 70, 84));
 				using var fill = new SolidBrush(AiUsagePresentation.Accent("codex"));

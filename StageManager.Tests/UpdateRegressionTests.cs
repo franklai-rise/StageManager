@@ -23,10 +23,10 @@ internal static class UpdateRegressionTests
             Check(!new SettingsService(settings).Current.ShowAiUsageCard, "New install enabled AI.");
             File.WriteAllText(settings, JsonSerializer.Serialize(new AppSettings { SchemaVersion = 17, ShowAiUsageCard = true, AiUsageEnabled = true }));
             Check(!new SettingsService(settings).Current.AiUsageEnabled, "Old-version migration enabled AI.");
-            Check(File.Exists(settings + ".pre-schema19.bak"), "Missing migration backup.");
+            Check(File.Exists(settings + ".pre-schema20.bak"), "Missing migration backup.");
             File.WriteAllText(settings, JsonSerializer.Serialize(new AppSettings { SchemaVersion = 18, ShowAiUsageCard = true, AiUsageEnabled = true, AiUsageKimiEnabled = true }));
             var trial = new SettingsService(settings).Current;
-            Check(trial.ShowAiUsageCard && trial.AiUsageEnabled && trial.AiUsageKimiEnabled && trial.SchemaVersion == 19, "Trial choices were lost.");
+            Check(trial.ShowAiUsageCard && trial.AiUsageEnabled && trial.AiUsageKimiEnabled && trial.SchemaVersion == 20, "Trial choices were lost.");
             byte[] Release(bool draft = false, bool prerelease = false, string tag = "v4.7.0") => JsonSerializer.SerializeToUtf8Bytes(new
             {
                 draft, prerelease, tag_name = tag, html_url = AppVersion.ReleasesUrl + "/tag/" + tag,

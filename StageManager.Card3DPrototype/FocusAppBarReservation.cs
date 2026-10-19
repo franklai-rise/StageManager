@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using StageManager.Settings;
 
 namespace StageManager.Card3DPrototype;
 
@@ -10,18 +11,18 @@ internal sealed class FocusAppBarReservation : IDisposable
 	private const uint AbmQueryPos = 0x00000002;
 	private const uint AbmSetPos = 0x00000003;
 	private const uint AbnPosChanged = 0x00000001;
-	private const uint AbeLeft = 0;
 	private bool _registered;
 	private IntPtr _windowHandle;
 	private string _displayDeviceName = string.Empty;
 	private Rectangle _displayBounds;
 	private int _reservedWidth;
+	private SidebarEdge _edge;
 
 	public bool IsRegistered => _registered;
 	public string DisplayDeviceName => _displayDeviceName;
 	public Rectangle ReservedBounds { get; private set; }
 
-	public bool SetReservation(IntPtr windowHandle, Screen display, int reservedWidth, bool force = false)
+	public bool SetReservation(IntPtr windowHandle, Screen display, int reservedWidth, bool force = false, SidebarEdge edge = SidebarEdge.Left)
 	{
 		ArgumentNullException.ThrowIfNull(display);
 		if (windowHandle == IntPtr.Zero || reservedWidth <= 0)
@@ -53,9 +54,10 @@ internal sealed class FocusAppBarReservation : IDisposable
 			force = true;
 		}
 
-		if (!force && _reservedWidth == reservedWidth && ReservedBounds.Width > 0)
+		if (!force && _edge == edge && _reservedWidth == reservedWidth && ReservedBounds.Width > 0)
 			return true;
 
+		_edge = edge;
 		_reservedWidth = reservedWidth;
 		ApplyPosition();
 		return ReservedBounds.Width > 0;
@@ -90,10 +92,16 @@ internal sealed class FocusAppBarReservation : IDisposable
 			return;
 
 		var data = CreateData();
-		data.Edge = AbeLeft;
+		data.Edge = (uint)_edge;
 		data.Bounds = AppBarRect.FromRectangle(_displayBounds);
 		SHAppBarMessage(AbmQueryPos, ref data);
-		data.Bounds.Right = data.Bounds.Left + _reservedWidth;
+		switch (_edge)
+		{
+			case SidebarEdge.Right: data.Bounds.Left = data.Bounds.Right - _reservedWidth; break;
+			case SidebarEdge.Top: data.Bounds.Bottom = data.Bounds.Top + _reservedWidth; break;
+			case SidebarEdge.Bottom: data.Bounds.Top = data.Bounds.Bottom - _reservedWidth; break;
+			default: data.Bounds.Right = data.Bounds.Left + _reservedWidth; break;
+		}
 		SHAppBarMessage(AbmSetPos, ref data);
 		ReservedBounds = data.Bounds.ToRectangle();
 	}

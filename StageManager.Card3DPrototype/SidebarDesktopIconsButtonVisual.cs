@@ -56,12 +56,13 @@ internal sealed class SidebarDesktopIconsButtonVisual : IDisposable
 	public ContainerVisual Root { get; }
 	public Vector2 Size { get; private set; }
 	public Vector2 Pivot { get; private set; }
-	public float Angle => -7.5f;
+	public float Angle { get; private set; } = -7.5f;
 
-	public void SetLayout(float dpiScale, float cardWidth)
+	public void SetLayout(float dpiScale, float cardWidth, float cardHeight = 0)
 	{
+		Angle = cardHeight > 0 ? -4f : -7.5f;
 		var scale = Math.Max(0.75f, dpiScale);
-		Size = new Vector2(Math.Max(64f * scale, cardWidth), 36f * scale);
+		Size = new Vector2(Math.Max(64f * scale, cardWidth), Math.Max(cardHeight, 36f * scale));
 		Root.Size = Size;
 		Root.CenterPoint = new Vector3(Size.X * 0.88f, Size.Y / 2f, 0);
 		Root.RotationAxis = Vector3.UnitY;
@@ -101,7 +102,7 @@ internal sealed class SidebarDesktopIconsButtonVisual : IDisposable
 		_hiddenSlash.IsVisible = !_iconsVisible;
 		_activeIndicator.IsVisible = _iconsVisible;
 		var scale = _pressed ? 0.95f : _hovered ? 1.025f : 1f;
-		Root.Scale = new Vector3(scale, scale, 1);
+		Root.Scale = Angle == -4f ? Vector3.One : new Vector3(scale, scale, 1);
 	}
 
 	private T Own<T>(T resource) where T : CompositionObject { _resources.Add(resource); return resource; }
