@@ -1,11 +1,11 @@
 {
-  "version": "v4.4.16",
-  "published_at": "2026-09-24T12:58:27Z",
-  "release_url": "https://github.com/franklai-rise/StageManager/releases/tag/v4.4.16",
+  "version": "v4.6.6",
+  "published_at": "2026-10-19T00:40:14Z",
+  "release_url": "https://github.com/franklai-rise/StageManager/releases/tag/v4.6.6",
   "asset": {
-    "name": "Stage_Manager_Lai_v4.4.16.exe",
-    "url": "https://github.com/franklai-rise/StageManager/releases/download/v4.4.16/Stage_Manager_Lai_v4.4.16.exe",
-    "size_bytes": 189094353,
-    "sha256": "c4a58b3e1b20ab68088440069e2a7f0ce10d1a492281e380578ce4fa11e91147"
+    "name": "Stage_Manager_Lai_v4.6.6.exe",
+    "url": "https://github.com/franklai-rise/StageManager/releases/download/v4.6.6/Stage_Manager_Lai_v4.6.6.exe",
+    "size_bytes": 189472201,
+    "sha256": "4882b65b037ca68367ced38ace4881f2145972e8d9b171755568d95028c44698"
   }
 }
