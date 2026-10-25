@@ -23,16 +23,16 @@ internal static class UpdateRegressionTests
             Check(!new SettingsService(settings).Current.ShowAiUsageCard, "New install enabled AI.");
             File.WriteAllText(settings, JsonSerializer.Serialize(new AppSettings { SchemaVersion = 17, ShowAiUsageCard = true, AiUsageEnabled = true }));
             Check(!new SettingsService(settings).Current.AiUsageEnabled, "Old-version migration enabled AI.");
-            Check(File.Exists(settings + ".pre-schema20.bak"), "Missing migration backup.");
+            Check(File.Exists(settings + ".pre-schema21.bak"), "Missing migration backup.");
             File.WriteAllText(settings, JsonSerializer.Serialize(new AppSettings { SchemaVersion = 18, ShowAiUsageCard = true, AiUsageEnabled = true, AiUsageKimiEnabled = true }));
             var trial = new SettingsService(settings).Current;
-            Check(trial.ShowAiUsageCard && trial.AiUsageEnabled && trial.AiUsageKimiEnabled && trial.SchemaVersion == 20, "Trial choices were lost.");
+            Check(trial.ShowAiUsageCard && trial.AiUsageEnabled && trial.AiUsageKimiEnabled && trial.SchemaVersion == 21, "Trial choices were lost.");
             byte[] Release(bool draft = false, bool prerelease = false, string tag = "v4.7.0") => JsonSerializer.SerializeToUtf8Bytes(new
             {
                 draft, prerelease, tag_name = tag, html_url = AppVersion.ReleasesUrl + "/tag/" + tag,
                 body = "fixture notes", published_at = DateTimeOffset.UtcNow, assets = Array.Empty<object>()
             });
-            Check(ReleaseUpdateService.Parse(Release()).Version > AppVersion.Current, "Version comparison wrong.");
+            Check(ReleaseUpdateService.Parse(Release(tag: $"v{AppVersion.Current.Major}.{AppVersion.Current.Minor + 1}.0")).Version > AppVersion.Current, "Version comparison wrong.");
             Check(ReleaseUpdateService.Parse(Release(tag: "v" + AppVersion.Current.ToString(3))).Version == AppVersion.Current, "Same version differs.");
             Check(ReleaseUpdateService.Parse(Release(tag: "v4.4.16")).Version < AppVersion.Current, "Older release marked newer.");
             foreach (var bytes in new[] { Release(draft: true), Release(prerelease: true), Release(tag: "v4.7.0-beta"), Encoding.UTF8.GetBytes("{}") })

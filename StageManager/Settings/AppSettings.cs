@@ -44,12 +44,20 @@ public enum UiLanguage
 	SimplifiedChinese
 }
 
+public enum SettingsTheme { System, Light, Dark }
+
 public sealed class AppSettings
 {
 	public int SchemaVersion { get; set; } = 1;
 	public StageMode StageMode { get; set; } = StageMode.Coexist;
 	public AppWindowsMode AppWindowsMode { get; set; } = AppWindowsMode.AllAtOnce;
 	public UiLanguage UiLanguage { get; set; } = UiLanguage.English;
+	public SettingsTheme SettingsTheme { get; set; } = SettingsTheme.System;
+	public int SettingsTextSize { get; set; } = 11;
+	public bool RememberSettingsPage { get; set; } = true;
+	public string LastSettingsPage { get; set; } = "general";
+	public bool ShowWhatsNewOnStartup { get; set; } = true;
+	public bool AutomaticUpdateChecks { get; set; } = true;
 	public bool AutoHideSidebar { get; set; }
 	public bool UsePerspectiveCards { get; set; } = true;
 	public bool AnimationsEnabled { get; set; } = true;

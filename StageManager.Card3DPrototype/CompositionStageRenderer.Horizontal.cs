@@ -7,10 +7,15 @@ internal sealed partial class CompositionStageRenderer
 {
     private readonly Dictionary<string, HorizontalContainer> _horizontalCards = new();
     private SidebarScrollRange _horizontalRange;
+    private SidebarScrollRange _verticalEdgeRange;
+    private SidebarScrollRange EdgeScrollRange => Horizontal ? _horizontalRange : _verticalEdgeRange;
     private readonly HorizontalEdgeScrollController _horizontalEdgeScroll = new();
+    private readonly EdgeScrollMotion _edgeMotion = new();
+    private readonly EdgeScrollIntent _edgeIntent = new();
     private bool _edgeScrollBlocked;
     public void StopEdgeScroll()
     {
+        _edgeMotion.Stop(); _edgeIntent.Reset();
         if (_horizontalEdgeScroll.Velocity != 0)
         {
             _horizontalEdgeScroll.Stop(); _scrollMotion.FreezeAtCurrent(); _scrollTimer.Stop();
@@ -21,16 +26,32 @@ internal sealed partial class CompositionStageRenderer
     {
         _edgeScrollBlocked = blocked;
         var wasActive = _horizontalEdgeScroll.Velocity != 0;
-        var velocity = _horizontalEdgeScroll.Update(pointer, InteractionBounds, _dpiScale, _horizontalRange,
-            Horizontal && _sidebarVisible && !_disposed && !blocked);
-        if (velocity < 0 && _scrollMotion.Position <= _horizontalRange.Minimum ||
-            velocity > 0 && _scrollMotion.Position >= _horizontalRange.Maximum) _horizontalEdgeScroll.Stop();
+        var range = EdgeScrollRange;
+        // A group/FIX under the pointer must stay still for expansion and clicking.
+        // Blank edge areas remain transparent: this never creates a hit target.
+        var velocity = _horizontalEdgeScroll.Update(pointer, InteractionBounds, _dpiScale, range,
+            _sidebarVisible && !_disposed && !blocked, Horizontal);
+        // Resolve interactive cards only inside an active edge zone, not on every
+        // idle desktop pointer poll.
+        var hit = !Horizontal && velocity != 0 ? HitTest(pointer) : null;
+        var protectedHit = hit is not null && (hit.IsPinButton || hit.IsOpenGroupButton || hit.IsSidebarPinButton || hit.IsAiUsageCard ||
+            hit.IsPrimaryCard && _stages.TryGetValue(hit.StageKey, out var stage) && stage.Windows.Count > 1);
+        if (!_edgeIntent.Allows(pointer, Horizontal, velocity, _dpiScale, protectedHit))
+        {
+            _horizontalEdgeScroll.Stop(); velocity = 0;
+        }
+        if (velocity < 0 && _scrollMotion.Position <= range.Minimum ||
+            velocity > 0 && _scrollMotion.Position >= range.Maximum) _horizontalEdgeScroll.Stop();
         if (_horizontalEdgeScroll.Velocity != 0)
         {
             if (!wasActive) _scrollMotion.FreezeAtCurrent();
             if (!_scrollTimer.Enabled) { _lastScrollTick = System.Diagnostics.Stopwatch.GetTimestamp(); _scrollTimer.Start(); }
         }
-        else if (wasActive) { _scrollMotion.FreezeAtCurrent(); _scrollTimer.Stop(); }
+        else
+        {
+            _edgeMotion.Stop(); _edgeIntent.Reset();
+            if (wasActive) { _scrollMotion.FreezeAtCurrent(); _scrollTimer.Stop(); }
+        }
     }
 
     private void DetachHorizontalChildren()
@@ -120,7 +141,7 @@ internal sealed partial class CompositionStageRenderer
         foreach (var snapshot in _snapshots)
         {
             if (!_stages.TryGetValue(snapshot.Key, out var stage)) continue;
-            stage.DetachTopPanel(); stage.SetPaginationVisible(false); stage.HideExpandedConnector(); stage.PinButton.SetVisible(false); stage.HideGroupCard();
+            stage.DetachTopPanel(); stage.SetPaginationVisible(false); stage.HideExpandedConnector(); stage.PinButton.SetVisible(false); stage.OpenButton.SetVisible(false); stage.HideGroupCard();
             var start = DockPosition(x, CardSize);
             stage.Motion.Set(start, Vector3.One, 0, false);
             stage.Root.IsVisible = true;

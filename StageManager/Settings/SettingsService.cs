@@ -10,7 +10,7 @@ namespace StageManager.Settings;
 
 public sealed class SettingsService
 {
-	private const int CurrentSchemaVersion = 20;
+	private const int CurrentSchemaVersion = 21;
 	private readonly JsonSerializerOptions _jsonOptions = new()
 	{
 		WriteIndented = true,
@@ -147,6 +147,10 @@ public sealed class SettingsService
 			settings.AppWindowsMode = AppWindowsMode.AllAtOnce;
 		if (!Enum.IsDefined(settings.UiLanguage))
 			settings.UiLanguage = UiLanguage.English;
+		if (!Enum.IsDefined(settings.SettingsTheme)) settings.SettingsTheme = SettingsTheme.System;
+		settings.SettingsTextSize = settings.SettingsTextSize >= 12 ? 12 : 11;
+		if (settings.LastSettingsPage is not ("general" or "cards" or "ai" or "windows" or "shortcuts" or "preferences" or "updates"))
+			settings.LastSettingsPage = "general";
 		settings.CardScale = Math.Clamp(settings.CardScale, 0.55, 1.25);
 		settings.SidebarVerticalOffset = Math.Clamp(settings.SidebarVerticalOffset, -400, 400);
 		if (!Enum.IsDefined(settings.SidebarEdge)) settings.SidebarEdge = SidebarEdge.Left;

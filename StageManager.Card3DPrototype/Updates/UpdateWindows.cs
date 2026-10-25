@@ -20,13 +20,15 @@ internal sealed class UpdateForm : Form
     public UpdateForm(UiLanguage language)
     {
         _language = language; Text = T("Check for updates", "检查更新");
-        StartPosition = FormStartPosition.CenterScreen; ClientSize = new Size(520, 430); MinimumSize = new Size(450, 350);
-        Font = new Font("Segoe UI", 10); BackColor = Color.FromArgb(24, 27, 33); ForeColor = Color.White;
+        AutoScaleDimensions = new SizeF(96, 96); AutoScaleMode = AutoScaleMode.Dpi;
+        StartPosition = FormStartPosition.CenterScreen; ClientSize = new Size(640, 500); MinimumSize = new Size(570, 420);
+        Font = new Font("Microsoft YaHei UI", 11); BackColor = Color.FromArgb(24, 27, 33); ForeColor = Color.White;
+        _status.Height = 84; _notes.Margin = new Padding(18);
         _notes.BackColor = BackColor; _notes.ForeColor = ForeColor; _notes.BorderStyle = BorderStyle.None;
         _install.Text = T("Download and update", "下载并升级"); _install.Enabled = false;
         _cancel.Text = T("Later", "稍后"); _page.Text = T("Release page", "查看发布页");
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 55, Padding = new Padding(10), FlowDirection = FlowDirection.RightToLeft };
-        foreach (var button in new[] { _cancel, _install, _page }) { button.ForeColor = Color.Black; button.BackColor = Color.FromArgb(225, 234, 245); buttons.Controls.Add(button); }
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 74, Padding = new Padding(12), FlowDirection = FlowDirection.RightToLeft };
+        foreach (var button in new[] { _cancel, _install, _page }) { button.MinimumSize = new Size(145, 44); button.FlatStyle = FlatStyle.Flat; button.ForeColor = Color.Black; button.BackColor = Color.FromArgb(225, 234, 245); buttons.Controls.Add(button); }
         Controls.Add(_notes); Controls.Add(_status); Controls.Add(_progress); Controls.Add(buttons);
         _page.Click += (_, _) => Process.Start(new ProcessStartInfo(_release?.Page.AbsoluteUri ?? AppVersion.ReleasesUrl) { UseShellExecute = true });
         _cancel.Click += (_, _) => { if (_download is not null) _download.Cancel(); else Close(); };
@@ -107,7 +109,7 @@ internal static class WhatsNewState
 
 internal sealed class WhatsNewForm : Form
 {
-    public event EventHandler? OpenAiSettings;
+    public event EventHandler? OpenSettings;
     protected override bool ShowWithoutActivation => true;
     protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x08000000 | 0x80; return p; } }
     public WhatsNewForm(UiLanguage language, bool recordSeen = true)
@@ -120,12 +122,12 @@ internal sealed class WhatsNewForm : Form
         BackColor = Color.FromArgb(24, 27, 33); ForeColor = Color.FromArgb(236, 241, 248);
         var title = new Label { Text = AppVersion.Label, Dock = DockStyle.Top, Height = 66, Padding = new Padding(22, 20, 0, 0), Font = new Font("Segoe UI", 18, FontStyle.Bold) };
         var body = new Label { Dock = DockStyle.Fill, Padding = new Padding(22, 8, 22, 8), Text = T(
-            "Correct collapse direction\nThe arrow points toward the dock edge: up at the top and down at the bottom. Resizing grouped tools no longer changes its direction.\n\nLighter window titles\nApplication names and window captions use dark text directly on the light card, without black rectangular backgrounds.\n\nYour existing layout is retained\nThree-row cards, complete portrait previews, edge scrolling and all window controls remain unchanged. Left/right docks keep their expansion and FIX controls.",
-            "收起箭头方向修正\n顶部箭头向上、底部向下，始终朝向所在屏幕边缘。组合卡重新计算尺寸时不再改变方向。\n\n更轻盈的窗口标题\n应用名和窗口标题改为透明底、深灰文字，融入浅色卡片，不再显示黑色方框。\n\n保留现有操作习惯\n三行卡片、完整竖向预览、边缘滑动及窗口操作保持不变。左右侧栏继续保留原有展开与 FIX 功能。") };
+            "Smoother edge travel\nGentle acceleration, continuous speed changes and braking near the end. Reversing does not drag in the old direction.\n\nNo stops from passing cards\nCards moving under a stationary pointer no longer interrupt a scroll. Move inward to a control or click to stop; wheel input and menus retain priority.\n\nLess stepping, no extra idle work\nA better active frame cadence and fewer redundant region updates. Existing OPEN, FIX, Focus and color-coded settings navigation are unchanged.",
+            "边缘滑动更顺滑\n渐进起步、连续调速，接近内容尽头时减速；换向不再沿旧方向反拖。\n\n卡片经过不再打断\n滚动中的卡片经过静止鼠标时继续滑动；主动移向控件或点击时暂停，滚轮、菜单与 AI 面板仍优先响应。\n\n减少逐步跳动\n改善活动期间的刷新节奏，跳过重复的窗口区域更新。OPEN、FIX、Focus 与彩色设置导航保持原样。") };
         var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 52, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(10) };
         var done = new Button { Text = T("Got it", "知道了"), AutoSize = true, ForeColor = Color.Black, BackColor = Color.FromArgb(225, 234, 245) };
-        var settings = new Button { Text = T("AI settings", "打开 AI 设置"), AutoSize = true, ForeColor = Color.Black, BackColor = Color.FromArgb(225, 234, 245) };
-        done.Click += (_, _) => Close(); settings.Click += (_, _) => { Close(); OpenAiSettings?.Invoke(this, EventArgs.Empty); };
+        var settings = new Button { Text = T("Open settings", "打开设置"), AutoSize = true, ForeColor = Color.Black, BackColor = Color.FromArgb(225, 234, 245) };
+        done.Click += (_, _) => Close(); settings.Click += (_, _) => { Close(); OpenSettings?.Invoke(this, EventArgs.Empty); };
         footer.Controls.Add(done); footer.Controls.Add(settings);
         Controls.Add(body); Controls.Add(title); Controls.Add(footer);
         Shown += (_, _) => { if (recordSeen) WhatsNewState.MarkShown(); };

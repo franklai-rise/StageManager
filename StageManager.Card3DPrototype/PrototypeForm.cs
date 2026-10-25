@@ -16,11 +16,14 @@ using Windows.UI.Composition.Desktop;
 
 namespace StageManager.Card3DPrototype;
 
-internal sealed class PrototypeForm : Form
+internal sealed partial class PrototypeForm : Form
 {
 	internal event EventHandler? StartupReady;
 	private readonly System.Windows.Forms.Timer _whatsNewTimer = new() { Interval = 2000 };
 	private WhatsNewForm? _whatsNew;
+	private readonly AutomaticUpdateChecker _automaticUpdateChecker = new();
+	private readonly System.Windows.Forms.Timer _automaticUpdateTimer = new() { Interval = 15000 };
+	private bool _updatesOpen;
 	private readonly Dictionary<IntPtr, long> _permissionRefresh = new();
 	private readonly HashSet<string> _launchesInFlight = new(StringComparer.OrdinalIgnoreCase);
 	private const int WsExToolWindow = 0x00000080;
@@ -61,6 +64,7 @@ internal sealed class PrototypeForm : Form
 	private SidebarMouseWheelHook? _mouseWheelHook;
 	private Region? _mainCardRegion;
 	private Region? _fixedCardRegion;
+	private (IntPtr Handle, long Revision, int X, int Y, bool Cards)? _appliedRegionStamp;
 	private long _regionLayoutRevision = -1;
 	private Screen _sidebarDisplay;
 	private Rectangle _sidebarScreenBounds;
@@ -133,13 +137,23 @@ internal sealed class PrototypeForm : Form
 		_contextMenu.Items.Add(refreshItem);
 		_contextMenu.Items.Add(settingsItem);
 		var updatesItem = new ToolStripMenuItem("Check for updates");
-		updatesItem.Click += (_, _) => RunAfterContextMenuCloses(_contextMenu, () => { using var dialog = new UpdateForm(_catalog?.Settings.Current.UiLanguage ?? UiLanguage.English); dialog.ShowDialog(); });
+		updatesItem.Click += (_, _) => RunAfterContextMenuCloses(_contextMenu, ShowUpdateDialog);
 		_contextMenu.Items.Add(updatesItem);
 		_whatsNewTimer.Tick += (_, _) =>
 		{
+			if (_catalog?.Settings.Current.ShowWhatsNewOnStartup == false) { _whatsNewTimer.Stop(); return; }
 			if (_closing || _settingsOpen || _catalog is null || Screen.AllScreens.Any(screen => FullScreenService.IsExclusiveFullScreenOn(NativeMethods.GetForegroundWindow(), screen))) return;
 			_whatsNewTimer.Stop();
 			if (WhatsNewState.ShouldShow()) ShowWhatsNew();
+		};
+		_automaticUpdateTimer.Tick += async (_, _) =>
+		{
+			await _automaticUpdateChecker.PollAsync();
+			if (_closing || IsDisposed) return;
+			_automaticUpdateChecker.TryNotify(!_settingsOpen && !_updatesOpen && _trayIcon is not null &&
+				!Screen.AllScreens.Any(screen => FullScreenService.IsExclusiveFullScreenOn(NativeMethods.GetForegroundWindow(), screen)),
+				release => _trayIcon!.ShowBalloonTip(7000, L("Stage Manager update available", "Stage Manager 有新版本"),
+					L($"{release.Tag} is available. Open Settings → Updates to review and install.", $"发现 {release.Tag}。请打开“设置 → 更新与关于”查看并升级。"), ToolTipIcon.Info));
 		};
 		_contextMenu.Items.Add(new ToolStripSeparator());
 		_contextMenu.Items.Add(exitItem);
@@ -224,7 +238,7 @@ internal sealed class PrototypeForm : Form
 			_stageTimer.Start();
 			_pointerTimer.Start();
 			StartupReady?.Invoke(this, EventArgs.Empty);
-			if (WhatsNewState.ShouldShow()) _whatsNewTimer.Start();
+			if (_catalog.Settings.Current.ShowWhatsNewOnStartup && WhatsNewState.ShouldShow()) _whatsNewTimer.Start();
 		}
 		catch (Exception exception)
 		{
@@ -268,6 +282,8 @@ internal sealed class PrototypeForm : Form
 			Cursor = Cursors.SizeNS;
 			return;
 		}
+		_renderer.UpdateEdgeScroll(e.Location, Control.MouseButtons != MouseButtons.None || _contextMenu.Visible ||
+			_cardContextMenu.Visible || _aiUsageDetails is { IsDisposed: false });
 		if (_renderer.IsScrolling)
 		{
 			_lastSidebarInteractionUtc = DateTime.UtcNow;
@@ -312,7 +328,7 @@ internal sealed class PrototypeForm : Form
 			else if (target?.IsAiUsageCard == true)
 				OpenAiUsageDetails(fromClick: true);
 			else if (target is not null && !target.IsExplorerButton && target.QuickLaunchApp is null &&
-				!target.IsExpandAllButton && !target.IsPinButton && !target.IsSidebarCollapseButton && !target.IsSidebarPinButton &&
+				!target.IsExpandAllButton && !target.IsPinButton && !target.IsOpenGroupButton && !target.IsSidebarCollapseButton && !target.IsSidebarPinButton &&
 				!target.IsDesktopButton && !target.IsDesktopIconsButton && target.PageDelta == 0)
 				ShowCardContextMenu(target);
 			else
@@ -346,6 +362,13 @@ internal sealed class PrototypeForm : Form
 			return;
 		}
 		CancelPendingSingleCardClick();
+		if (clickTarget?.IsOpenGroupButton == true)
+		{
+			_openGroupPress = clickTarget;
+			_renderer.SetOpenGroupPressed(clickTarget.StageKey, true);
+			Capture = true;
+			return;
+		}
 		if (clickTarget?.IsNotificationAreaDragHandle == true)
 		{
 			_renderer.FinishScroll();
@@ -372,6 +395,12 @@ internal sealed class PrototypeForm : Form
 
 	private void CancelPendingSingleCardClick()
 	{
+		if (_openGroupPress is { } groupPress)
+		{
+			_openGroupPress = null;
+			_renderer?.SetOpenGroupPressed(groupPress.StageKey, false);
+			Capture = false;
+		}
 		var wasPressed = _cardClick.IsPressed;
 		_cardClick.Cancel();
 		_renderer?.SetCardFeedback(null, CardFeedback.None);
@@ -388,6 +417,11 @@ internal sealed class PrototypeForm : Form
 		if (!wasExpanded && _renderer.HasExpandedStage)
 			NativeMethods.SetWindowPos(Handle, NativeMethods.HwndTop, 0, 0, 0, 0, NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpNoActivate);
 		UpdateWindowRegion(true);
+		if (_renderer.ConsumeOpenGroupRequest() is { } groupKey)
+		{
+			_ = OpenApplicationGroupAsync(groupKey);
+			return;
+		}
 		if (_renderer.ConsumeExplorerLaunchRequest())
 		{
 			OpenFileExplorer();
@@ -539,6 +573,7 @@ internal sealed class PrototypeForm : Form
 	{
 		_whatsNewTimer.Stop(); _whatsNewTimer.Dispose(); _whatsNew?.Dispose();
 		_closing = true;
+		_automaticUpdateTimer.Stop(); _automaticUpdateTimer.Dispose(); _automaticUpdateChecker.Dispose();
 		_desktopToggle.TryRestore(out _);
 		_mouseWheelHook?.Dispose();
 		_mouseWheelHook = null;
@@ -610,6 +645,7 @@ internal sealed class PrototypeForm : Form
 
 	internal async Task WaitForBackgroundShutdownAsync()
 	{
+		await _automaticUpdateChecker.ActiveCheck.ConfigureAwait(false);
 		await _notificationAreaClient.ShutdownAsync().ConfigureAwait(false);
 		try { await _aiUsageService.WaitForShutdownAsync().ConfigureAwait(false); }
 		catch (OperationCanceledException) { }
@@ -645,6 +681,9 @@ internal sealed class PrototypeForm : Form
 		if (_catalog is null || _renderer is null)
 			return;
 		var settings = _catalog.Settings.Current;
+		_automaticUpdateChecker.SetEnabled(settings.AutomaticUpdateChecks);
+		if (settings.AutomaticUpdateChecks) _automaticUpdateTimer.Start(); else _automaticUpdateTimer.Stop();
+		if (!settings.ShowWhatsNewOnStartup) _whatsNewTimer.Stop();
 		var aiConfigurationChanged = _aiUsageService.Configure(settings);
 		_renderer.SetAnimationsEnabled(settings.AnimationsEnabled);
 		_renderer.SetCardScale(settings.CardScale);
@@ -742,11 +781,18 @@ internal sealed class PrototypeForm : Form
 	}
 
 	private void ShowSettings() => ShowSettings(false);
+	private void ShowUpdateDialog()
+	{
+		if (_updatesOpen || _closing) return;
+		_updatesOpen = true;
+		try { using var dialog = new UpdateForm(CurrentLanguage); dialog.ShowDialog(); }
+		finally { _updatesOpen = false; }
+	}
 	private void ShowWhatsNew()
 	{
 		if (_whatsNew is { IsDisposed: false }) return;
 		_whatsNew = new WhatsNewForm(_catalog?.Settings.Current.UiLanguage ?? UiLanguage.English);
-		_whatsNew.OpenAiSettings += (_, _) => ShowSettings(aiUsage: true);
+		_whatsNew.OpenSettings += (_, _) => ShowSettings();
 		_whatsNew.Show(this);
 	}
 	private void ShowSettings(bool aiUsage)
@@ -947,11 +993,22 @@ internal sealed class PrototypeForm : Form
 		base.OnMouseCaptureChanged(e);
 		if (!Capture && _cardClick.IsPressed)
 			CancelPendingSingleCardClick();
+		if (!Capture && _openGroupPress is not null) CancelPendingSingleCardClick();
 	}
 
 	protected override void OnMouseUp(MouseEventArgs e)
 	{
 		base.OnMouseUp(e);
+		if (e.Button == MouseButtons.Left && _openGroupPress is { } openPress)
+		{
+			_openGroupPress = null;
+			var released = _renderer?.HitTest(e.Location);
+			Capture = false;
+			_renderer?.ReleasePointerPress();
+			if (!_closing && _sidebarVisible && CardInteraction.SameTarget(openPress, released))
+				ExecutePrimaryClick(released);
+			return;
+		}
 		if (e.Button == MouseButtons.Left && _cardClick.IsPressed)
 		{
 			var click = _cardClick.Release(_renderer?.HitTest(e.Location), e.Location, SystemInformation.DragSize)
@@ -995,6 +1052,7 @@ internal sealed class PrototypeForm : Form
 
 	private void UseNotificationAreaDragRegion()
 	{
+		_appliedRegionStamp = null;
 		if (_renderer is null || !IsHandleCreated)
 			return;
 		var replacement = new Region(_renderer.InteractionBounds);
@@ -1493,6 +1551,9 @@ internal sealed class PrototypeForm : Form
 			return _renderer?.AreAllStagesExpanded == true
 				? L("FIXED · Click to release all groups\nIndividually fixed groups stay open", "FIXED · 单击解除全部展开\n单独固定的分组仍保持展开")
 				: L("FIX · Expand and keep all groups open", "FIX · 展开并固定全部多窗口分组");
+		if (target.IsOpenGroupButton)
+			return L("OPEN · Restore and bring forward every window in this application\nKeeps window sizes and does not minimize visible windows",
+				"OPEN · 一次恢复并置前此应用的全部窗口\n保留窗口大小，不会最小化已显示的窗口");
 		if (target.IsPinButton)
 			return _renderer?.IsStagePinned(target.StageKey) == true
 				? L("FIXED · Click to release", "FIXED · 点击解除固定")
@@ -1935,10 +1996,10 @@ internal sealed class PrototypeForm : Form
 		if (!_renderer.IsScrolling && !_notificationAreaDragActive && _cardClick.Pending is null)
 			_renderer.PollPointer(client);
 		var hit = _renderer.HitTest(client);
-		UpdateAiUsagePointer(hit, screenPoint, nowUtc);
+		UpdateAiUsagePointer(_renderer.IsScrolling ? null : hit, screenPoint, nowUtc);
 		if (!_renderer.IsScrolling && !_notificationAreaDragActive && _cardClick.Pending is null)
 			UpdateHoverExpandCandidate(hit, client);
-		UpdateHoverHint(hit);
+		if (_renderer.IsScrolling) HideHoverHint(); else UpdateHoverHint(hit);
 		var pointerNearSidebar = _renderer.InteractionBounds.Contains(client);
 		var pointerInsideAiPanel = _aiUsageDetails is { IsDisposed: false } aiPanel && aiPanel.IsPointerInside(screenPoint);
 		pointerNearSidebar |= pointerInsideAiPanel;
@@ -2237,6 +2298,10 @@ internal sealed class PrototypeForm : Form
 			return;
 		if (_notificationAreaDragActive)
 			return;
+		var stamp = (Handle, includeCards ? _renderer?.LayoutRevision ?? -1 : -1,
+			includeCards ? (int)MathF.Round(_renderer?.ScrollTranslationX ?? 0) : 0,
+			includeCards ? (int)MathF.Round(_renderer?.ScrollTranslationY ?? 0) : 0, includeCards);
+		if (_appliedRegionStamp == stamp && (_renderer?.TopPanelBounds.IsEmpty ?? true)) return;
 		using var combined = new Region();
 		combined.MakeEmpty();
 		combined.Union(new Rectangle(0, 0, 1, 1));
@@ -2263,6 +2328,7 @@ internal sealed class PrototypeForm : Form
 		var previous = Region;
 		Region = replacement;
 		previous?.Dispose();
+		_appliedRegionStamp = stamp;
 		UpdateTopPanelOverlay(includeCards);
 	}
 

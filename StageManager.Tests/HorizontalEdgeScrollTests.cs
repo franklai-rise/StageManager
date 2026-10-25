@@ -18,6 +18,7 @@ internal static class HorizontalEdgeScrollTests
 	public static void RunAll()
 	{
 		ZonesAndDpi();
+		VerticalZonesAndContent();
 		StopsAndWheelPriority();
 		BoundedMotion();
 	}
@@ -31,11 +32,11 @@ internal static class HorizontalEdgeScrollTests
 			var band = new RectangleF(-200 * dpi, 300 * dpi, 400 * dpi, 60 * dpi);
 			float At(float x, float y = 330) => controller.Update(new(x * dpi, y * dpi), band, dpi, range, true) / dpi;
 			Near(At(-200), -480, "Left outer edge");
-			Near(At(-188), -290, "Left proportional midpoint");
-			Near(At(-176), -100, "Left inner boundary");
-			Near(At(176), 100, "Right inner boundary");
-			Near(At(188), 290, "Right proportional midpoint");
-			Near(At(199.99f), 479.8417f, "Right outer edge", .01f);
+			Near(At(-188), -240, "Left smooth midpoint");
+			Near(At(-176), 0, "Left inner boundary");
+			Near(At(176), 0, "Right inner boundary");
+			Near(At(188), 240, "Right smooth midpoint");
+			Near(At(199.99f), 480f, "Right outer edge", .01f);
 			foreach (var x in new[] { -201f, -175f, 0f, 175f, 200f, 201f })
 				Near(At(x), 0, "Outside activation zone");
 			Near(At(-199, 299), 0, "Above visible band");
@@ -53,7 +54,7 @@ internal static class HorizontalEdgeScrollTests
 		var band = new RectangleF(0, 0, 400, 60);
 		var range = new SidebarScrollRange(0, 300);
 		float Update(bool enabled = true) => controller.Update(new(1, 30), band, 1, range, enabled);
-		foreach (var reason in new[] { "blocked", "button", "menu", "AI", "hidden", "vertical dock" })
+		foreach (var reason in new[] { "blocked", "button", "menu", "AI", "hidden", "group hover" })
 		{
 			Check(Update() < 0, "Activation before " + reason);
 			Near(Update(false), 0, "Immediate disable: " + reason);
@@ -84,6 +85,37 @@ internal static class HorizontalEdgeScrollTests
 		Near(Update(), 0, "Repeated wheel extends priority");
 		now = 10.651;
 		Check(Update() < 0, "Resumes after last wheel");
+	}
+
+	private static void VerticalZonesAndContent()
+	{
+		var controller = new HorizontalEdgeScrollController(() => 0);
+		foreach (var dpi in new[] { 1f, 1.25f, 1.5f, 2f })
+		foreach (var x in new[] { -1200f, 900f }) // left/right docks, including negative monitor coordinates
+		{
+			var band = new RectangleF(x * dpi, -200 * dpi, 160 * dpi, 800 * dpi);
+			float At(float y, float dx = 80) => controller.Update(new((x + dx) * dpi, y * dpi), band, dpi, new(-20 * dpi, 900 * dpi), true, horizontal: false) / dpi;
+			Near(At(-200), -480, "Vertical leading edge");
+			Near(At(-188), -450.84f, "Vertical smooth outer speed", .01f);
+			Near(At(-160), -240, "Vertical wider-zone midpoint");
+			Near(At(-140), -75, "Begins well before the old 24-DIP zone");
+			Near(At(-121), -.223125f, "Gentle entry without speed jump", .01f);
+			Near(At(-120), 0, "Vertical inner boundary");
+			Near(At(520), 0, "Vertical trailing inner boundary");
+			Near(At(540), 75, "Downward wider-zone start");
+			Near(At(560), 240, "Downward midpoint");
+			Near(At(588), 450.84f, "Vertical trailing speed", .01f);
+			Near(At(0), 0, "Middle stays still");
+			Near(At(-201), 0, "Above band stops"); Near(At(600), 0, "Below band stops");
+			Near(At(-200, -1), 0, "Beside band stops"); Near(At(-200, 160), 0, "Outside right edge stops");
+			Near(At(-200, 1), -480, "Transparent in-band gutter activates");
+		}
+		var fitting = HorizontalEdgeScrollController.ContentRange(200, 400, 800, 12);
+		Check(fitting == new SidebarScrollRange(0, 0), "Fitting cards must not auto scroll.");
+		Check(HorizontalEdgeScrollController.ContentRange(12, 1200, 800, 12) == new SidebarScrollRange(0, 424), "Expanded children/footer missing from overflow.");
+		Check(HorizontalEdgeScrollController.ContentRange(-100, 1200, 800, 12) == new SidebarScrollRange(-112, 312), "Negative anchored offset lost.");
+		Check(HorizontalEdgeScrollController.ContentRange(12, 776, 800, 12) == new SidebarScrollRange(0, 0), "Exact fit auto scrolls.");
+		Near(controller.Update(new(10, 0), new(0, 0, 100, 800), 1, fitting, true, false), 0, "No auto travel on fitting vertical column");
 	}
 
 	private static void BoundedMotion()

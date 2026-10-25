@@ -128,6 +128,19 @@ internal sealed class SidebarScrollMotion
 		return Position - previous;
 	}
 
+	// Edge takeover may start outside the content range after wheel extra-travel.
+	// Move inward from that exact position; never teleport to the nearest bound.
+	public float MoveEdgeDelta(float delta, SidebarScrollRange range)
+	{
+		if (!float.IsFinite(delta) || !float.IsFinite(range.Minimum) || !float.IsFinite(range.Maximum) || range.Minimum > range.Maximum)
+			throw new ArgumentOutOfRangeException(nameof(range));
+		var previous = Position;
+		if (delta > 0 && Position < range.Maximum) Position = (float)Math.Min((double)Position + delta, range.Maximum);
+		else if (delta < 0 && Position > range.Minimum) Position = (float)Math.Max((double)Position + delta, range.Minimum);
+		FreezeAtCurrent();
+		return Position - previous;
+	}
+
 	// For ending continuous movement, not for wheel suppression: no snap to a
 	// stale spring target. A position outside the wheel range still returns normally.
 	public void FreezeAtCurrent()

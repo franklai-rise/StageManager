@@ -10,12 +10,12 @@ internal static class CardInteraction
 {
 	public static bool IsWindowCard(CardHitTarget? target) => target is not null &&
 		!target.IsExplorerButton && target.QuickLaunchApp is null && !target.IsExpandAllButton &&
-		!target.IsPinButton && !target.IsSidebarCollapseButton && !target.IsSidebarPinButton && !target.IsDesktopButton &&
+		!target.IsPinButton && !target.IsOpenGroupButton && !target.IsSidebarCollapseButton && !target.IsSidebarPinButton && !target.IsDesktopButton &&
 		!target.IsDesktopIconsButton && !target.IsAiUsageCard &&
 		!target.IsNotificationAreaCard && target.PageDelta == 0;
 
 	public static string Key(CardHitTarget target) =>
-		$"{target.StageKey}:{target.Window?.Handle}:{target.IsPrimaryCard}:{target.IsPinButton}:{target.PageDelta}:" +
+		$"{target.StageKey}:{target.Window?.Handle}:{target.IsPrimaryCard}:{target.IsPinButton}:{target.IsOpenGroupButton}:{target.PageDelta}:" +
 		$"{target.IsDesktopButton}:{target.IsDesktopIconsButton}:{target.IsSidebarPinButton}:{target.IsNotificationAreaDragHandle}:{target.IsNotificationAreaRefreshButton}:" +
 		$"{target.NotificationIcon?.Ordinal}:{target.NotificationIconName}";
 
@@ -47,7 +47,8 @@ internal static class CardHoverText
 			expanded ? (pinAvailable ? L("Click to collapse · FIX keeps this group open", "单击收起 · FIX 可保持展开") : L("Click to collapse", "单击收起")) :
 			canExpand ? L("Hover or click to show windows", "悬停或单击展开窗口") :
 			L("Release the other fixed group to expand this one", "请先解除另一组的 FIXED，再展开此组");
-		return $"{CompactTitle(title)} · {count} {L(count == 1 ? "window" : "windows", "个窗口")}\n{action}\n{L("Right-click for group actions", "右键：此应用的窗口操作")}";
+		var openHint = expanded ? L("OPEN brings all windows forward", "OPEN 一次恢复并置前全部窗口") : L("Right-click for group actions", "右键：此应用的窗口操作");
+		return $"{CompactTitle(title)} · {count} {L(count == 1 ? "window" : "windows", "个窗口")}\n{action}\n{openHint}";
 	}
 
 	public static string CompactTitle(string? text, int columns = 44)

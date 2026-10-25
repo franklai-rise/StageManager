@@ -53,8 +53,11 @@ if (args is ["--desktop-toggle-probe", var probeMode])
 }
 
 if (args is ["--top-panel-preview"]) { TopPanelRegressionTests.Preview(); return 0; }
+if (args is ["--scroll-timing-probe"]) { EdgeScrollSmoothnessTests.ProbeTimers(); return 0; }
 if (args is ["--card-polish-preview"]) { TopPanelRegressionTests.Preview(polish:true); return 0; }
 if (args is ["--top-panel-tests"]) { SidebarDockTests.RunAll(); Console.WriteLine("PASS top-panel tests"); return 0; }
+if (args is ["--settings-preview", var output]) { SettingsExperienceTests.RunUi(output); return 0; }
+if (args is ["--settings-tests"]) { SettingsExperienceTests.RunUi(); AutomaticUpdateTests.Run(); Console.WriteLine("PASS settings and automatic updates"); return 0; }
 return TestRunner.Run();
 
 internal static class TestRunner
@@ -63,6 +66,10 @@ internal static class TestRunner
 
 	public static int Run()
 	{
+		RunTest("Edge scroll eases, brakes, reverses and preserves deliberate pointer intent", EdgeScrollSmoothnessTests.Run);
+		RunTest("Group OPEN restores all children with cancellation and independent failures", () => GroupCardEnhancementTests.OpenAll().GetAwaiter().GetResult());
+		RunTest("Collapsed spacing and FIX/OPEN hit geometry at mixed DPI", GroupCardEnhancementTests.GeometryAndActions);
+		RunTest("Automatic update cadence, cancellation and notification policy", AutomaticUpdateTests.Run);
 		RunTest("Horizontal edge scrolling and wheel priority", HorizontalEdgeScrollTests.RunAll);
 		RunTest("Aspect-fit preview geometry and worker protocol", PreviewFitModeRegressionTests.Run);
 		RunTest("Four-edge layout, hit testing, scrolling and Focus geometry", SidebarDockTests.RunAll);
@@ -147,7 +154,7 @@ internal static class TestRunner
 		RunTest("Window cards respect the configured preview schedule", InitialCapturePolicy);
 		RunTest("Sidebar hint reflects the configured idle behavior", SidebarHintFormatting);
 		RunTest("Interface language switches in both directions", InterfaceLanguageTranslation);
-		RunTest("Settings language button updates the visible interface", SettingsLanguageToggle);
+		RunTest("Settings navigation, language, preferences and fixed save controls", SettingsLanguageToggle);
 		RunTest("Sidebar display selection follows the physical left edge", SidebarDisplaySelection);
 		RunTest("Tray-hidden windows leave the sidebar while taskbar-minimized windows remain", ManagedWindowVisibility);
 		RunTest("Off-screen recovery preserves visible windows and centers only lost windows", OffscreenRecoveryGeometry);
@@ -296,7 +303,7 @@ internal static class TestRunner
 				}
 				""");
 			var service = new SettingsService(path);
-			Assert(service.Current.SchemaVersion == 20, "Settings schema was not upgraded for dock position.");
+			Assert(service.Current.SchemaVersion == 21, "Settings schema was not upgraded for dock position.");
 			Assert(service.Current.LowMemoryRendering, "Low-memory rendering should be enabled by default.");
 			Assert(!service.Current.IgnoredProcesses.Contains("explorer", StringComparer.OrdinalIgnoreCase),
 				"The legacy default Explorer ignore entry was not migrated.");
@@ -305,7 +312,7 @@ internal static class TestRunner
 			Assert(service.Current.IgnoredProcesses.Contains("custom-app", StringComparer.OrdinalIgnoreCase),
 				"A user-selected ignored process was lost during migration.");
 			var migratedJson = File.ReadAllText(path);
-			Assert(migratedJson.Contains("\"SchemaVersion\": 20", StringComparison.Ordinal),
+			Assert(migratedJson.Contains("\"SchemaVersion\": 21", StringComparison.Ordinal),
 				"The migrated schema was not written back to disk.");
 			Assert(!migratedJson.Contains("\"explorer\"", StringComparison.OrdinalIgnoreCase),
 				"The legacy Explorer ignore entry remained in the persisted settings.");
@@ -1065,90 +1072,7 @@ internal static class TestRunner
 			"The settings interface did not switch back to English.");
 	}
 
-	private static void SettingsLanguageToggle()
-	{
-		Exception? failure = null;
-		var thread = new Thread(() =>
-		{
-			try
-			{
-				var draft = new AppSettings();
-				using var form = new SettingsForm(draft);
-				Assert(form.FormBorderStyle == FormBorderStyle.Sizable && form.MaximizeBox,
-					"The settings window is not freely resizable.");
-				Assert(form.MinimumSize.Width >= 640 && form.MinimumSize.Height >= 700,
-					"The settings window does not have a safe minimum size.");
-				var languageSelector = Descendants(form)
-					.OfType<ComboBox>()
-					.Single(combo => combo.Items.Cast<object>().Contains("Simplified Chinese"));
-				languageSelector.SelectedItem = "Simplified Chinese";
-				Assert(draft.UiLanguage == UiLanguage.SimplifiedChinese,
-					"The in-page language option did not update the settings draft.");
-				Assert(form.Text.Contains("设置", StringComparison.Ordinal),
-					"The settings window title did not switch to Chinese.");
-				Assert(Descendants(form).Any(control => control.Text == "外观"),
-					"The settings groups did not switch to Chinese.");
-				Assert(Descendants(form).Any(control => control.Text == "界面语言"),
-					"The in-page interface language label did not switch to Chinese.");
-				Assert(Descendants(form).Any(control => control.Text == "Focus 增强模式（保留卡片栏区域）"),
-					"The Focus enhanced mode option was not exposed in Chinese.");
-				Assert(Descendants(form).Any(control => control.Text == "在卡片上方显示文件资源管理器按钮"),
-					"The Explorer quick button option was not exposed in Chinese.");
-				Assert(Descendants(form).Any(control => control.Text == "多窗口卡片展开时显示固定按钮"),
-					"The expanded-card pin button option was not exposed in Chinese.");
-				Assert(Descendants(form).Any(control => control.Text == "在底部卡片中显示 Windows 隐藏图标"),
-					"The hidden-icons card toggle was not exposed in Chinese.");
-				Assert(Descendants(form).Any(control => control.Text == "在窗口卡片下方显示一键最小化／恢复快捷卡"),
-					"The Show Desktop button toggle was not exposed in Chinese.");
-				var switchButton = Descendants(form)
-					.OfType<Button>()
-					.Single(button => button.Text == "English");
-				Assert(switchButton.Text == "English",
-					"The language button did not offer a switch back to English.");
-				typeof(Button)
-					.GetMethod("OnClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-					.Invoke(switchButton, new object[] { EventArgs.Empty });
-				Assert(draft.UiLanguage == UiLanguage.English,
-					"The compact language button did not switch back to English.");
-				var focusToggle = Descendants(form)
-					.OfType<CheckBox>()
-					.Single(checkBox => checkBox.Text == "Focus enhanced mode (reserve the card column)");
-				focusToggle.Checked = true;
-				var idleToggle = Descendants(form)
-					.OfType<CheckBox>()
-					.Single(checkBox => checkBox.Text == "Auto-hide after no pointer activity");
-				Assert(!idleToggle.Enabled,
-					"Idle auto-hide remained editable while Focus enhanced mode was selected.");
-				var saveButton = Descendants(form)
-					.OfType<Button>()
-					.Single(button => button.Text == "Save");
-				typeof(Button)
-					.GetMethod("OnClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-					.Invoke(saveButton, new object[] { EventArgs.Empty });
-				Assert(draft.StageMode == StageMode.Focus,
-					"The settings form did not persist the Focus enhanced mode selection.");
-			}
-			catch (Exception exception)
-			{
-				failure = exception;
-			}
-		});
-		thread.SetApartmentState(ApartmentState.STA);
-		thread.Start();
-		Assert(thread.Join(TimeSpan.FromSeconds(10)), "The settings language smoke test timed out.");
-		if (failure is not null)
-			throw new InvalidOperationException("Settings language smoke test failed.", failure);
-
-		static IEnumerable<Control> Descendants(Control parent)
-		{
-			foreach (Control child in parent.Controls)
-			{
-				yield return child;
-				foreach (var descendant in Descendants(child))
-					yield return descendant;
-			}
-		}
-	}
+	private static void SettingsLanguageToggle() => SettingsExperienceTests.RunUi();
 
 	private static void InitialWindowLayoutMemoryBehavior()
 	{
