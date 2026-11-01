@@ -1,9 +1,17 @@
-# Stage_Manager_Lai v4.6.6
+# Stage_Manager_Lai v4.8.1
 
 **Production source:** main. **Website:** https://franklai.com/StageManager/
 **Feedback:** [GitHub Issues](https://github.com/franklai-rise/StageManager/issues).
 
-v4.6.6 introduces four-edge docking and a new top/bottom layout: up to three
+v4.8.1 adds **Settings → Workspace → Display**: automatic leftmost, Windows
+primary, or a chosen connected monitor. A disconnected target falls back to the
+primary screen without forgetting the selection. It also publishes the optional
+Outlook calendar, compact settings with wheel scrolling across controls,
+configurable AI refresh intervals and automatic Codex CLI discovery.
+See [v4.8.1 release notes](docs/releases/v4.8.1.md) for usage and the expedited
+release's uncompleted physical-hotplug and 24-hour validation scope.
+
+v4.6.6 introduced four-edge docking and a new top/bottom layout: up to three
 window rows per card, stable continuation cards, grouped shortcuts and desktop
 controls, full-aspect portrait previews and edge scrolling. Side docks retain
 their existing expansion and independent FIX controls. Focus reserves workspace
@@ -11,8 +19,7 @@ along the selected edge. Optional AI usage remains off by default and now also
 includes local Antigravity integration.
 
 Download the self-contained Windows x64 EXE from [Releases](https://github.com/franklai-rise/StageManager/releases/latest).
-See [v4.6.6 release notes](docs/releases/v4.6.6.md) for installation, validation
-scope and known limitations. The website includes a four-edge interactive demo.
+The website includes a four-edge interactive demo.
 
 The production app isolates mouse input and window capture, includes permission
 diagnostics and supports configurable application launcher cards.
