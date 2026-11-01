@@ -1,14 +1,14 @@
-# Stage_Manager_Lai v4.8.1
+# Stage_Manager_Lai v4.8.2
 
 **Production source:** main. **Website:** https://franklai.com/StageManager/
 **Feedback:** [GitHub Issues](https://github.com/franklai-rise/StageManager/issues).
 
-v4.8.1 adds **Settings → Workspace → Display**: automatic leftmost, Windows
+v4.8.2 adds **Settings → Workspace → Display**: automatic leftmost, Windows
 primary, or a chosen connected monitor. A disconnected target falls back to the
 primary screen without forgetting the selection. It also publishes the optional
 Outlook calendar, compact settings with wheel scrolling across controls,
 configurable AI refresh intervals and automatic Codex CLI discovery.
-See [v4.8.1 release notes](docs/releases/v4.8.1.md) for usage and the expedited
+See [v4.8.2 release notes](docs/releases/v4.8.2.md) for usage and the expedited
 release's uncompleted physical-hotplug and 24-hour validation scope.
 
 v4.6.6 introduced four-edge docking and a new top/bottom layout: up to three

@@ -121,7 +121,13 @@ internal static class CalendarPresentationTests
         Check(Descendants(form).Any(c => c.Text == CalendarPresentation.StatusText(CalendarSnapshot.Empty(CalendarStatus.Loading), language)), "Month change shows loading");
         Check(!Descendants(form).Any(c => c.Text == "No events on this day"), "Pending month is not falsely empty");
         form.FitToWorkingArea(new Rectangle(-1000, 0, 900, 1000), 1.25f);
-        Check(form.Width == 525 && form.Height == 925 && form.Left >= -1000 && form.Right <= -100, "DPI and work area");
+        // Form.SetBoundsCore also enforces the real session's MaxWindowTrackSize,
+        // even when this test supplies a synthetic larger/negative monitor area.
+        var nativeLimit = System.Windows.Forms.SystemInformation.MaxWindowTrackSize;
+        var expectedSize = new Size(Math.Min(525, nativeLimit.Width), Math.Min(925, nativeLimit.Height));
+        Console.WriteLine($"Calendar DPI viewport: {form.Size}; expected {expectedSize}; native limit {nativeLimit}.");
+        Check(form.Size == expectedSize && form.Left >= -1000 && form.Right <= -100 && form.Top >= 0 && form.Bottom <= 1000,
+            "DPI and work area must respect native window limits");
         using var panel = new Bitmap(form.Width, form.Height);
         form.DrawToBitmap(panel, new Rectangle(Point.Empty, panel.Size));
         Check(Descendants(form).Count() >= 55, "Native calendar child controls");
