@@ -139,6 +139,14 @@ internal static class AiUsageRegressionTests
 		release.SetResult(); await Task.WhenAll(jobs);
 		Check(service.Current.Count == 1 && service.Current[0].HasData, "Data not published.");
 		await service.RefreshAsync(config, false); Check(calls == 1, "Automatic freshness ignored.");
+		config.AiUsageRefreshSeconds = 60;
+		Check(!service.Configure(config) && service.Current[0].HasData, "Changing interval discarded current quota.");
+		now += TimeSpan.FromSeconds(59.99);
+		await service.RefreshAsync(config, false); Check(calls == 1, "Refresh ran before configured deadline.");
+		now += TimeSpan.FromSeconds(1);
+		await service.RefreshAsync(config, false); Check(calls == 2, "Timer jitter skipped the configured refresh.");
+		config.AiUsageRefreshSeconds = 300;
+		calls = 1; // Preserve the following legacy cooldown assertions.
 		now += TimeSpan.FromSeconds(11);
 		await service.RefreshAsync(config, true); await service.RefreshAsync(config, true);
 		Check(calls == 2, "Manual cooldown failed.");

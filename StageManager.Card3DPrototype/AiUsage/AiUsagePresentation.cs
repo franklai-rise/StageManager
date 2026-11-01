@@ -8,6 +8,16 @@ namespace StageManager.Card3DPrototype.AiUsage;
 // Shared by the composition texture and the visual regression host.
 internal static class AiUsagePresentation
 {
+	// Shared native flyout palette. Calendar reuses the same chrome and buttons.
+	internal static readonly Color PanelBackground = Color.FromArgb(24, 27, 33);
+	internal static readonly Color PanelForeground = Color.FromArgb(239, 245, 252);
+	internal static readonly Color ButtonForeground = Color.FromArgb(227, 237, 248);
+	internal static readonly Color PanelMuted = Color.FromArgb(153, 164, 180);
+	internal static readonly Color PanelBorder = Color.FromArgb(45, 190, 200, 215);
+	internal const float PanelRadius = 16;
+	internal static Color ButtonFill(bool pressed, bool hovered, bool selected) =>
+		pressed ? Color.FromArgb(66, 77, 91) : hovered ? Color.FromArgb(53, 61, 73) :
+		selected ? Color.FromArgb(54, 65, 80) : Color.FromArgb(34, 39, 47);
 	public const float CardHeight = 120;
 	internal static readonly string[] ProviderOrder = { "codex", "deepseek", "gemini", "kimi", "antigravity" };
 	internal static bool HasAntigravity(IReadOnlyList<AiUsageSnapshot> items) => items.Any(s => s.ProviderId == "antigravity");
@@ -58,6 +68,7 @@ internal static class AiUsagePresentation
 			"Loading" => ("Reading usage…", "正在读取额度…"),
 			"Waiting for API key" => ("Add an API key in Settings", "请在设置中填写 API Key"),
 			"Codex CLI not found" => ("Select a Codex CLI in Settings", "请在设置中选择 Codex CLI"),
+			"Codex CLI exited; try Auto-detect" => ("CLI exited · use Auto-detect in Settings", "CLI 已退出，请在设置中使用自动查找"),
 			"Codex login required" => ("Sign in to Codex CLI first", "请先登录本机 Codex CLI"),
 			"API key rejected" => ("API key was rejected", "API Key 无效或权限不足"),
 			"Request timed out" or "Codex query timed out" => ("Update timed out", "更新超时"),

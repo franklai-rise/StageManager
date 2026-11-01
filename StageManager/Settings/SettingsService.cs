@@ -10,7 +10,7 @@ namespace StageManager.Settings;
 
 public sealed class SettingsService
 {
-	private const int CurrentSchemaVersion = 21;
+	private const int CurrentSchemaVersion = 23;
 	private readonly JsonSerializerOptions _jsonOptions = new()
 	{
 		WriteIndented = true,
@@ -119,6 +119,17 @@ public sealed class SettingsService
 	{
 		var sourceSchemaVersion = settings.SchemaVersion;
 		settings.SchemaVersion = CurrentSchemaVersion;
+		if (!Enum.IsDefined(settings.SidebarDisplayMode)) settings.SidebarDisplayMode = SidebarDisplayMode.Leftmost;
+		settings.SidebarDisplayId = (settings.SidebarDisplayId ?? "").Trim();
+		settings.SidebarDisplayDeviceName = (settings.SidebarDisplayDeviceName ?? "").Trim();
+		if (settings.SidebarDisplayId.Length > 1024) settings.SidebarDisplayId = "";
+		if (settings.SidebarDisplayDeviceName.Length > 128) settings.SidebarDisplayDeviceName = "";
+		if (sourceSchemaVersion < 22) settings.ShowCalendarCard = false;
+		settings.OutlookCalendarClientId = Guid.TryParse(settings.OutlookCalendarClientId, out var calendarClientId) && calendarClientId != Guid.Empty
+			? calendarClientId.ToString("D") : "";
+		settings.OutlookCalendarIds = (settings.OutlookCalendarIds ?? new List<string>())
+			.Where(id => !string.IsNullOrWhiteSpace(id) && id.Length <= 4096)
+			.Select(id => id.Trim()).Distinct(StringComparer.Ordinal).Take(100).ToList();
 		if (sourceSchemaVersion < 18)
 		{
 			settings.ShowAiUsageCard = false;
@@ -149,7 +160,7 @@ public sealed class SettingsService
 			settings.UiLanguage = UiLanguage.English;
 		if (!Enum.IsDefined(settings.SettingsTheme)) settings.SettingsTheme = SettingsTheme.System;
 		settings.SettingsTextSize = settings.SettingsTextSize >= 12 ? 12 : 11;
-		if (settings.LastSettingsPage is not ("general" or "cards" or "ai" or "windows" or "shortcuts" or "preferences" or "updates"))
+		if (settings.LastSettingsPage is not ("general" or "cards" or "ai" or "calendar" or "windows" or "shortcuts" or "preferences" or "updates"))
 			settings.LastSettingsPage = "general";
 		settings.CardScale = Math.Clamp(settings.CardScale, 0.55, 1.25);
 		settings.SidebarVerticalOffset = Math.Clamp(settings.SidebarVerticalOffset, -400, 400);
@@ -160,6 +171,7 @@ public sealed class SettingsService
 		settings.IdleAutoHideSeconds = Math.Clamp(settings.IdleAutoHideSeconds, 15, 600);
 		settings.PreviewRefreshMinutes = Math.Clamp(settings.PreviewRefreshMinutes, 1, 60);
 		settings.CodexCliPath = settings.CodexCliPath?.Trim() ?? "";
+		settings.AiUsageRefreshSeconds = Math.Clamp(settings.AiUsageRefreshSeconds, 30, 3600);
 		settings.SidebarOpacity = Math.Clamp(settings.SidebarOpacity, 0.65, 1.0);
 		settings.IgnoredProcesses ??= new List<string>();
 		settings.IgnoredProcesses = settings.IgnoredProcesses

@@ -39,6 +39,8 @@ internal sealed partial class SettingsForm : Form
 	private CheckBox _aiUsageEnabled = null!;
 	private CheckBox _codexEnabled = null!;
 	private TextBox _codexPath = null!;
+	private NumericUpDown _aiRefreshSeconds = null!;
+	private Label _codexDiscoveryStatus = null!;
 	private CheckBox _deepSeekEnabled = null!;
 	private TextBox _deepSeekKey = null!;
 	private CheckBox _kimiEnabled = null!;
@@ -53,10 +55,11 @@ internal sealed partial class SettingsForm : Form
 	private readonly CancellationTokenSource _connectionTests = new();
 	private bool _connectionTestsDisposed;
 
-	public SettingsForm(AppSettings draft, IReadOnlyList<PrototypeApplicationChoice>? applicationChoices = null, AiUsageService? aiUsageService = null)
+	public SettingsForm(AppSettings draft, IReadOnlyList<PrototypeApplicationChoice>? applicationChoices = null, AiUsageService? aiUsageService = null, Calendar.CalendarService? calendarService = null)
 	{
 		Draft = draft;
 		_aiUsageService = aiUsageService;
+		_calendarService = calendarService;
 		_quickLaunchApps = (draft.QuickLaunchApps ?? QuickLaunchDefinition.LegacyDefaults(draft.ShowChromeQuickLaunch, draft.ShowEdgeQuickLaunch))
 			.Select(app => app with { }).ToList();
 		BuildSettingsUi(applicationChoices ?? Array.Empty<PrototypeApplicationChoice>());
@@ -70,6 +73,11 @@ internal sealed partial class SettingsForm : Form
 
 	private void SaveButton_Click(object? sender, EventArgs e)
 	{
+		if (!string.IsNullOrWhiteSpace(_codexPath.Text) && CodexUsageClient.CreateStartInfo(_codexPath.Text) is null)
+		{
+			MessageBox.Show(this, T("The Codex CLI path is invalid. Use Auto-detect or choose the actual CLI file. Leave empty for automatic discovery.", "Codex CLI 路径无效。请点击自动查找或选择实际的 CLI 文件；留空即可自动查找。"), "Codex", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+			ScrollToAiUsage(); return;
+		}
 		RememberVisibleModule();
 		var gestures = new[]
 		{
@@ -97,9 +105,11 @@ internal sealed partial class SettingsForm : Form
 		Draft.CardScale = _cardSizeSlider.Value / 100d;
 		Draft.SidebarVerticalOffset = (int)_sidebarVerticalOffset.Value;
 		Draft.SidebarEdge = (SidebarEdge)_sidebarEdge.SelectedIndex;
+		SaveDisplaySelection();
 		Draft.ShowExplorerButton = _showExplorerButton.Checked;
 		Draft.QuickLaunchApps = _quickLaunchApps.Select(app => app with { }).ToList();
-		Draft.SchemaVersion = Math.Max(Draft.SchemaVersion, 21);
+		if (!SaveCalendarDraft()) return;
+		Draft.SchemaVersion = Math.Max(Draft.SchemaVersion, 23);
 		Draft.SettingsTheme = (SettingsTheme)_settingsTheme.SelectedIndex;
 		Draft.SettingsTextSize = _settingsTextSize.SelectedIndex == 1 ? 12 : 11;
 		Draft.RememberSettingsPage = _rememberSettingsPage.Checked;
@@ -121,6 +131,7 @@ internal sealed partial class SettingsForm : Form
 		Draft.AiUsageAntigravityEnabled = _antigravityEnabled.Checked;
 		Draft.AiUsageKimiInternational = _kimiRegion.SelectedIndex == 1;
 		Draft.CodexCliPath = _codexPath.Text.Trim();
+		Draft.AiUsageRefreshSeconds = (int)_aiRefreshSeconds.Value;
 		if (_aiUsageService is not null)
 		{
 			try
@@ -193,6 +204,7 @@ internal sealed partial class SettingsForm : Form
 		_codexPath.PlaceholderText = T("Automatically detect Codex CLI", "自动检测 Codex CLI");
 		UpdateQuickLaunchSummary();
 		UpdatePageHeading();
+		UpdateCalendarStatus();
 		_applyingLanguage = false;
 	}
 	private void UpdateQuickLaunchSummary()
@@ -216,6 +228,7 @@ internal sealed partial class SettingsForm : Form
 		_antigravityEnabled.Checked = true;
 		_sidebarVerticalOffset.Value = -80;
 		_sidebarEdge.SelectedIndex = 0;
+		_displayChoice.SelectedIndex = 0;
 		_showExplorerButton.Checked = true;
 		_quickLaunchApps = QuickLaunchDefinition.LegacyDefaults();
 		UpdateQuickLaunchSummary();
@@ -224,11 +237,14 @@ internal sealed partial class SettingsForm : Form
 		_showDesktopButton.Checked = true;
 		_showDesktopIconsButton.Checked = true;
 		_aiUsageEnabled.Checked = false;
+		_calendarEnabled.Checked = false;
+		_calendarViaCodex.Checked = true;
 		_codexEnabled.Checked = true;
 		_deepSeekEnabled.Checked = true;
 		_kimiEnabled.Checked = false;
 		_kimiRegion.SelectedIndex = 0;
 		_codexPath.Clear();
+		_aiRefreshSeconds.Value = 300;
 		_animationsEnabled.Checked = true;
 		_lowMemoryRendering.Checked = true;
 		_idleAutoHideEnabled.Checked = true;
@@ -244,6 +260,24 @@ internal sealed partial class SettingsForm : Form
 		for (var index = 0; index < _ignoredApplications.Items.Count; index++)
 			_ignoredApplications.SetItemChecked(index, false);
 		_ignoredProcesses.Clear();
+	}
+
+	private async Task DetectCodexCliAsync(Button button)
+	{
+		button.Enabled = false;
+		try
+		{
+			var path = await Task.Run(CodexUsageClient.FindCli);
+			if (IsDisposed || Disposing) return;
+			if (path is not null)
+			{
+				// Keep automatic mode rather than pinning a versioned desktop installation.
+				_codexPath.Clear();
+				_codexDiscoveryStatus.Text = T("Detected · automatic mode: ", "已找到 · 自动模式：") + path;
+			}
+			else _codexDiscoveryStatus.Text = T("Not found. Install Codex CLI, sign in, then try again or browse to its file.", "未找到。请安装 Codex CLI 并登录，再重试或手动选择文件。");
+		}
+		finally { if (!IsDisposed) button.Enabled = true; }
 	}
 
 	private void BrowseCodexCli()
@@ -311,6 +345,7 @@ internal sealed partial class SettingsForm : Form
 		"Waiting for API key" => "等待 API Key",
 		"API key is not configured" => "尚未填写 API Key",
 		"Codex CLI not found" => "未找到 Codex CLI",
+		"Codex CLI exited; try Auto-detect" => "所选 Codex CLI 已退出，请使用自动查找重新选择",
 		"Codex login required" => "Codex 尚未登录",
 		"Codex account is not connected" => "Codex 账户未连接",
 		"Codex quota is unavailable" => "无法读取 Codex 额度",
@@ -326,11 +361,15 @@ internal sealed partial class SettingsForm : Form
 	}
 	protected override void OnFormClosed(FormClosedEventArgs e)
 	{
+		_calendarClosing = true;
 		_connectionTests.Cancel();
 		base.OnFormClosed(e);
 	}
 	protected override void Dispose(bool disposing)
 	{
+		if (disposing) _calendarClosing = true;
+		if (disposing && _displayEventsSubscribed) { Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= SettingsDisplaysChanged; _displayEventsSubscribed = false; }
+		if (disposing && _settingsWheelFilter is not null) { Application.RemoveMessageFilter(_settingsWheelFilter); _settingsWheelFilter = null; }
 		if (disposing) _navigationTimer?.Dispose();
 		if (disposing && !_connectionTestsDisposed)
 		{ _connectionTestsDisposed = true; _connectionTests.Cancel(); _connectionTests.Dispose(); }

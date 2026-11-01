@@ -45,6 +45,7 @@ public enum UiLanguage
 }
 
 public enum SettingsTheme { System, Light, Dark }
+public enum SidebarDisplayMode { Leftmost, Primary, Specific }
 
 public sealed class AppSettings
 {
@@ -71,12 +72,20 @@ public sealed class AppSettings
 	public double CardScale { get; set; } = 0.60;
 	public int SidebarVerticalOffset { get; set; } = -80;
 	public SidebarEdge SidebarEdge { get; set; } = SidebarEdge.Left;
+	public SidebarDisplayMode SidebarDisplayMode { get; set; } = SidebarDisplayMode.Leftmost;
+	public string SidebarDisplayId { get; set; } = "";
+	public string SidebarDisplayDeviceName { get; set; } = "";
 	public bool ShowExplorerButton { get; set; } = true;
 	public bool ShowChromeQuickLaunch { get; set; } = true;
 	public bool ShowEdgeQuickLaunch { get; set; } = true;
 	// Null means an unmigrated file; an empty list deliberately means no launchers.
 	public List<QuickLaunchDefinition>? QuickLaunchApps { get; set; }
 	public bool ShowAiUsageCard { get; set; }
+	public bool ShowCalendarCard { get; set; }
+	public bool CalendarUseCodex { get; set; } = true;
+	// Public application identity only; tokens are stored separately by MSAL.
+	public string OutlookCalendarClientId { get; set; } = "";
+	public List<string> OutlookCalendarIds { get; set; } = new();
 	public bool AiUsageEnabled { get; set; }
 	public bool AiUsageCodexEnabled { get; set; } = true;
 	public bool AiUsageDeepSeekEnabled { get; set; } = true;
@@ -85,6 +94,7 @@ public sealed class AppSettings
 	public bool AiUsageKimiEnabled { get; set; }
 	public bool AiUsageKimiInternational { get; set; }
 	public string CodexCliPath { get; set; } = "";
+	public int AiUsageRefreshSeconds { get; set; } = 300;
 	public bool ShowExpandedPinButton { get; set; } = true;
 	public bool ShowNotificationAreaCard { get; set; } = true;
 	public bool ShowDesktopButton { get; set; } = true;

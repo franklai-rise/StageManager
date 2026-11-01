@@ -3,6 +3,7 @@ using StageManager.Settings;
 using StageManager.Card3DPrototype.NotificationArea;
 using StageManager.Card3DPrototype.QuickLaunch;
 using StageManager.Card3DPrototype.AiUsage;
+using StageManager.Card3DPrototype.Calendar;
 using System.Diagnostics;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
@@ -50,6 +51,7 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 	private readonly SidebarDesktopIconsButtonVisual _desktopIconsButton;
 	private readonly List<SidebarQuickLaunchVisual> _quickLaunchButtons = new();
 	private readonly AiUsageCardVisual _aiUsageCard;
+	private readonly CalendarCardVisual _calendarCard;
 	private readonly NotificationTrayCardVisual _notificationAreaCard;
 	private readonly Dictionary<string, StageCardVisual> _stages = new(StringComparer.OrdinalIgnoreCase);
 	private readonly System.Windows.Forms.Timer _captureTimer;
@@ -97,6 +99,8 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 	private bool _desktopIconsButtonEnabled = true;
 	private bool _aiUsageCardEnabled = true;
 	private bool _aiUsageClicked;
+	private bool _calendarCardEnabled;
+	private bool _calendarClicked;
 	private bool _desktopIconsButtonHovered;
 	private bool _desktopIconsToggleRequested;
 	// Start disabled and let persisted settings explicitly attach the footer.
@@ -133,6 +137,7 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 		_desktopButton = new SidebarDesktopButtonVisual(_compositor);
 		_desktopIconsButton = new SidebarDesktopIconsButtonVisual(_compositor);
 		_aiUsageCard = new AiUsageCardVisual(_compositor, _graphics);
+		_calendarCard = new CalendarCardVisual(_compositor, _graphics);
 
 		_notificationAreaCard = new NotificationTrayCardVisual(_compositor, _graphics);
 		_mainCamera.Children.InsertAtTop(_expandAllButton.Root);
@@ -142,6 +147,7 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 		_mainCamera.Children.InsertAtTop(_desktopButton.Root);
 		_mainCamera.Children.InsertAtTop(_desktopIconsButton.Root);
 		_mainCamera.Children.InsertAtTop(_aiUsageCard.Root);
+		_mainCamera.Children.InsertAtTop(_calendarCard.Root);
 
 		_mainCamera.Children.InsertAtTop(_notificationAreaCard.Root);
 		_captureTimer = new System.Windows.Forms.Timer { Interval = 350 };
@@ -430,6 +436,19 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 	public float AiContentHeightFraction => _aiUsageCard.ContentHeight / Math.Max(1, _aiUsageCard.Size.Y);
 	public void SetAiUsageLanguage(UiLanguage language) { _aiUsageCard.SetLanguage(language); if (_topLanguage != language) { _topLanguage = language; LayoutStages(false); } }
 	public bool ConsumeAiUsageClickRequest() { var requested = _aiUsageClicked; _aiUsageClicked = false; return requested; }
+
+	public bool SetCalendarCardEnabled(bool enabled)
+	{
+		if (_calendarCardEnabled == enabled) return false;
+		_calendarCardEnabled = enabled;
+		_calendarCard.SetEnabled(enabled);
+		LayoutStages(true);
+		return true;
+	}
+	public void SetCalendarLanguage(UiLanguage language) => _calendarCard.SetLanguage(language);
+	public void RefreshCalendarDate() => _calendarCard.RefreshDate();
+	public CardHitTarget? GetCalendarTarget() => _hitTargets.FirstOrDefault(h => h.StageKey == "__calendar_card__");
+	public bool ConsumeCalendarClick() { var requested = _calendarClicked; _calendarClicked = false; return requested; }
 
 	public bool SetCollapseButtonEnabled(bool enabled)
 	{
@@ -775,6 +794,7 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 		SetExplorerButtonHovered(hit.IsExplorerButton);
 		SetQuickLaunchHovered(hit.QuickLaunchApp);
 		_aiUsageCard.SetHovered(hit.IsAiUsageCard);
+		_calendarCard.SetHovered(hit.IsCalendarCard);
 		SetExpandAllButtonHovered(hit.IsExpandAllButton);
 		SetCollapseButtonHovered(hit.IsSidebarCollapseButton);
 		SetSidebarPinButtonHovered(hit.IsSidebarPinButton);
@@ -785,7 +805,7 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 		SetOpenGroupHovered(hit.IsOpenGroupButton ? hit.StageKey : null);
 		SetNotificationAreaHovered(hit);
 		if (Horizontal) { SetTopHoveredCard(hit); return; }
-		if (hit.IsAiUsageCard || hit.IsSidebarCollapseButton || hit.IsSidebarPinButton || hit.IsDesktopButton || hit.IsDesktopIconsButton || hit.IsExpandAllButton || hit.IsNotificationAreaCard || hit.QuickLaunchApp is not null)
+		if (hit.IsCalendarCard || hit.IsAiUsageCard || hit.IsSidebarCollapseButton || hit.IsSidebarPinButton || hit.IsDesktopButton || hit.IsDesktopIconsButton || hit.IsExpandAllButton || hit.IsNotificationAreaCard || hit.QuickLaunchApp is not null)
 			return;
 		if (_dockEdge != SidebarEdge.Top && !_expandAllStages && _expandedStageKey is not null &&
 			!_expandedPinned &&
@@ -799,6 +819,7 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 			SetExplorerButtonHovered(hit.IsExplorerButton);
 			SetQuickLaunchHovered(hit.QuickLaunchApp);
 			_aiUsageCard.SetHovered(hit.IsAiUsageCard);
+			_calendarCard.SetHovered(hit.IsCalendarCard);
 			SetExpandAllButtonHovered(hit.IsExpandAllButton);
 			SetCollapseButtonHovered(hit.IsSidebarCollapseButton);
 			SetSidebarPinButtonHovered(hit.IsSidebarPinButton);
@@ -809,7 +830,7 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 		SetOpenGroupHovered(hit.IsOpenGroupButton ? hit.StageKey : null);
 			SetNotificationAreaHovered(hit);
 		}
-		if (hit.IsAiUsageCard || hit.IsOpenGroupButton || hit.IsExplorerButton || hit.IsDesktopButton || hit.IsDesktopIconsButton || hit.IsExpandAllButton || hit.IsPinButton || hit.IsSidebarPinButton || hit.IsNotificationAreaCard || hit.QuickLaunchApp is not null)
+		if (hit.IsCalendarCard || hit.IsAiUsageCard || hit.IsOpenGroupButton || hit.IsExplorerButton || hit.IsDesktopButton || hit.IsDesktopIconsButton || hit.IsExpandAllButton || hit.IsPinButton || hit.IsSidebarPinButton || hit.IsNotificationAreaCard || hit.QuickLaunchApp is not null)
 			return;
 		if (_expandedStageKey is null ||
 			!string.Equals(_expandedStageKey, hit.StageKey, StringComparison.OrdinalIgnoreCase))
@@ -840,6 +861,7 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 			{
 				SetTopHoveredCard(null); SetExplorerButtonHovered(false); SetQuickLaunchHovered(null);
 				_aiUsageCard.SetHovered(false); SetExpandAllButtonHovered(false); SetCollapseButtonHovered(false);
+				_calendarCard.SetHovered(false);
 				SetSidebarPinButtonHovered(false); SetDesktopButtonHovered(false); SetDesktopIconsButtonHovered(false); SetPinButtonHovered(false);
 		SetOpenGroupHovered(null);
 			}
@@ -852,6 +874,7 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 			SetExplorerButtonHovered(hit.IsExplorerButton);
 			SetQuickLaunchHovered(hit.QuickLaunchApp);
 			_aiUsageCard.SetHovered(hit.IsAiUsageCard);
+			_calendarCard.SetHovered(hit.IsCalendarCard);
 			SetExpandAllButtonHovered(hit.IsExpandAllButton);
 			SetCollapseButtonHovered(hit.IsSidebarCollapseButton);
 			SetSidebarPinButtonHovered(hit.IsSidebarPinButton);
@@ -872,6 +895,7 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 		SetExplorerButtonHovered(false);
 		SetQuickLaunchHovered(null);
 		_aiUsageCard.SetHovered(false);
+		_calendarCard.SetHovered(false);
 		SetExpandAllButtonHovered(false);
 		SetCollapseButtonHovered(false);
 		SetSidebarPinButtonHovered(false);
@@ -910,7 +934,7 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 	{
 		if (Horizontal || _disposed ||
 			IsStageExpanded(target.StageKey) ||
-			target.IsAiUsageCard ||
+			target.IsAiUsageCard || target.IsCalendarCard ||
 			target.IsExpandAllButton ||
 			target.IsExplorerButton ||
 			target.QuickLaunchApp is not null ||
@@ -966,6 +990,11 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 		{
 			_quickLaunchRequested = quickLaunchApp;
 			_quickLaunchButtons.FirstOrDefault(button => button.Id == quickLaunchApp.Id)?.SetPressed(true);
+			return null;
+		}
+		if (hit.IsCalendarCard)
+		{
+			_calendarClicked = true;
 			return null;
 		}
 		if (hit.IsAiUsageCard)
@@ -1237,6 +1266,7 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 		_desktopButton.Dispose();
 		_desktopIconsButton.Dispose();
 		_aiUsageCard.Dispose();
+		_calendarCard.Dispose();
 		foreach (var button in _quickLaunchButtons) button.Dispose();
 		_quickLaunchButtons.Clear();
 		_notificationAreaCard.Dispose();
@@ -1306,6 +1336,7 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 			_desktopButton.SetLayout(_dpiScale, CardSize.X, UniformTopHeight);
 			_desktopIconsButton.SetLayout(_dpiScale, CardSize.X, UniformTopHeight);
 			_aiUsageCard.SetLayout(_dpiScale, CardSize.X, UniformTopHeight);
+			_calendarCard.SetLayout(_dpiScale, CardSize.X, UniformTopHeight);
 			_notificationAreaCard.SetLayout(_dpiScale, CardSize.X, UniformTopHeight);
 		}
 		_collapseButton.SetDirection(_dockEdge);
@@ -1314,6 +1345,7 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 			(_explorerButtonEnabled ? AxisSize(_explorerButton.Size) + headerCardGap : 0f) +
 			_quickLaunchButtons.Sum(button => AxisSize(button.Size) + headerCardGap);
 		headerHeight += _aiUsageCardEnabled ? AxisSize(_aiUsageCard.Size) + headerCardGap : 0f;
+		headerHeight += _calendarCardEnabled ? AxisSize(_calendarCard.Size) + headerCardGap : 0f;
 		var trailingGap = headerCardGap;
 		var trailingHeight =
 			(_notificationAreaCardEnabled ? trailingGap + AxisSize(_notificationAreaCard.Size) : 0f) +
@@ -1352,6 +1384,12 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 			lowestVisibleCardBottom = LayoutQuickLaunchButton(button, currentY);
 			currentY += AxisSize(button.Size) + headerCardGap;
 		}
+		if (_calendarCardEnabled)
+		{
+			lowestVisibleCardBottom = LayoutCalendarCard(currentY);
+			currentY += AxisSize(_calendarCard.Size) + headerCardGap;
+		}
+		else _calendarCard.SetVisible(false);
 		if (_aiUsageCardEnabled)
 		{
 			lowestVisibleCardBottom = LayoutAiUsageCard(currentY);
@@ -1573,6 +1611,20 @@ internal sealed partial class CompositionStageRenderer : IDisposable
 			int.MaxValue - 1,
 			QuickLaunchApp: button.Definition));
 		return y + button.Size.Y;
+	}
+
+	private float LayoutCalendarCard(float along)
+	{
+		_mainCamera.Children.Remove(_calendarCard.Root);
+		_mainCamera.Children.InsertAtTop(_calendarCard.Root);
+		var position = DockPosition(along, _calendarCard.Size);
+		_calendarCard.SetOffset(position);
+		_calendarCard.SetVisible(true);
+		var polygon = Card3DGeometry.ProjectCard(position, 1f, Vector3.Zero, Vector3.One,
+			_calendarCard.Angle, _calendarCard.Size, _calendarCard.Pivot,
+			new Vector2(_viewportWidth / 2f, _viewportHeight / 2f), PerspectiveDistance * _dpiScale);
+		_hitTargets.Add(new CardHitTarget("__calendar_card__", null, polygon, int.MaxValue - 1, IsCalendarCard: true));
+		return position.Y + _calendarCard.Size.Y;
 	}
 
 	private float LayoutAiUsageCard(float y)
@@ -2218,7 +2270,8 @@ internal sealed record CardHitTarget(
 	bool IsSidebarPinButton = false,
 	bool IsAiUsageCard = false,
 	bool IsTopPanel = false,
-	bool IsOpenGroupButton = false);
+	bool IsOpenGroupButton = false,
+	bool IsCalendarCard = false);
 
 internal sealed class StageCardVisual : IDisposable
 {

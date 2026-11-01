@@ -44,8 +44,8 @@ internal static class AutomaticUpdateTests
             var settingsPath = Path.Combine(directory, "settings.json");
             File.WriteAllText(settingsPath, "{\"SchemaVersion\":20,\"StageMode\":\"Focus\",\"SidebarEdge\":\"Top\",\"ShowAiUsageCard\":true,\"AiUsageEnabled\":true}");
             var settings = new SettingsService(settingsPath);
-            Check(settings.Current.SchemaVersion == 21 && settings.Current.StageMode == StageMode.Focus && settings.Current.SidebarEdge == SidebarEdge.Top && settings.Current.AiUsageEnabled && settings.Current.AutomaticUpdateChecks, "Migration lost existing choices.");
-            Check(File.Exists(settingsPath + ".pre-schema21.bak"), "No settings migration backup.");
+            Check(settings.Current.SchemaVersion == 23 && settings.Current.StageMode == StageMode.Focus && settings.Current.SidebarEdge == SidebarEdge.Top && settings.Current.AiUsageEnabled && settings.Current.AutomaticUpdateChecks, "Migration lost existing choices.");
+            Check(File.Exists(settingsPath + ".pre-schema23.bak"), "No settings migration backup.");
             var draft = settings.CloneCurrent(); draft.AutomaticUpdateChecks = false; draft.ShowWhatsNewOnStartup = false; draft.SettingsTheme = SettingsTheme.Dark; draft.SettingsTextSize = 12; draft.LastSettingsPage = "preferences"; settings.Apply(draft);
             var loaded = new SettingsService(settingsPath).Current;
             Check(!loaded.AutomaticUpdateChecks && !loaded.ShowWhatsNewOnStartup && loaded.SettingsTextSize == 12 && loaded.SettingsTheme == SettingsTheme.Dark && loaded.LastSettingsPage == "preferences", "Preferences do not survive restart.");

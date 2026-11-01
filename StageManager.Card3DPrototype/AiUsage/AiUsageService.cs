@@ -49,6 +49,8 @@ internal sealed class AiUsageService : IDisposable
 		lock (_gate)
 		{
 			if (_disposed) return false;
+			// Changing only the interval must not discard valid account data.
+			_settings.AiUsageRefreshSeconds = Math.Clamp(settings.AiUsageRefreshSeconds, 30, 3600);
 			var key = $"{settings.ShowAiUsageCard}:{settings.AiUsageEnabled}:{settings.AiUsageCodexEnabled}:{settings.AiUsageDeepSeekEnabled}:{settings.AiUsageGeminiEnabled}:{settings.AiUsageAntigravityEnabled}:{settings.AiUsageKimiEnabled}:{settings.AiUsageKimiInternational}:{settings.CodexCliPath}";
 			if (key == _configuration) return false;
 			_configuration = key; _generation++;
@@ -61,7 +63,8 @@ internal sealed class AiUsageService : IDisposable
 				AiUsageGeminiEnabled = settings.AiUsageGeminiEnabled,
 				AiUsageAntigravityEnabled = settings.AiUsageAntigravityEnabled,
 				AiUsageKimiEnabled = settings.AiUsageKimiEnabled, AiUsageKimiInternational = settings.AiUsageKimiInternational,
-				CodexCliPath = settings.CodexCliPath
+				CodexCliPath = settings.CodexCliPath,
+				AiUsageRefreshSeconds = Math.Clamp(settings.AiUsageRefreshSeconds, 30, 3600)
 			};
 			// Configuration changes discard cached account data; no stale account gets relabelled.
 			Volatile.Write(ref _current, settings.ShowAiUsageCard && settings.AiUsageEnabled
@@ -82,7 +85,7 @@ internal sealed class AiUsageService : IDisposable
 				return cancellationToken.CanBeCanceled ? _refreshTask.WaitAsync(cancellationToken) : _refreshTask;
 			var now = _clock();
 			if (manual && now - _lastManual < TimeSpan.FromSeconds(10)) return Task.CompletedTask;
-			if (!manual && now - _lastAutomatic < TimeSpan.FromMinutes(5)) return Task.CompletedTask;
+			if (!manual && now - _lastAutomatic < TimeSpan.FromSeconds(_settings.AiUsageRefreshSeconds)) return Task.CompletedTask;
 			if (manual) _lastManual = now;
 			_lastAutomatic = now;
 			var previous = _refreshTask; var generation = _generation; var captured = _settings;

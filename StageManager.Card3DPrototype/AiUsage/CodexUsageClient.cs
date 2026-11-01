@@ -38,6 +38,7 @@ internal static class CodexUsageClient
 			return AiUsageParsers.Codex(rateResult, scope, DateTimeOffset.UtcNow);
 		}
 		catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return Empty("Codex query timed out") with { ContinuityKey = confirmedScope ?? "" }; }
+		catch (IOException) when (process.HasExited) { return Empty("Codex CLI exited; try Auto-detect") with { ContinuityKey = confirmedScope ?? "" }; }
 		catch (Exception e) when (e is not OperationCanceledException) { return Empty(e.GetType().Name) with { ContinuityKey = confirmedScope ?? "" }; }
 		finally
 		{
@@ -96,6 +97,19 @@ internal static class CodexUsageClient
 			.Select(d => d.Trim().Trim('"')).Where(IsLocalPath).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 		directories.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm"));
 		directories.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "bin"));
+		var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+		directories.Add(Path.Combine(local, "Programs", "OpenAI", "Codex", "bin"));
+		var desktopBin = Path.Combine(local, "OpenAI", "Codex", "bin");
+		directories.Add(desktopBin);
+		// Bounded discovery of the desktop app's versioned CLI folders; no disk-wide scan.
+		try
+		{
+			if (Directory.Exists(desktopBin))
+				directories.InsertRange(0, new DirectoryInfo(desktopBin).EnumerateDirectories()
+					.Where(d => (d.Attributes & FileAttributes.ReparsePoint) == 0)
+					.OrderByDescending(d => d.LastWriteTimeUtc).Take(32).Select(d => d.FullName));
+		}
+		catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
 		// Prefer a native CLI anywhere on PATH, including the desktop app's supported CLI shim.
 		foreach (var dir in directories)
 		{
@@ -141,8 +155,12 @@ internal static class CodexUsageClient
 		private readonly StreamReader _reader;
 		private readonly char[] _buffer = new char[4096];
 		private readonly StringBuilder _line = new();
+		private readonly int _maximum;
 		private int _offset, _count;
-		public BoundedLineReader(StreamReader reader) => _reader = reader;
+		public BoundedLineReader(StreamReader reader, int maximum = 1024 * 1024)
+		{
+			_reader = reader; _maximum = Math.Clamp(maximum, 1, 16 * 1024 * 1024);
+		}
 		public async Task<string?> ReadAsync(CancellationToken token)
 		{
 			while (true)
@@ -154,7 +172,7 @@ internal static class CodexUsageClient
 				}
 				var end = Array.IndexOf(_buffer, '\n', _offset, _count - _offset);
 				var length = end >= 0 ? end - _offset : _count - _offset;
-				if (_line.Length + length > 1024 * 1024) throw new InvalidDataException("Oversized Codex message");
+					if (_line.Length + length > _maximum) throw new InvalidDataException("Oversized Codex message");
 				_line.Append(_buffer, _offset, length);
 				_offset += length;
 				if (end < 0) continue;

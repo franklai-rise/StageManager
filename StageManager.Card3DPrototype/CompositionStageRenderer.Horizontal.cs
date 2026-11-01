@@ -34,7 +34,7 @@ internal sealed partial class CompositionStageRenderer
         // Resolve interactive cards only inside an active edge zone, not on every
         // idle desktop pointer poll.
         var hit = !Horizontal && velocity != 0 ? HitTest(pointer) : null;
-        var protectedHit = hit is not null && (hit.IsPinButton || hit.IsOpenGroupButton || hit.IsSidebarPinButton || hit.IsAiUsageCard ||
+        var protectedHit = hit is not null && (hit.IsPinButton || hit.IsOpenGroupButton || hit.IsSidebarPinButton || hit.IsAiUsageCard || hit.IsCalendarCard ||
             hit.IsPrimaryCard && _stages.TryGetValue(hit.StageKey, out var stage) && stage.Windows.Count > 1);
         if (!_edgeIntent.Allows(pointer, Horizontal, velocity, _dpiScale, protectedHit))
         {
@@ -136,6 +136,11 @@ internal sealed partial class CompositionStageRenderer
             }
         }
         Tools("shortcut:", shortcuts);
+        // Match a single quick-launch row, not the old full-height calendar tile.
+        var calendarSize = _quickLaunchButtons.LastOrDefault()?.Size ?? (_explorerButtonEnabled
+            ? _explorerButton.Size : new Vector2(CardSize.X - 8 * _dpiScale, 36 * _dpiScale));
+        _calendarCard.SetLayout(_dpiScale, calendarSize.X, calendarSize.Y);
+        if (_calendarCardEnabled) { LayoutCalendarCard(x); x += _calendarCard.Size.X + Gap; } else _calendarCard.SetVisible(false);
         _aiUsageCard.SetLayout(_dpiScale, CardSize.X, CardSize.Y);
         if (_aiUsageCardEnabled) { LayoutAiUsageCard(x); x += stride; } else _aiUsageCard.SetVisible(false);
         foreach (var snapshot in _snapshots)

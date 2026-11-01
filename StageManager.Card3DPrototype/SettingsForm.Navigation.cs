@@ -13,7 +13,7 @@ internal sealed partial class SettingsForm
     private string? _navigationDestination;
     private static readonly Color[] ModuleColors = {
         Color.FromArgb(55, 113, 211), Color.FromArgb(132, 87, 192), Color.FromArgb(31, 139, 131),
-        Color.FromArgb(67, 123, 158), Color.FromArgb(168, 110, 37), Color.FromArgb(53, 137, 88), Color.FromArgb(173, 84, 128)
+        Color.FromArgb(67, 123, 158), Color.FromArgb(168, 110, 37), Color.FromArgb(53, 137, 88), Color.FromArgb(190, 88, 65), Color.FromArgb(173, 84, 128)
     };
 
     private Control BuildNavigation()
@@ -22,12 +22,12 @@ internal sealed partial class SettingsForm
         var rail = new Panel { Dock = DockStyle.Left, Width = 108, Padding = new Padding(0, 3, 16, 0), Name = "module-navigation" };
         var list = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, WrapContents = false, FlowDirection = FlowDirection.TopDown, Margin = Padding.Empty };
         rail.Controls.Add(list);
-        var names = new[] { ("General", "工作区"), ("Prefs", "偏好"), ("Cards", "卡片"), ("Windows", "窗口"), ("Keys", "快捷键"), ("Updates", "更新"), ("AI", "AI 额度") };
+        var names = new[] { ("General", "工作区"), ("Prefs", "偏好"), ("Cards", "卡片"), ("Windows", "窗口"), ("Keys", "快捷键"), ("Updates", "更新"), ("Calendar", "日历"), ("AI", "AI 额度") };
         for (var i = 0; i < _moduleOrder.Length; i++)
         {
             var id = _moduleOrder[i];
-            var button = Localize(new ModuleNavigationButton { Name = "navigate-" + id, Width = 86, Height = 48,
-                Font = OwnFont(9), Margin = new Padding(0, 0, 0, 8), Cursor = Cursors.Hand,
+            var button = Localize(new ModuleNavigationButton { Name = "navigate-" + id, Width = 86, Height = 42,
+                Font = OwnFont(9), Margin = new Padding(0, 0, 0, 6), Cursor = Cursors.Hand,
                 AccentColor = ModuleColors[i], AccessibleRole = AccessibleRole.PushButton }, names[i].Item1, names[i].Item2);
             button.Click += (_, _) => NavigateToModule(id);
             list.Controls.Add(button); _navigationButtons.Add(id, button);
@@ -50,7 +50,9 @@ internal sealed partial class SettingsForm
         _navigationFrom = -_pageHost.AutoScrollPosition.Y;
         _navigationTo = Math.Clamp(_pages[id].Page.Top, 0, Math.Max(0, _allModules.Height - _pageHost.ClientSize.Height));
         _navigationDestination = id; _selectedPage = id; UpdateNavigation();
-        if (!_animationsEnabled.Checked || !NativeMethods.ClientAreaAnimationsEnabled)
+        // Animating thousands of pixels moves hundreds of native child windows each
+        // frame. Long jumps are immediate; only nearby navigation is animated.
+        if (!_animationsEnabled.Checked || !NativeMethods.ClientAreaAnimationsEnabled || Math.Abs(_navigationTo - _navigationFrom) > _pageHost.ClientSize.Height)
         { SelectPage(id); return; }
         _navigationStarted = Stopwatch.GetTimestamp(); _navigationTimer.Start();
     }
@@ -77,10 +79,12 @@ internal sealed partial class SettingsForm
     {
         foreach (var (id, button) in _navigationButtons)
         {
+            var selected = id == (_navigationDestination ?? _selectedPage);
+            var changed = button.Dark != _dark || button.Selected != selected;
             button.Dark = _dark;
-            button.Selected = id == (_navigationDestination ?? _selectedPage);
+            button.Selected = selected;
             button.AccessibleDescription = T("Scroll to this module; other modules remain open.", "滚动到这个模块，其他模块仍保持展开。");
-            button.Invalidate();
+            if (changed) button.Invalidate();
         }
         for (var i = 0; i < _moduleOrder.Length; i++)
             if (_pages.TryGetValue(_moduleOrder[i], out var page) && page.Page.Controls.Count > 0)

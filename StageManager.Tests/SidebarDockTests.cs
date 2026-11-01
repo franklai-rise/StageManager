@@ -44,7 +44,7 @@ internal static class SidebarDockTests
 			File.WriteAllText(path, "{\"SchemaVersion\":19,\"SidebarVerticalOffset\":-50,\"AiUsageEnabled\":true}");
 			var settings = new SettingsService(path);
 			Check(settings.Current.SidebarEdge == SidebarEdge.Left && settings.Current.SidebarVerticalOffset == -50 && settings.Current.AiUsageEnabled, "Migration lost existing choices.");
-			Check(File.Exists(path + ".pre-schema21.bak"), "No migration backup.");
+			Check(File.Exists(path + ".pre-schema23.bak"), "No migration backup.");
 			foreach (var edge in Enum.GetValues<SidebarEdge>())
 			{
 				var draft = settings.CloneCurrent(); draft.SidebarEdge = edge; settings.Apply(draft);

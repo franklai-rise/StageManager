@@ -16,7 +16,7 @@ internal sealed partial class SettingsForm
     private SettingsPageStack _allModules = null!;
     private TextBox _search = null!;
     private bool _fittingModules;
-    private readonly string[] _moduleOrder = { "general", "preferences", "cards", "windows", "shortcuts", "updates", "ai" };
+    private readonly string[] _moduleOrder = { "general", "preferences", "cards", "windows", "shortcuts", "updates", "calendar", "ai" };
     private Label _pageTitle = null!, _pageHint = null!;
     private ComboBox _settingsTheme = null!, _settingsTextSize = null!;
     private CheckBox _rememberSettingsPage = null!, _showWhatsNew = null!, _automaticUpdates = null!;
@@ -61,21 +61,20 @@ internal sealed partial class SettingsForm
         reset.Dock = DockStyle.Left; reset.Width = 140;
         _footer.Controls.Add(actions); _footer.Controls.Add(reset);
         AcceptButton = save; CancelButton = cancel;
-        var main = new Panel { Dock = DockStyle.Fill, Padding = new Padding(28, 24, 20, 0) };
+        var main = new Panel { Dock = DockStyle.Fill, Padding = new Padding(20, 16, 20, 0) };
         var heading = new Panel { Dock = DockStyle.Top, Height = 110 };
-        var brand = new SmoothLabel { Text = "STAGE MANAGER  /  LAI  " + AppVersion.Current, Dock = DockStyle.Top, Height = 28, Font = OwnFont(9, FontStyle.Bold), Tag = "muted" };
-        _pageTitle = new SmoothLabel { Dock = DockStyle.Fill, Font = OwnFont(23, FontStyle.Bold) };
-        _pageHint = new SmoothLabel { Dock = DockStyle.Fill, Tag = "muted" };
-        var titleRow = new Panel { Dock = DockStyle.Top, Height = 54 };
+        var brand = new SmoothLabel { Text = "STAGE MANAGER  /  LAI  " + AppVersion.Current, Dock = DockStyle.Top, Height = 18, Font = OwnFont(9, FontStyle.Bold), Tag = "muted" };
+        _pageTitle = new SmoothLabel { Dock = DockStyle.Fill, Font = OwnFont(20, FontStyle.Bold) };
+        _pageHint = new SmoothLabel { Dock = DockStyle.Fill, Font = OwnFont(9.5f), Tag = "muted" };
+        var titleRow = new Panel { Dock = DockStyle.Top, Height = 40 };
         var searchHost = new Panel { Dock = DockStyle.Right, Width = 252, Padding = new Padding(0, 0, 8, 0) };
         _search = new TextBox { Dock = DockStyle.Top, BorderStyle = BorderStyle.FixedSingle };
         searchHost.Controls.Add(_search);
-        searchHost.Controls.Add(Localize(new SmoothLabel { Dock = DockStyle.Top, Height = 20, Font = OwnFont(9), Tag = "muted" }, "FIND A SETTING · ENTER", "查找设置 · 按回车定位"));
         _search.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { FindSetting(); e.SuppressKeyPress = true; } };
         _localized.Add(() => { _search.PlaceholderText = T("Find a setting · Enter", "查找设置 · 按回车定位"); _search.AccessibleName = T("Find a setting", "查找设置"); });
         titleRow.Controls.Add(_pageTitle); titleRow.Controls.Add(searchHost);
         heading.Controls.Add(_pageHint); heading.Controls.Add(titleRow); heading.Controls.Add(brand);
-        _pageHost = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Name = "all-settings" };
+        _pageHost = new SettingsViewport { Dock = DockStyle.Fill, AutoScroll = true, Name = "all-settings" };
         _allModules = new SettingsPageStack { FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = new Padding(0), Padding = new Padding(0, 0, 0, 24), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
         _pageHost.Controls.Add(_allModules);
         _pageHost.SizeChanged += (_, _) => UpdateResponsiveLayout();
@@ -92,12 +91,15 @@ internal sealed partial class SettingsForm
         var windows = Page("windows", "Windows & previews", "窗口与预览", "Control visibility, resource use and ignored apps.", "管理隐藏行为、预览刷新和忽略的应用。");
         var shortcuts = Page("shortcuts", "Keyboard", "键盘快捷键", "Make common actions easy to reach.", "让常用操作触手可及。");
         var updates = Page("updates", "Updates & about", "更新与关于", "Check releases. You decide when to install.", "了解新版本，由你决定何时下载和安装。");
+        var calendar = Page("calendar", "Calendar", "日历", "Your Outlook agenda, read-only and independent of AI usage.", "只读 Outlook 日程，独立于 AI 额度功能。");
+        BuildCalendarSettings(calendar);
         var ai = Page("ai", "AI usage", "AI 额度", "Optional connections. Keys stay encrypted on this PC.", "按需连接账户，密钥仅在本机加密保存。");
 
         var layout = Section(general, "Your workspace", "你的工作区");
         _focusEnhancedMode = Toggle("Focus enhanced mode", "Focus 增强模式", Draft.StageMode == StageMode.Focus);
         Add(layout, _focusEnhancedMode);
         Add(layout, Note("Reserve space for the dock. Full-screen apps can still use the whole screen.", "为卡片栏预留空间；全屏应用仍可覆盖整个屏幕。"));
+        BuildDisplaySelection(layout);
         _sidebarEdge = Choice(new[] { "Left", "Top", "Right", "Bottom" }, (int)Draft.SidebarEdge);
         Add(layout, SettingRow("Dock edge", "停靠位置", _sidebarEdge));
         _cardSizeSlider = new TrackBar { Minimum = 55, Maximum = 125, TickStyle = TickStyle.None, SmallChange = 1, LargeChange = 5, AutoSize = false, Height = 38, Dock = DockStyle.Fill, Value = Math.Clamp((int)Math.Round(Draft.CardScale * 100), 55, 125), AccessibleName = T("Card size", "卡片大小") };
@@ -129,12 +131,20 @@ internal sealed partial class SettingsForm
         var aiMain = Section(ai, "AI usage card", "AI 额度卡片");
         _aiUsageEnabled = Toggle("Show AI usage card", "显示 AI 额度卡片", Draft.ShowAiUsageCard && Draft.AiUsageEnabled); Add(aiMain, _aiUsageEnabled);
         Add(aiMain, Note("Turning this off stops quota queries. Provider choices and keys are kept.", "关闭后停止额度查询，保留平台选择和已保存的密钥。"));
+        _aiRefreshSeconds = Number(30, 3600, Draft.AiUsageRefreshSeconds, 30);
+        Add(aiMain, SettingRow("Auto refresh · seconds", "自动刷新间隔 · 秒", _aiRefreshSeconds));
+        Add(aiMain, Note("30–3600 seconds · 60 for frequent checks, 300 for fewer requests. Manual refresh: at least 10 seconds apart. Does not refresh the calendar.", "30–3600 秒：常用 60 秒，省请求可选 300 秒。手动刷新至少间隔 10 秒；不影响日历。"));
         var local = Section(ai, "Local accounts", "本机账户");
         _codexEnabled = Toggle("Codex", "Codex", Draft.AiUsageCodexEnabled); Add(local, _codexEnabled);
         _codexPath = Input(Draft.CodexCliPath); Add(local, _codexPath);
         var browse = ActionButton("Browse CLI…", "选择 CLI…", (_, _) => BrowseCodexCli());
         var testCodex = ActionButton("Test connection", "测试连接", null); testCodex.Click += async (_, _) => await TestCodexAsync(testCodex);
-        Add(local, ButtonRow(browse, testCodex));
+        var detect = ActionButton("Auto-detect", "自动查找", null);
+        detect.Click += async (_, _) => await DetectCodexCliAsync(detect);
+        Add(local, ButtonRow(detect, browse, testCodex));
+        _codexDiscoveryStatus = Note("Leave the path empty to discover the CLI automatically on every query.", "路径留空即可每次自动查找，无需手动填写版本目录。");
+        Add(local, _codexDiscoveryStatus);
+        Add(local, Note("Common locations: %LOCALAPPDATA%\\Programs\\OpenAI\\Codex\\bin\\codex.exe; %APPDATA%\\npm\\codex.cmd. In PowerShell: Get-Command codex -All. Install/login to the CLI first if none is found.", "常见位置：%LOCALAPPDATA%\\Programs\\OpenAI\\Codex\\bin\\codex.exe；%APPDATA%\\npm\\codex.cmd。也可在 PowerShell 输入 Get-Command codex -All 查看。找不到时请先安装并登录 Codex CLI。"));
         _geminiEnabled = Toggle("Gemini · web plan", "Gemini · 网页订阅", Draft.AiUsageGeminiEnabled); Add(local, _geminiEnabled);
         _antigravityEnabled = Toggle("Antigravity · local client", "Antigravity · 本机客户端", Draft.AiUsageAntigravityEnabled); Add(local, _antigravityEnabled);
         var deep = Section(ai, "DeepSeek", "DeepSeek");
@@ -218,26 +228,39 @@ internal sealed partial class SettingsForm
 
     private FlowLayoutPanel Page(string id, string en, string zh, string hintEn, string hintZh)
     {
-        var stack = new SettingsPageStack { Name = id, FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = new Padding(0, 0, 0, 20) };
+        var stack = new SettingsPageStack { Name = id, FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = new Padding(0, 0, 0, 16) };
         var number = (_pages.Count + 1).ToString("00");
-        Add(stack, Localize(new SmoothLabel { AutoSize = true, Font = OwnFont(17, FontStyle.Bold), Margin = new Padding(2, 6, 0, 6) }, number + "   " + en, number + "   " + zh));
+        Add(stack, Localize(new SmoothLabel { AutoSize = true, Font = OwnFont(15, FontStyle.Bold), Margin = new Padding(2, 6, 0, 4) }, number + "   " + en, number + "   " + zh));
         Add(stack, Note(hintEn, hintZh));
-        stack.SizeChanged += (_, _) => FitChildren(stack);
+        FitOnWidthChanged(stack);
         _pages.Add(id, (stack, en, zh, hintEn, hintZh));
         _allModules.Controls.Add(stack);
         return stack;
     }
     private FlowLayoutPanel Section(FlowLayoutPanel page, string en, string zh)
     {
-        var section = new SettingsSection { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(22, 20, 22, 14), Margin = new Padding(0, 0, 0, 14), Tag = "section" };
-        section.SizeChanged += (_, _) => FitChildren(section);
-        Add(section, Localize(new SmoothLabel { AutoSize = true, Font = OwnFont(12, FontStyle.Bold), Margin = new Padding(0, 0, 0, 14) }, en, zh));
+        var section = new SettingsSection { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(18, 14, 18, 8), Margin = new Padding(0, 0, 0, 10), Tag = "section" };
+        FitOnWidthChanged(section);
+        Add(section, Localize(new SmoothLabel { AutoSize = true, Font = OwnFont(11, FontStyle.Bold), Margin = new Padding(0, 0, 0, 8) }, en, zh));
         Add(page, section); return section;
     }
 
+    private static void FitOnWidthChanged(FlowLayoutPanel panel)
+    {
+        var lastWidth = -1;
+        panel.SizeChanged += (_, _) =>
+        {
+            if (panel.ClientSize.Width == lastWidth) return;
+            lastWidth = panel.ClientSize.Width;
+            FitChildren(panel);
+        };
+    }
     private static void FitChildren(FlowLayoutPanel panel)
     {
         var width = Math.Max(180, panel.ClientSize.Width - panel.Padding.Horizontal);
+        panel.SuspendLayout();
+        try
+        {
         foreach (Control child in panel.Controls)
         {
             var available = Math.Max(120, width - child.Margin.Horizontal);
@@ -245,10 +268,12 @@ internal sealed partial class SettingsForm
             if (child is FlowLayoutPanel or TableLayoutPanel) child.MinimumSize = new Size(available, child.MinimumSize.Height);
             child.Width = available;
         }
+        }
+        finally { panel.ResumeLayout(true); }
     }
     private static void Add(FlowLayoutPanel parent, Control child) { parent.Controls.Add(child); FitChildren(parent); }
-    private Label Note(string en, string zh) => Localize(new SmoothLabel { AutoSize = true, Tag = "muted", Margin = new Padding(0, 0, 0, 12) }, en, zh);
-    private CheckBox Toggle(string en, string zh, bool value) => Localize(new SmoothToggle { Checked = value, AutoSize = false, Height = 48, Margin = new Padding(0, 0, 0, 3), Cursor = Cursors.Hand }, en, zh);
+    private Label Note(string en, string zh) => Localize(new SmoothLabel { AutoSize = true, Font = OwnFont(9.5f), Tag = "muted", Margin = new Padding(0, 0, 0, 8) }, en, zh);
+    private CheckBox Toggle(string en, string zh, bool value) => Localize(new SmoothToggle { Checked = value, AutoSize = false, Height = 42, Margin = new Padding(0, 0, 0, 2), Cursor = Cursors.Hand }, en, zh);
     private static TextBox Input(string text) => new() { Text = text, BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(0, 6, 0, 12) };
     private static NumericUpDown Number(int min, int max, int value, int step = 1) => new() { Minimum = min, Maximum = max, Value = Math.Clamp(value, min, max), Increment = step, TextAlign = HorizontalAlignment.Right, BorderStyle = BorderStyle.FixedSingle };
     private static ComboBox Choice(string[] options, int selected)
@@ -258,7 +283,7 @@ internal sealed partial class SettingsForm
     }
     private Control SettingRow(string en, string zh, Control editor)
     {
-        var row = new TableLayoutPanel { ColumnCount = 2, RowCount = 1, AutoSize = true, MinimumSize = new Size(0, 52), Margin = new Padding(0, 2, 0, 5) };
+        var row = new TableLayoutPanel { ColumnCount = 2, RowCount = 1, AutoSize = true, MinimumSize = new Size(0, 44), Margin = new Padding(0, 0, 0, 2) };
         row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 48)); row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 52));
         var label = Localize(new SmoothLabel { AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 10, 6) }, en, zh);
         editor.Anchor = AnchorStyles.Left | AnchorStyles.Right; editor.Margin = new Padding(0, 6, 0, 6);
@@ -298,7 +323,9 @@ internal sealed partial class SettingsForm
     {
         if (!_uiReady) return;
         var y = -_pageHost.AutoScrollPosition.Y + D(28);
-        _selectedPage = _moduleOrder.LastOrDefault(id => _pages[id].Page.Top <= y) ?? "general";
+        var next = _moduleOrder.LastOrDefault(id => _pages[id].Page.Top <= y) ?? "general";
+        if (_selectedPage == next) return;
+        _selectedPage = next;
         UpdateNavigation();
     }
     private void FindSetting()
@@ -349,7 +376,7 @@ internal sealed partial class SettingsForm
         var families = installed.Families;
         var names = families.Select(f => f.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var family in families) family.Dispose();
-        return names.Contains("Noto Sans SC") ? "Noto Sans SC" : "Microsoft YaHei UI";
+        return names.Contains("Microsoft YaHei UI") ? "Microsoft YaHei UI" : "Segoe UI";
     }
     private void ApplyPreferences()
     {
@@ -396,7 +423,7 @@ internal sealed partial class SettingsForm
             {
                 var hintHeight = TextRenderer.MeasureText(_pageHint.Text, _pageHint.Font,
                     new Size(Math.Max(D(200), heading.ClientSize.Width), int.MaxValue), TextFormatFlags.WordBreak).Height;
-                heading.Height = D(82) + Math.Max(D(28), hintHeight + D(10));
+                heading.Height = D(58) + Math.Max(D(24), hintHeight + D(6));
             }
             _allModules.Width = Math.Max(D(200), _pageHost.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - D(8));
             FitChildren(_allModules);
@@ -407,6 +434,8 @@ internal sealed partial class SettingsForm
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e); ConstrainToWorkingArea(); SelectPage(_selectedPage);
+        _settingsWheelFilter ??= new SettingsWheelFilter(this);
+        Application.AddMessageFilter(_settingsWheelFilter);
     }
     protected override void OnDpiChanged(DpiChangedEventArgs e)
     {
@@ -528,11 +557,18 @@ internal sealed partial class SettingsForm
     // two-axis AutoSize otherwise retains a wide preferred size after a DPI/size change.
     private sealed class SettingsPageStack : FlowLayoutPanel
     {
+        public SettingsPageStack() { DoubleBuffered = true; }
         protected override void OnLayout(LayoutEventArgs levent)
         {
             base.OnLayout(levent);
-            var height = Controls.Count == 0 ? 0 : Controls.Cast<Control>().Max(c => c.Bottom + c.Margin.Bottom) + Padding.Bottom;
+            // FlowLayout's preferred height excludes hidden configuration sections.
+            // Old hidden bounds must never leave a blank module-sized hole.
+            var height = GetPreferredSize(new Size(Width, 0)).Height;
             if (Height != height) Height = height;
         }
+    }
+    private sealed class SettingsViewport : Panel
+    {
+        public SettingsViewport() { DoubleBuffered = true; ResizeRedraw = true; }
     }
 }

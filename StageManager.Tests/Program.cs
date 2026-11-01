@@ -58,6 +58,19 @@ if (args is ["--card-polish-preview"]) { TopPanelRegressionTests.Preview(polish:
 if (args is ["--top-panel-tests"]) { SidebarDockTests.RunAll(); Console.WriteLine("PASS top-panel tests"); return 0; }
 if (args is ["--settings-preview", var output]) { SettingsExperienceTests.RunUi(output); return 0; }
 if (args is ["--settings-tests"]) { SettingsExperienceTests.RunUi(); AutomaticUpdateTests.Run(); Console.WriteLine("PASS settings and automatic updates"); return 0; }
+if (args is ["--codex-usage-probe", var cliPath])
+{
+    var selected = cliPath == "auto" ? "" : cliPath;
+    Console.WriteLine("CLI: " + (selected.Length == 0 ? StageManager.Card3DPrototype.AiUsage.CodexUsageClient.FindCli() : selected));
+    var snapshot = await StageManager.Card3DPrototype.AiUsage.CodexUsageClient.ReadAsync(selected, default);
+    Console.WriteLine($"Status={snapshot.Status}; Summary={snapshot.Summary}; Updated={snapshot.UpdatedUtc:O}");
+    return snapshot.HasData ? 0 : 1;
+}
+if (args is ["--calendar-tests"]) { CalendarServiceTests.Run(); CalendarPresentationTests.Run(); CalendarTypographyTests.Run(); CalendarSettingsTests.Run(); CalendarCompletionTests.Run(); CalendarIntegrationTests.Run(); CodexCalendarTests.Run(); Console.WriteLine("PASS calendar tests"); return 0; }
+if (args is ["--calendar-date-preview", var datePreview]) { CalendarTypographyTests.Preview(datePreview); return 0; }
+if (args is ["--calendar-codex-live"]) { try { await CodexCalendarTests.LiveProbe(); return 0; } catch(Exception e) { Console.WriteLine(e.GetType().Name); return 1; } }
+if (args is ["--calendar-preview", var calendarPreview]) { CalendarPresentationTests.Preview(calendarPreview); return 0; }
+if (args is ["--calendar-codex-probe"]) { try { using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45)); await using var client = await StageManager.Card3DPrototype.Calendar.CodexCalendarClient.OpenAsync("", timeout.Token, Console.WriteLine); Console.WriteLine("Read-only operations: " + string.Join(", ", client.Operations)); var data = await client.CallAsync("list_calendars", new { }, timeout.Token); Console.WriteLine("Calendar response keys: " + string.Join(",", data.EnumerateObject().Select(p => p.Name))); return 0; } catch(Exception e) { Console.WriteLine(e.Message); return 1; } }
 return TestRunner.Run();
 
 internal static class TestRunner
@@ -66,6 +79,13 @@ internal static class TestRunner
 
 	public static int Run()
 	{
+		RunTest("Calendar provider lifecycle and date semantics", CalendarServiceTests.Run);
+		RunTest("Calendar presentation and popup transitions", CalendarPresentationTests.Run);
+		RunTest("Calendar date antialiasing, localization and bounded texture resolution", CalendarTypographyTests.Run);
+		RunTest("Calendar four-edge card integration", CalendarIntegrationTests.Run);
+		RunTest("Calendar settings migration", CalendarSettingsTests.Run);
+		RunTest("Calendar local checklist persistence and privacy", CalendarCompletionTests.Run);
+		RunTest("Codex calendar connector parsing and manual-only mode", CodexCalendarTests.Run);
 		RunTest("Edge scroll eases, brakes, reverses and preserves deliberate pointer intent", EdgeScrollSmoothnessTests.Run);
 		RunTest("Group OPEN restores all children with cancellation and independent failures", () => GroupCardEnhancementTests.OpenAll().GetAwaiter().GetResult());
 		RunTest("Collapsed spacing and FIX/OPEN hit geometry at mixed DPI", GroupCardEnhancementTests.GeometryAndActions);
@@ -156,6 +176,7 @@ internal static class TestRunner
 		RunTest("Interface language switches in both directions", InterfaceLanguageTranslation);
 		RunTest("Settings navigation, language, preferences and fixed save controls", SettingsLanguageToggle);
 		RunTest("Sidebar display selection follows the physical left edge", SidebarDisplaySelection);
+		RunTest("Monitor selection, reconnect identity and schema migration", SidebarDisplaySelectionTests.Run);
 		RunTest("Tray-hidden windows leave the sidebar while taskbar-minimized windows remain", ManagedWindowVisibility);
 		RunTest("Off-screen recovery preserves visible windows and centers only lost windows", OffscreenRecoveryGeometry);
 		RunTest("Initial window layouts keep the first baseline and reject recycled handles", InitialWindowLayoutMemoryBehavior);
@@ -303,7 +324,7 @@ internal static class TestRunner
 				}
 				""");
 			var service = new SettingsService(path);
-			Assert(service.Current.SchemaVersion == 21, "Settings schema was not upgraded for dock position.");
+			Assert(service.Current.SchemaVersion == 23, "Settings schema was not upgraded for display selection.");
 			Assert(service.Current.LowMemoryRendering, "Low-memory rendering should be enabled by default.");
 			Assert(!service.Current.IgnoredProcesses.Contains("explorer", StringComparer.OrdinalIgnoreCase),
 				"The legacy default Explorer ignore entry was not migrated.");
@@ -312,7 +333,7 @@ internal static class TestRunner
 			Assert(service.Current.IgnoredProcesses.Contains("custom-app", StringComparer.OrdinalIgnoreCase),
 				"A user-selected ignored process was lost during migration.");
 			var migratedJson = File.ReadAllText(path);
-			Assert(migratedJson.Contains("\"SchemaVersion\": 21", StringComparison.Ordinal),
+			Assert(migratedJson.Contains("\"SchemaVersion\": 23", StringComparison.Ordinal),
 				"The migrated schema was not written back to disk.");
 			Assert(!migratedJson.Contains("\"explorer\"", StringComparison.OrdinalIgnoreCase),
 				"The legacy Explorer ignore entry remained in the persisted settings.");

@@ -35,8 +35,8 @@ internal sealed class AiUsageDetailsForm : Form
 		StartPosition = FormStartPosition.Manual;
 		AutoScaleMode = AutoScaleMode.None;
 		ClientSize = new Size(376, 550);
-		BackColor = Color.FromArgb(24, 27, 33);
-		ForeColor = Color.FromArgb(239, 245, 252);
+		BackColor = AiUsagePresentation.PanelBackground;
+		ForeColor = AiUsagePresentation.PanelForeground;
 		DoubleBuffered = true;
 		Opacity = preview ? 1 : 0;
 
@@ -115,7 +115,7 @@ internal sealed class AiUsageDetailsForm : Form
 		_rows.ScaleFactor = s;
 		if (!_preview)
 		{
-			using var path = AiUsagePresentation.Rounded(new RectangleF(0, 0, Width, Height), 16 * s);
+			using var path = AiUsagePresentation.Rounded(new RectangleF(0, 0, Width, Height), AiUsagePresentation.PanelRadius * s);
 			var old = Region; Region = new Region(path); old?.Dispose();
 		}
 		Invalidate();
@@ -169,8 +169,8 @@ internal sealed class AiUsageDetailsForm : Form
 		g.SmoothingMode = SmoothingMode.AntiAlias;
 		g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
 		RectangleF R(float x, float y, float w, float h) => new(x * s, (y >= 98 ? y + ExtraTabHeight : y) * s, w * s, h * s);
-		using var border = new Pen(Color.FromArgb(45, 190, 200, 215), Math.Max(1, s));
-		using var outline = AiUsagePresentation.Rounded(new RectangleF(.5f, .5f, ClientSize.Width - 1, ClientSize.Height - 1), 16 * s);
+		using var border = new Pen(AiUsagePresentation.PanelBorder, Math.Max(1, s));
+		using var outline = AiUsagePresentation.Rounded(new RectangleF(.5f, .5f, ClientSize.Width - 1, ClientSize.Height - 1), AiUsagePresentation.PanelRadius * s);
 		g.DrawPath(border, outline);
 		Draw(g, T("AI usage", "AI 额度"), R(20, 16, 250, 28), 18 * s, ForeColor, true);
 		if (Selected is not { } item)
@@ -208,8 +208,8 @@ internal sealed class AiUsageDetailsForm : Form
 	}
 	private static Button MakeButton(string text)
 	{
-		var b = new AiUsageButton { Text = text, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(24, 27, 33),
-			ForeColor = Color.FromArgb(227, 237, 248), Cursor = Cursors.Hand, TabStop = true, UseVisualStyleBackColor = false };
+		var b = new AiUsageButton { Text = text, FlatStyle = FlatStyle.Flat, BackColor = AiUsagePresentation.PanelBackground,
+			ForeColor = AiUsagePresentation.ButtonForeground, Cursor = Cursors.Hand, TabStop = true, UseVisualStyleBackColor = false };
 		b.FlatAppearance.BorderSize = 0;
 		b.FlatAppearance.MouseOverBackColor = Color.FromArgb(58, 77, 96);
 		b.FlatAppearance.MouseDownBackColor = Color.FromArgb(73, 96, 116);
@@ -223,9 +223,11 @@ internal sealed class AiUsageDetailsForm : Form
 }
 
 // Draw at the current device size instead of scaling a small button bitmap.
-internal sealed class AiUsageButton : Button
+internal class AiUsageButton : Button
 {
 	private bool _hovered, _pressed, _selected;
+	protected bool IsHovered => _hovered;
+	protected bool IsPressed => _pressed;
 	public float RenderScale { get; set; } = 1;
 	public bool Selected { get => _selected; set { if (_selected != value) { _selected = value; Invalidate(); } } }
 	public AiUsageButton() { DoubleBuffered = true; SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.ResizeRedraw, true); }
@@ -233,19 +235,25 @@ internal sealed class AiUsageButton : Button
 	protected override void OnMouseLeave(EventArgs e) { _hovered = _pressed = false; Invalidate(); base.OnMouseLeave(e); }
 	protected override void OnMouseDown(MouseEventArgs e) { _pressed = e.Button == MouseButtons.Left; Invalidate(); base.OnMouseDown(e); }
 	protected override void OnMouseUp(MouseEventArgs e) { _pressed = false; Invalidate(); base.OnMouseUp(e); }
-	protected override void OnPaint(PaintEventArgs e)
+	protected override void OnMouseCaptureChanged(EventArgs e) { _pressed = false; Invalidate(); base.OnMouseCaptureChanged(e); }
+	protected void PaintButtonSurface(Graphics g, bool filled = true)
 	{
-		var g = e.Graphics; var s = RenderScale;
+		var s = RenderScale;
 		g.Clear(BackColor); g.SmoothingMode = SmoothingMode.AntiAlias;
 		g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-		using var shape = AiUsagePresentation.Rounded(new RectangleF(1, 1, Width - 2, Height - 2), 9 * s);
-		var color = _pressed ? Color.FromArgb(66, 77, 91) : _hovered ? Color.FromArgb(53, 61, 73) :
-			Selected ? Color.FromArgb(54, 65, 80) : Color.FromArgb(34, 39, 47);
+		if (!filled) return;
+		using var shape = AiUsagePresentation.Rounded(new RectangleF(1, 1, Math.Max(1, Width - 2), Math.Max(1, Height - 2)), 9 * s);
+		var color = AiUsagePresentation.ButtonFill(Enabled && _pressed, Enabled && _hovered, Selected);
 		using var fill = new SolidBrush(color); g.FillPath(fill, shape);
 		if (Selected || Focused && ShowFocusCues)
 		{
 			using var outline = new Pen(Color.FromArgb(100, 155, 183, 211), s); g.DrawPath(outline, shape);
 		}
+	}
+	protected override void OnPaint(PaintEventArgs e)
+	{
+		var g = e.Graphics; var s = RenderScale;
+		PaintButtonSurface(g);
 		AiUsagePresentation.DrawText(g, Text, new RectangleF(6 * s, 0, Width - 12 * s, Height),
 			Text == "×" ? 20 * s : 12 * s, Enabled ? ForeColor : Color.FromArgb(135, 145, 160), Selected);
 	}

@@ -45,7 +45,8 @@ internal sealed partial class PrototypeForm : Form
 	private readonly System.Windows.Forms.Timer _regionCollapseTimer = new() { Interval = 260 };
 	private readonly System.Windows.Forms.Timer _displayChangeTimer = new() { Interval = 250 };
 	private readonly System.Windows.Forms.Timer _previewReleaseTimer = new() { Interval = 30000 };
-	private readonly System.Windows.Forms.Timer _aiUsageRefreshTimer = new() { Interval = 300000 };
+	// The service owns the deadline; timer jitter must not skip an entire interval.
+	private readonly System.Windows.Forms.Timer _aiUsageRefreshTimer = new() { Interval = 1000 };
 	private readonly System.Threading.Timer _hiddenEdgeTimer;
 	private readonly ToolTip _toolTip = new() { InitialDelay = 250, ReshowDelay = 80, AutoPopDelay = 3000, ShowAlways = true };
 	private readonly ContextMenuStrip _contextMenu = new() { AutoClose = true };
@@ -111,6 +112,7 @@ internal sealed partial class PrototypeForm : Form
 		_hiddenEdgeTimer = new(_ => PollHiddenEdgeFromBackground(), null, Timeout.Infinite, Timeout.Infinite);
 		_aiUsageService = new AiUsageService();
 		_aiUsageService.Updated += AiUsageService_Updated;
+		InitializeCalendarHost();
 		Text = "Stage_Manager_Lai";
 		FormBorderStyle = FormBorderStyle.None;
 		ShowInTaskbar = false;
@@ -283,7 +285,7 @@ internal sealed partial class PrototypeForm : Form
 			return;
 		}
 		_renderer.UpdateEdgeScroll(e.Location, Control.MouseButtons != MouseButtons.None || _contextMenu.Visible ||
-			_cardContextMenu.Visible || _aiUsageDetails is { IsDisposed: false });
+			_cardContextMenu.Visible || _aiUsageDetails is { IsDisposed: false } || CalendarPanelOpen);
 		if (_renderer.IsScrolling)
 		{
 			_lastSidebarInteractionUtc = DateTime.UtcNow;
@@ -327,6 +329,8 @@ internal sealed partial class PrototypeForm : Form
 				ShowNotificationAreaContextMenu(target);
 			else if (target?.IsAiUsageCard == true)
 				OpenAiUsageDetails(fromClick: true);
+			else if (target?.IsCalendarCard == true)
+				OpenCalendarDetails(target, fromClick: true);
 			else if (target is not null && !target.IsExplorerButton && target.QuickLaunchApp is null &&
 				!target.IsExpandAllButton && !target.IsPinButton && !target.IsOpenGroupButton && !target.IsSidebarCollapseButton && !target.IsSidebarPinButton &&
 				!target.IsDesktopButton && !target.IsDesktopIconsButton && target.PageDelta == 0)
@@ -432,6 +436,11 @@ internal sealed partial class PrototypeForm : Form
 			OpenQuickLaunchApp(quickLaunch);
 			return;
 		}
+		if (_renderer.ConsumeCalendarClick())
+		{
+			OpenCalendarDetails(clickTarget, fromClick: true);
+			return;
+		}
 		if (_renderer.ConsumeAiUsageClickRequest())
 		{
 			OpenAiUsageDetails(clickTarget, fromClick: true);
@@ -489,6 +498,7 @@ internal sealed partial class PrototypeForm : Form
 	protected override void OnMouseWheel(MouseEventArgs e)
 	{
 		base.OnMouseWheel(e);
+		if (CalendarPointerInside(Cursor.Position)) return;
 		// Accepted hook events return nonzero and never reach WM_MOUSEWHEEL.
 		// This is the fallback for passed-through input; timestamp suppression
 		// would lose distinct events during hook recovery or a UI heartbeat expiry.
@@ -504,6 +514,7 @@ internal sealed partial class PrototypeForm : Form
 	{
 		var delta = Interlocked.Exchange(ref _pendingMouseWheelDelta, 0);
 		if (_closing || delta == 0 || !_sidebarVisible || _renderer is null) return;
+		if (CalendarPointerInside(Cursor.Position)) return;
 		CancelPendingSingleCardClick();
 		HideHoverHint();
 		_lastSidebarInteractionUtc = DateTime.UtcNow;
@@ -573,6 +584,7 @@ internal sealed partial class PrototypeForm : Form
 	{
 		_whatsNewTimer.Stop(); _whatsNewTimer.Dispose(); _whatsNew?.Dispose();
 		_closing = true;
+		DisposeCalendarHost();
 		_automaticUpdateTimer.Stop(); _automaticUpdateTimer.Dispose(); _automaticUpdateChecker.Dispose();
 		_desktopToggle.TryRestore(out _);
 		_mouseWheelHook?.Dispose();
@@ -690,6 +702,7 @@ internal sealed partial class PrototypeForm : Form
 		_renderer.SetDockEdge(settings.SidebarEdge);
 		UpdateSidebarDisplay(force: true);
 		var layoutRegionChanged = _renderer.SetSidebarVerticalOffset(settings.SidebarVerticalOffset);
+		layoutRegionChanged |= ApplyCalendarSettings();
 		if (_renderer.SetExplorerButtonEnabled(settings.ShowExplorerButton))
 			layoutRegionChanged = true;
 		if (_renderer.SetQuickLaunchApps(settings.QuickLaunchApps ?? QuickLaunchDefinition.LegacyDefaults(settings.ShowChromeQuickLaunch, settings.ShowEdgeQuickLaunch)))
@@ -795,11 +808,12 @@ internal sealed partial class PrototypeForm : Form
 		_whatsNew.OpenSettings += (_, _) => ShowSettings();
 		_whatsNew.Show(this);
 	}
-	private void ShowSettings(bool aiUsage)
+	private void ShowSettings(bool aiUsage, bool calendar = false)
 	{
 		if (_catalog is null || _settingsOpen)
 			return;
 		SetSidebarVisible(true);
+		CloseCalendarDetails();
 		_aiUsagePopup.Dismiss();
 		CloseAiUsageDetails(immediate: true);
 		CancelPendingSingleCardClick();
@@ -808,12 +822,13 @@ internal sealed partial class PrototypeForm : Form
 		PublishWheelRegion();
 		try
 		{
-		using var dialog = new SettingsForm(_catalog.Settings.CloneCurrent(), _catalog.GetApplicationChoices(), _aiUsageService);
+		using var dialog = new SettingsForm(_catalog.Settings.CloneCurrent(), _catalog.GetApplicationChoices(), _aiUsageService, _calendarService);
 		if (aiUsage) dialog.Shown += (_, _) => dialog.ScrollToAiUsage();
+		if (calendar) dialog.Shown += (_, _) => dialog.ScrollToCalendar();
 		if (dialog.ShowDialog() == DialogResult.OK)
 			_catalog.Settings.Apply(dialog.Draft);
 		}
-		finally { _settingsOpen = false; _lastSidebarInteractionUtc = DateTime.UtcNow; PublishWheelRegion(); }
+		finally { _settingsOpen = false; ApplyCalendarSettings(); _lastSidebarInteractionUtc = DateTime.UtcNow; PublishWheelRegion(); }
 	}
 
 	private async Task RefreshAiUsageAsync(bool manual)
@@ -822,7 +837,7 @@ internal sealed partial class PrototypeForm : Form
 			return;
 		try
 		{
-			_aiUsageDetails?.SetRefreshing(true);
+			if (manual) _aiUsageDetails?.SetRefreshing(true);
 			await _aiUsageService.RefreshAsync(_catalog.Settings.Current, manual, _aiUsageCancellation.Token);
 		}
 		catch (OperationCanceledException) { }
@@ -832,7 +847,7 @@ internal sealed partial class PrototypeForm : Form
 			// Keep provider errors out of logs: exception messages may contain request details.
 			System.Diagnostics.Debug.WriteLine($"AI usage refresh failed: {exception.GetType().Name}");
 		}
-		finally { if (!_closing) _aiUsageDetails?.SetRefreshing(false); }
+		finally { if (manual && !_closing) _aiUsageDetails?.SetRefreshing(false); }
 	}
 
 	private void AiUsageService_Updated(object? sender, EventArgs e)
@@ -866,6 +881,7 @@ internal sealed partial class PrototypeForm : Form
 		var settings = _catalog.Settings.Current;
 		if (!settings.ShowAiUsageCard || !settings.AiUsageEnabled)
 			return;
+		CloseCalendarDetails();
 		target ??= _renderer.HitTest(PointToClient(Cursor.Position));
 		var selected = AiProviderAtPointer(target);
 		if (fromClick)
@@ -1337,6 +1353,7 @@ internal sealed partial class PrototypeForm : Form
 
 	private void ShowOwnedContextMenu(ContextMenuStrip menu)
 	{
+		CloseCalendarDetails();
 		_aiUsagePopup.Dismiss();
 		CloseAiUsageDetails(immediate: true);
 		CancelPendingSingleCardClick();
@@ -1364,6 +1381,7 @@ internal sealed partial class PrototypeForm : Form
 
 		CloseIfClickedOutside(_cardContextMenu, screenPoint);
 		CloseIfClickedOutside(_contextMenu, screenPoint);
+		DismissCalendarOnOutsideClick(screenPoint);
 		if (_aiUsageDetails is { IsDisposed: false } aiPanel && !aiPanel.IsPointerInside(screenPoint) &&
 			_renderer?.HitTest(PointToClient(screenPoint))?.IsAiUsageCard != true)
 		{ _aiUsagePopup.Dismiss(); CloseAiUsageDetails(immediate: true); }
@@ -1476,7 +1494,7 @@ internal sealed partial class PrototypeForm : Form
 	private bool CanShowHoverHint => !_closing && _sidebarVisible && _renderer is not null &&
 		!_renderer.IsScrolling && !_notificationAreaDragActive && !_notificationAreaRefreshPressActive &&
 		_cardClick.Pending is null && !IsPointerButtonDown(VirtualKeyLeftButton) &&
-		!_contextMenu.Visible && !_cardContextMenu.Visible;
+		!_contextMenu.Visible && !_cardContextMenu.Visible && !CalendarPanelOpen;
 
 	private void HideHoverHint()
 	{
@@ -1533,7 +1551,7 @@ internal sealed partial class PrototypeForm : Form
 
 	private string GetToolTipText(CardHitTarget target)
 	{
-		if (target.IsAiUsageCard)
+		if (target.IsAiUsageCard || target.IsCalendarCard)
 			return string.Empty; // The usage popup replaces the application-window tooltip.
 		if (target.IsNotificationAreaDragHandle)
 			return L("Drag vertically to move this hidden-icons card", "上下拖动以移动这张隐藏图标卡片");
@@ -1646,6 +1664,7 @@ internal sealed partial class PrototypeForm : Form
 		}
 		if (!visible)
 		{
+			CloseCalendarDetails();
 			_aiUsagePopup.Dismiss(); CloseAiUsageDetails(immediate: true);
 			CancelPendingSingleCardClick();
 			HideHoverHint();
@@ -1956,8 +1975,15 @@ internal sealed partial class PrototypeForm : Form
 			return;
 		_renderer.UpdateEdgeScroll(PointToClient(screenPoint), !_sidebarVisible || _notificationAreaDragActive ||
 			Control.MouseButtons != MouseButtons.None || _cardClick.Pending is not null ||
-			_contextMenu.Visible || _cardContextMenu.Visible || _aiUsageDetails is { IsDisposed: false });
+			_contextMenu.Visible || _cardContextMenu.Visible || _aiUsageDetails is { IsDisposed: false } || CalendarPanelOpen);
 		var nowUtc = DateTime.UtcNow;
+		if (CalendarPanelOpen && (CalendarPointerInside(screenPoint) || _calendarCorridor.Contains(screenPoint)))
+		{
+			UpdateCalendarPointer(null, screenPoint, nowUtc);
+			HideHoverHint();
+			_lastSidebarInteractionUtc = nowUtc;
+			return;
+		}
 		if (_aiUsageDetails is { IsDisposed: false } activePanel && activePanel.IsPointerInside(screenPoint))
 		{
 			UpdateAiUsagePointer(null, screenPoint, nowUtc);
@@ -1972,6 +1998,7 @@ internal sealed partial class PrototypeForm : Form
 		EnsureFocusSidebarAnchored(largeWindowActive, nowUtc);
 		if (!_sidebarVisible)
 		{
+			CloseCalendarDetails();
 			var aiPanelVisible = _aiUsageDetails is { IsDisposed: false } hiddenAiPanel && hiddenAiPanel.IsPointerInside(screenPoint);
 			UpdateAiUsagePointer(null, screenPoint, nowUtc);
 			if (aiPanelVisible)
@@ -1997,12 +2024,13 @@ internal sealed partial class PrototypeForm : Form
 			_renderer.PollPointer(client);
 		var hit = _renderer.HitTest(client);
 		UpdateAiUsagePointer(_renderer.IsScrolling ? null : hit, screenPoint, nowUtc);
+		UpdateCalendarPointer(_renderer.IsScrolling ? null : hit, screenPoint, nowUtc);
 		if (!_renderer.IsScrolling && !_notificationAreaDragActive && _cardClick.Pending is null)
 			UpdateHoverExpandCandidate(hit, client);
 		if (_renderer.IsScrolling) HideHoverHint(); else UpdateHoverHint(hit);
 		var pointerNearSidebar = _renderer.InteractionBounds.Contains(client);
 		var pointerInsideAiPanel = _aiUsageDetails is { IsDisposed: false } aiPanel && aiPanel.IsPointerInside(screenPoint);
-		pointerNearSidebar |= pointerInsideAiPanel;
+		pointerNearSidebar |= pointerInsideAiPanel || CalendarPointerInside(screenPoint) || (CalendarPanelOpen && _calendarCorridor.Contains(screenPoint));
 		var pointerWithinTransientSidebar = hit is not null || pointerNearSidebar || pointerAtLeftEdge;
 		if (hit is not null || pointerNearSidebar)
 			_lastSidebarInteractionUtc = nowUtc;
@@ -2256,7 +2284,14 @@ internal sealed partial class PrototypeForm : Form
 	{
 		if (_closing || Screen.AllScreens.Length == 0)
 			return;
-		var selected = SidebarDisplayPolicy.SelectLeftmost(Screen.AllScreens, screen => screen.Bounds);
+		var selected = SidebarDisplayCatalog.Select(Screen.AllScreens, _catalog?.Settings.Current);
+		if (!string.Equals(selected.DeviceName, _sidebarDisplay.DeviceName, StringComparison.OrdinalIgnoreCase))
+		{
+			// Release the old monitor's reserved work area before anchoring on the new one.
+			_focusAppBarReservation.Remove();
+			CloseAiUsageDetails(immediate: true);
+			CloseCalendarDetails();
+		}
 		var sidebarArea = GetSidebarArea(selected);
 		if (string.Equals(selected.DeviceName, _sidebarDisplay.DeviceName, StringComparison.OrdinalIgnoreCase) &&
 			sidebarArea == _sidebarScreenBounds &&
@@ -2285,6 +2320,7 @@ internal sealed partial class PrototypeForm : Form
 	private void PublishWheelRegion()
 	{
 		var pointerInPopup = _aiUsageDetails is { IsDisposed: false } panel && panel.IsPointerInside(Cursor.Position);
+		pointerInPopup |= CalendarPointerInside(Cursor.Position);
 		var bounds = !_settingsOpen && !pointerInPopup && _sidebarVisible && !_notificationAreaDragActive && _renderer is not null && IsHandleCreated
 			? Rectangle.Intersect(_sidebarScreenBounds, RectangleToScreen(_renderer.InteractionBounds))
 			: Rectangle.Empty;
